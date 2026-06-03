@@ -1,0 +1,30 @@
+info:
+  name: Nuevo Lote
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: http://127.0.0.1:9095/api/lotes
+  body:
+    type: json
+    data: |
+      {
+        "id_producto": 1,
+        "id_unidad_medida": 2, // Ej: Caja
+        "id_almacen": 1,
+        "descripcion": "Ingreso por proveedor local", // [Opcional]
+        "stock_inicial": 10, // Cantidad en 'Cajas'
+        "contenido_por_presentacion": 12, // Cantidad de unidades base por cada 'Caja'
+        "fecha_hora_ingreso": "2026-03-15 08:30:00", // [Requerido] Formato Y-m-d H:i:s
+        "fecha_vencimiento": "" // [Opcional]
+      }
+  auth:
+    type: bearer
+    token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjkwOTUvYXBpL2xvZ2luIiwiaWF0IjoxNzcyNTc4OTIxLCJuYmYiOjE3NzI1Nzg5MjEsImp0aSI6IkNMRjJEUFFhUmJlU01JcjciLCJzdWIiOiIxIiwicHJ2IjoiNTg3MDg2M2Q0YTYyZDc5MTQ0M2ZhZjkzNmZjMzY4MDMxZDExMGM0ZiJ9.LM4I6cqV5wlsPoDW6ohfD3Hmjjn26n4IIc6sFrGQPnI
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

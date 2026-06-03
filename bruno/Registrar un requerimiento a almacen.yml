@@ -1,0 +1,36 @@
+info:
+  name: Registrar un requerimiento a almacen
+  type: http
+  seq: 8
+
+http:
+  method: POST
+  url: http://127.0.0.1:9095/api/requerimientos
+  body:
+    type: json
+    data: |
+      {
+        "id_mina": 1,
+        "id_labores": [4],
+        "id_almacen_destino": 1,
+        "premura": "Normal",
+        "fecha_entrega_requerida": null,
+        "detalles": [
+          {
+            "id_producto": 3,
+            "id_unidad_medida": 6,
+            "cantidad_solicitada": 20,
+            "contenido_por_presentacion": 1,
+            "comentario": ""
+          }
+        ]
+      }
+  auth:
+    type: bearer
+    token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjkwOTUvYXBpL2xvZ2luIiwiaWF0IjoxNzcyNTc4OTIxLCJuYmYiOjE3NzI1Nzg5MjEsImp0aSI6IkNMRjJEUFFhUmJlU01JcjciLCJzdWIiOiIxIiwicHJ2IjoiNTg3MDg2M2Q0YTYyZDc5MTQ0M2ZhZjkzNmZjMzY4MDMxZDExMGM0ZiJ9.LM4I6cqV5wlsPoDW6ohfD3Hmjjn26n4IIc6sFrGQPnI
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
