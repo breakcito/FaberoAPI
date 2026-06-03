@@ -64,19 +64,11 @@ Define el ruteo genérico de consumo transversal del ERP.
 
 #### C. Acceso a Datos Globales (`app/Data/`)
 Repositorio unificado de consultas SQL crudas y mapeos de datos para entidades compartidas.
-*   **`ActivosFijosData.php`**: Consultas relativas a maquinaria, vehículos operativos y generación de correlativos por prefijo.
-*   **`ProductosData.php`**: Catálogo e información dinámica de productos.
-*   **`LotesProductosData.php`**: Capa crítica de acceso y auditoría de stocks por lote.
-*   **`KardexProductosData.php`**: Centraliza el registro de movimientos de stock.
-*   **`AlmacenesData.php`, `EmpleadosData.php`, `EmpresasData.php`, `MarcasData.php`, `MinasData.php`, `PersonalExternoData.php`, `ProveedoresData.php`, `UnidadesMedidaData.php`, `MenuNavData.php`**: Abstracciones generales de lectura de tablas maestras.
+*   **`EmpleadosData.php`, `EmpresasData.php`, `MarcasData.php`, `ProveedoresData.php`, `MenuNavData.php`**: Abstracciones generales de lectura de tablas maestras.
 
 #### D. Servicios Globales (`app/Services/`)
 Contenedores de lógica de negocio transaccional transversal y motores de cálculo.
-*   **`ActivosFijosService.php`**: Orquesta el ciclo de vida del activo físico, marcas y su codificación automática.
-*   **`LotesProductosService.php`**: **Motor de Inventario Principal.** Coordina de forma transaccional toda afectación física de stock por lotes e inyección automática en el Kardex. **Obligatorio para cualquier afectación de stock.**
-*   **`KardexProductosService.php`**: Auditor centralizado encargado de inyectar asientos históricos inmutables de saldo.
 *   **`MenuNavService.php`**: Construye dinámicamente y de forma recursiva el árbol de menús según permisos del usuario.
-*   **`AlmacenesService.php`, `EmpleadosService.php`, `EmpresasService.php`, `MarcasService.php`, `MinasService.php`, `PersonalExternoService.php`, `ProductosService.php`, `ProveedoresService.php`, `UnidadesMedidaService.php`**: Lógica de validación corporativa de catálogos.
 
 ---
 
