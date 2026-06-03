@@ -1,7 +1,7 @@
 services:
   api:
     build: .
-    container_name: goldenstone_api
+    container_name: fabero_api
     ports:
       - "${APP_PORT:-9095}:80" # El contenedor ahora escucha en el nativo 80 de Apache, y expone en 9095 al anfitrión
     volumes:
