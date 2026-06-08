@@ -1,7 +1,5 @@
 <?php
 
-use App\Modules\Proveedores\Controllers\BancosController;
-use App\Modules\Proveedores\Controllers\CuentasBancariasController;
 use App\Modules\Proveedores\Controllers\ProveedoresController;
 use Illuminate\Support\Facades\Route;
 
@@ -10,16 +8,12 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::controller(ProveedoresController::class)->group(function () {
             Route::get('/', 'get_proveedores');
             Route::post('/', 'crear_proveedor');
-        });
-
-        Route::prefix('bancos')->controller(BancosController::class)->group(function () {
-            Route::get('/', 'get_bancos');
-            Route::post('/', 'crear_banco');
-        });
-
-        Route::prefix('cuentas-bancarias')->controller(CuentasBancariasController::class)->group(function () {
-            Route::get('/{id_proveedor}', 'get_cuentas_bancarias');
-            Route::post('/', 'crear_cuenta_bancaria');
+            Route::put('/{id}', 'editar_proveedor');
+            Route::patch('/{id}/estado', 'cambiar_estado_proveedor');
+            Route::delete('/{id}', 'eliminar_proveedor');
+            Route::get('/{id}/concesiones', 'get_concesiones');
+            Route::post('/concesiones', 'asociar_concesion');
+            Route::delete('/{id_proveedor}/concesiones/{id_concesion}', 'desasociar_concesion');
         });
     });
 });

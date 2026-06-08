@@ -2,6 +2,7 @@
 
 namespace App\Modules\Sucursales\Controller;
 
+use App\Modules\Sucursales\Service\SucursalesService;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,16 +12,17 @@ use Illuminate\Support\Facades\Validator;
 class SucursalesController extends Controller
 {
     /**
-     * Listar todos los roles activos
+     * Obtener listado de todas las sucursales
      */
     public function get_sucursales(): JsonResponse
     {
         $result = SucursalesService::get_sucursales();
+
         return response()->json($result);
     }
 
     /**
-     * Registrar una nueva sucursal con sus permisos
+     * Registrar una nueva sucursal
      */
     public function crear_sucursal(Request $request): JsonResponse
     {
@@ -31,7 +33,7 @@ class SucursalesController extends Controller
             //
             'nombre' => 'required|string|max:256',
             'direccion' => 'nullable|string|max:512',
-            'telefono' => 'nullable|string|max:64'
+            'telefono' => 'nullable|string|max:64',
         ], [
             'id_departamento.integer' => 'El departamento debe ser un número entero.',
             'id_provincia.integer' => 'La provincia debe ser un número entero.',
@@ -52,8 +54,15 @@ class SucursalesController extends Controller
             return response()->json(ApiResponse::error($validator->errors()->first()));
         }
 
-        $result = RolesService::crear_rol($request->all());
+        $result = SucursalesService::crear_sucursal(
+            nombre: $request->input('nombre'),
+            id_departamento: $request->input('id_departamento') ? (int) $request->input('id_departamento') : null,
+            id_provincia: $request->input('id_provincia') ? (int) $request->input('id_provincia') : null,
+            id_distrito: $request->input('id_distrito') ? (int) $request->input('id_distrito') : null,
+            direccion: $request->input('direccion'),
+            telefono: $request->input('telefono')
+        );
+
         return response()->json($result);
     }
-
 }

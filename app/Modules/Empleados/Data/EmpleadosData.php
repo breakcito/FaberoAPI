@@ -3,8 +3,6 @@
 namespace App\Modules\Empleados\Data;
 
 use App\Models\Empleado;
-use App\Models\Labor;
-use App\Models\LaborEmpleado;
 use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Support\Facades\DB;
 
@@ -38,7 +36,7 @@ class EmpleadosData
         LEFT JOIN empresa emp_asoc ON emp_asoc.id = e.id_empresa
         INNER JOIN cargo car ON car.id = e.id_cargo
         INNER JOIN area a ON a.id = car.id_area
-        WHERE e.es_contratista = 0
+        WHERE 1=1
         ';
 
         $params = [];
@@ -84,18 +82,17 @@ class EmpleadosData
         ?string $path_foto
     ) {
         return Empleado::insertGetId([
-            'id_empresa'         => $id_empresa,
-            'id_cargo'           => $id_cargo,
-            'nombre'             => $nombre,
-            'apellido'           => $apellido,
-            'dni'                => $dni,
-            'ruc'                => $ruc,
+            'id_empresa' => $id_empresa,
+            'id_cargo' => $id_cargo,
+            'nombre' => $nombre,
+            'apellido' => $apellido,
+            'dni' => $dni,
+            'ruc' => $ruc,
             'carnet_extranjeria' => $carnet_extranjeria,
-            'pasaporte'          => $pasaporte,
-            'fecha_nacimiento'   => $fecha_nacimiento,
-            'path_foto'          => $path_foto,
-            'es_contratista'     => 0,
-            'estado'             => EstadoBase::Activo->value,
+            'pasaporte' => $pasaporte,
+            'fecha_nacimiento' => $fecha_nacimiento,
+            'path_foto' => $path_foto,
+            'estado' => EstadoBase::Activo->value,
         ]);
     }
 
@@ -125,14 +122,6 @@ class EmpleadosData
     public static function get_areas()
     {
         return DB::select('SELECT id AS id_area, nombre FROM area WHERE estado = "Activo" ORDER BY nombre ASC');
-    }
-
-    /**
-     * Obtener todas las minas activas
-     */
-    public static function get_minas()
-    {
-        return DB::select('SELECT id AS id_mina, nombre FROM mina WHERE estado = "Activo" ORDER BY nombre ASC');
     }
 
     /**

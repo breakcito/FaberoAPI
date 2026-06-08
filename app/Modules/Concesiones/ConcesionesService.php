@@ -2,10 +2,9 @@
 
 namespace App\Modules\Concesiones;
 
-use App\Shared\Responses\ApiResponse;
-use App\Shared\Enums\_Generic\TipoMineral;
 use App\Modules\Concesiones\Data\ConcesionesData;
 use App\Modules\Concesiones\Data\ContratosData;
+use App\Shared\Responses\ApiResponse;
 
 class ConcesionesService
 {
@@ -15,6 +14,7 @@ class ConcesionesService
     public static function get_concesiones(int $id_usuario): array|object
     {
         $concesiones = ConcesionesData::get_concesiones(id_usuario: $id_usuario);
+
         return ApiResponse::success($concesiones);
     }
 
@@ -24,6 +24,7 @@ class ConcesionesService
     public static function get_empresas(): array|object
     {
         $empresas = ContratosData::get_empresas();
+
         return ApiResponse::success($empresas);
     }
 
@@ -31,25 +32,22 @@ class ConcesionesService
      * Crear una nueva concesión
      */
     public static function crear_concesion(
+        int $id_departamento,
+        int $id_provincia,
+        int $id_distrito,
         string $nombre,
-        string $codigo_concesion,
-        ?string $codigo_reinfo,
-        ?string $ubigeo,
-        string|TipoMineral $tipo_mineral
+        ?string $codigo_reinfo
     ): array|object {
         if (ConcesionesData::existe_nombre($nombre)) {
             return ApiResponse::error('El nombre de la concesión ya existe.');
         }
 
-        // Si viene como Enum, extraemos su valor
-        $val_tipo = $tipo_mineral instanceof TipoMineral ? $tipo_mineral->value : $tipo_mineral;
-
         $id = ConcesionesData::crear_concesion(
+            id_departamento: $id_departamento,
+            id_provincia: $id_provincia,
+            id_distrito: $id_distrito,
             nombre: $nombre,
-            codigo_concesion: $codigo_concesion,
-            codigo_reinfo: $codigo_reinfo,
-            ubigeo: $ubigeo,
-            tipo_mineral: (string) $val_tipo
+            codigo_reinfo: $codigo_reinfo
         );
 
         return ApiResponse::success(ConcesionesData::get_concesion_by_id($id), 'Concesión creada con éxito');
@@ -61,6 +59,7 @@ class ConcesionesService
     public static function get_contratos(int $id_concesion): array|object
     {
         $contratos = ContratosData::get_contratos($id_concesion);
+
         return ApiResponse::success($contratos);
     }
 
@@ -95,6 +94,34 @@ class ConcesionesService
     public static function terminar_contrato(int $id_contrato): array|object
     {
         ContratosData::terminar_contrato($id_contrato);
+
         return ApiResponse::success(null, 'Contrato finalizado correctamente');
+    }
+
+    public static function editar_concesion(
+        int $id,
+        int $id_departamento,
+        int $id_provincia,
+        int $id_distrito,
+        string $nombre,
+        ?string $codigo_reinfo
+    ): array|object {
+        ConcesionesData::editar_concesion(
+            id: $id,
+            id_departamento: $id_departamento,
+            id_provincia: $id_provincia,
+            id_distrito: $id_distrito,
+            nombre: $nombre,
+            codigo_reinfo: $codigo_reinfo
+        );
+
+        return ApiResponse::success(ConcesionesData::get_concesion_by_id($id), 'Concesión editada con éxito');
+    }
+
+    public static function cambiar_estado_concesion(int $id, string $estado): array|object
+    {
+        ConcesionesData::cambiar_estado_concesion($id, $estado);
+
+        return ApiResponse::success(ConcesionesData::get_concesion_by_id($id), 'Estado de la concesión cambiado con éxito');
     }
 }

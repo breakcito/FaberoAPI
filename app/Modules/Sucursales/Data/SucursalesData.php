@@ -8,24 +8,22 @@ use Illuminate\Support\Facades\DB;
 
 class SucursalesData
 {
+    /**
+     * Obtener listado de sucursales o una sucursal específica
+     */
     public static function get_sucursales(?int $id_sucursal = null)
     {
         $sql = '
         SELECT
             sc.id AS id_sucursal,
             sc.nombre,
-            sc.direccion,
-            
-            -- Datos su ubicacion
+            -- Datos de su ubicacion
             sc.id_departamento,
             dep.nombre as departamento,
-            - 
             sc.id_provincia,
             prv.nombre as provincia,
-            - 
             sc.id_distrito,
             dist.nombre as distrito,
-            - 
             sc.direccion,
             
             sc.telefono,
@@ -42,14 +40,18 @@ class SucursalesData
         if ($id_sucursal) {
             $sql .= ' AND sc.id = :id_sucursal';
             $params['id_sucursal'] = $id_sucursal;
+
             return DB::selectOne($sql, $params);
         }
 
         $sql .= ' ORDER BY sc.nombre ASC;';
+
         return DB::select($sql, $params);
     }
 
-
+    /**
+     * Insertar un nuevo registro de sucursal en la base de datos
+     */
     public static function crear_sucursal(
         string $nombre,
         //
@@ -67,10 +69,13 @@ class SucursalesData
             'nombre' => $nombre,
             'direccion' => $direccion,
             'telefono' => $telefono,
-            'estado' => EstadoBase::Activo->value
+            'estado' => EstadoBase::Activo->value,
         ]);
     }
 
+    /**
+     * Verificar si existe una sucursal con el mismo nombre
+     */
     public static function existe_sucursal(string $nombre)
     {
         return Sucursal::where('nombre', $nombre)->exists();

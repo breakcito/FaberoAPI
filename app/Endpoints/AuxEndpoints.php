@@ -19,6 +19,11 @@ Route::middleware('auth.jwt.custom')->group(function () {
             // marcas
             Route::get('/marcas', 'get_marcas');
             Route::post('/marcas', 'crear_marca');
+
+            // ubigeo
+            Route::get('/departamentos', 'get_departamentos');
+            Route::get('/provincias', 'get_provincias');
+            Route::get('/distritos', 'get_distritos');
         });
     });
 });

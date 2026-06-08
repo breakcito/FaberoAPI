@@ -3,7 +3,6 @@
 namespace App\Modules\Concesiones;
 
 use App\Shared\Responses\ApiResponse;
-use App\Shared\Enums\_Generic\TipoMineral;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -30,11 +29,11 @@ class ConcesionesController
     public function crear_concesion(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
+            'id_departamento' => 'required|integer',
+            'id_provincia' => 'required|integer',
+            'id_distrito' => 'required|integer',
             'nombre' => 'required|string|max:255',
-            'codigo_concesion' => 'required|string|max:100',
             'codigo_reinfo' => 'nullable|string|max:100',
-            'ubigeo' => 'nullable|string|max:100',
-            'tipo_mineral' => ['required', Rule::enum(TipoMineral::class)],
         ]);
 
         if ($validator->fails()) {
@@ -44,11 +43,11 @@ class ConcesionesController
         $v = $validator->validated();
 
         $result = ConcesionesService::crear_concesion(
+            id_departamento: (int) $v['id_departamento'],
+            id_provincia: (int) $v['id_provincia'],
+            id_distrito: (int) $v['id_distrito'],
             nombre: (string) $v['nombre'],
-            codigo_concesion: (string) $v['codigo_concesion'],
-            codigo_reinfo: isset($v['codigo_reinfo']) ? (string) $v['codigo_reinfo'] : null,
-            ubigeo: isset($v['ubigeo']) ? (string) $v['ubigeo'] : null,
-            tipo_mineral: (string) $v['tipo_mineral']
+            codigo_reinfo: isset($v['codigo_reinfo']) ? (string) $v['codigo_reinfo'] : null
         );
 
         return response()->json($result);
@@ -89,6 +88,51 @@ class ConcesionesController
     public function terminar_contrato(Request $request, int $id_contrato): JsonResponse
     {
         $result = ConcesionesService::terminar_contrato($id_contrato);
+
+        return response()->json($result);
+    }
+
+    public function editar_concesion(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'id_departamento' => 'required|integer',
+            'id_provincia' => 'required|integer',
+            'id_distrito' => 'required|integer',
+            'nombre' => 'required|string|max:255',
+            'codigo_reinfo' => 'nullable|string|max:100',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()));
+        }
+
+        $v = $validator->validated();
+
+        $result = ConcesionesService::editar_concesion(
+            id: $id,
+            id_departamento: (int) $v['id_departamento'],
+            id_provincia: (int) $v['id_provincia'],
+            id_distrito: (int) $v['id_distrito'],
+            nombre: (string) $v['nombre'],
+            codigo_reinfo: isset($v['codigo_reinfo']) ? (string) $v['codigo_reinfo'] : null
+        );
+
+        return response()->json($result);
+    }
+
+    public function cambiar_estado_concesion(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'estado' => ['required', 'string', Rule::in(['Activo', 'Inactivo'])],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()));
+        }
+
+        $v = $validator->validated();
+
+        $result = ConcesionesService::cambiar_estado_concesion($id, $v['estado']);
 
         return response()->json($result);
     }

@@ -2,9 +2,9 @@
 
 namespace App\Modules\Empleados;
 
+use App\Modules\Empleados\Data\EmpleadosData;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
-use App\Modules\Empleados\Data\EmpleadosData;
 use Illuminate\Http\UploadedFile;
 
 class EmpleadosService
@@ -17,8 +17,8 @@ class EmpleadosService
         $empleados = EmpleadosData::get_empleados(id_empresa: $id_empresa);
 
         foreach ($empleados as $empleado) {
-            if ($empleado->path_foto && !str_starts_with($empleado->path_foto, 'http')) {
-                $empleado->path_foto = asset('storage/' . $empleado->path_foto);
+            if ($empleado->path_foto && ! str_starts_with($empleado->path_foto, 'http')) {
+                $empleado->path_foto = asset('storage/'.$empleado->path_foto);
             }
         }
 
@@ -39,14 +39,6 @@ class EmpleadosService
     public static function get_areas()
     {
         return ApiResponse::success(EmpleadosData::get_areas());
-    }
-
-    /**
-     * Obtener minas activas
-     */
-    public static function get_minas()
-    {
-        return ApiResponse::success(EmpleadosData::get_minas());
     }
 
     /**
@@ -79,8 +71,8 @@ class EmpleadosService
         $path_foto = null;
         if ($foto && $foto->isValid()) {
             $archivos = ArchivoHelper::guardarArchivos('fotos-empleados', [$foto]);
-            if (!empty($archivos)) {
-                $path_foto = asset('storage/' . $archivos[0]['path_relativo']);
+            if (! empty($archivos)) {
+                $path_foto = asset('storage/'.$archivos[0]['path_relativo']);
             }
         }
 
@@ -116,7 +108,7 @@ class EmpleadosService
         }
 
         // Guardar URL completa en BD (no solo el path relativo)
-        $path_foto = asset('storage/' . $archivos[0]['path_relativo']);
+        $path_foto = asset('storage/'.$archivos[0]['path_relativo']);
         EmpleadosData::actualizar_foto($id_empleado, $path_foto);
 
         $empleado = EmpleadosData::get_empleado_by_id($id_empleado);

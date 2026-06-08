@@ -6,14 +6,14 @@ use App\Services\EmpleadosService;
 use App\Services\EmpresasService;
 use App\Services\MarcasService;
 use App\Services\ProveedoresService;
+use App\Services\UbigeoService;
 use App\Shared\Enums\_Generic\EstadoBase;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Http\JsonResponse;
 
 class AuxController extends Controller
 {
-
     public function get_empleados(Request $request): JsonResponse
     {
         $id_empleado = $request->input('id_empleado') ? (int) $request->input('id_empleado') : null;
@@ -27,8 +27,6 @@ class AuxController extends Controller
 
         return response()->json($result);
     }
-
-
 
     /**
      * Obtener proveedores habilitados
@@ -49,8 +47,6 @@ class AuxController extends Controller
         return response()->json($result);
     }
 
-
-
     public function get_empresas(Request $request): JsonResponse
     {
         $id_empresa = $request->input('id_empresa') ? (int) $request->input('id_empresa') : null;
@@ -63,13 +59,12 @@ class AuxController extends Controller
         ));
     }
 
-
-
     public function get_marcas(Request $request): JsonResponse
     {
         $id_marca = $request->input('id_marca') ? (int) $request->input('id_marca') : null;
         $estado_val = $request->input('estado');
         $estado = $estado_val ? EstadoBase::from($estado_val) : null;
+
         return response()->json(MarcasService::get_marcas(id_marca: $id_marca, estado: $estado));
     }
 
@@ -82,6 +77,38 @@ class AuxController extends Controller
         $result = MarcasService::crear_marca(
             nombre: $request->input('nombre')
         );
+
+        return response()->json($result);
+    }
+
+    /**
+     * Obtener listado de departamentos
+     */
+    public function get_departamentos(): JsonResponse
+    {
+        $result = UbigeoService::get_departamentos();
+
+        return response()->json($result);
+    }
+
+    /**
+     * Obtener listado de provincias por departamento
+     */
+    public function get_provincias(Request $request): JsonResponse
+    {
+        $id_departamento = (int) $request->input('id_departamento');
+        $result = UbigeoService::get_provincias($id_departamento);
+
+        return response()->json($result);
+    }
+
+    /**
+     * Obtener listado de distritos por provincia
+     */
+    public function get_distritos(Request $request): JsonResponse
+    {
+        $id_provincia = (int) $request->input('id_provincia');
+        $result = UbigeoService::get_distritos($id_provincia);
 
         return response()->json($result);
     }

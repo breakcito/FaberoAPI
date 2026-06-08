@@ -8,7 +8,9 @@ Route::middleware('auth.jwt.custom')->group(function () {
 
         Route::get('/', 'get_concesiones');
         Route::post('/', 'crear_concesion');
+        Route::put('/{id_concesion}', 'editar_concesion');
         Route::get('/{id_concesion}', 'get_concesion');
+        Route::patch('/{id_concesion}/estado', 'cambiar_estado_concesion');
 
         Route::prefix('contratos')->group(function () {
             Route::get('/empresas', 'get_empresas');

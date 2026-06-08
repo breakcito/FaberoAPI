@@ -8,8 +8,8 @@ use Illuminate\Support\Facades\Route;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
-        channels: __DIR__ . '/../routes/channels.php',
-        commands: __DIR__ . '/../routes/console.php',
+        channels: __DIR__.'/../routes/channels.php',
+        commands: __DIR__.'/../routes/console.php',
         health: '/up',
         then: function () {
             Route::middleware('api')->prefix('api')->group(function () {
@@ -25,7 +25,18 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/Cuentas/CuentasEndpoints.php');
                 require base_path('app/Modules/Perfil/PerfilEndpoints.php');
                 require base_path('app/Modules/Proveedores/ProveedoresEndpoints.php');
+                require base_path('app/Modules/Bancos/BancosEndpoints.php');
+                require base_path('app/Modules/CuentasBancariasProveedor/CuentasBancariasProveedorEndpoints.php');
                 require base_path('app/Modules/ModoAuditoria/ModoAuditoriaEndpoints.php');
+                require base_path('app/Modules/Sucursales/SucursalesEndpoints.php');
+                require base_path('app/Modules/PlantasDestino/PlantasDestinoEndpoints.php');
+                require base_path('app/Modules/CuentasBancariasPlantaDestino/CuentasBancariasPlantaDestinoEndpoints.php');
+                require base_path('app/Modules/Conductores/ConductoresEndpoints.php');
+                require base_path('app/Modules/EmpresasTransporte/EmpresasTransporteEndpoints.php');
+                require base_path('app/Modules/Vehiculos/VehiculosEndpoints.php');
+                require base_path('app/Modules/TiposVehiculo/TiposVehiculoEndpoints.php');
+                require base_path('app/Modules/Marcas/MarcasEndpoints.php');
+                require base_path('app/Modules/EncargadosMuestra/EncargadosMuestraEndpoints.php');
             });
         },
     )

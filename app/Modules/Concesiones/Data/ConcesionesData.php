@@ -16,22 +16,21 @@ class ConcesionesData
         $sql = '
         SELECT DISTINCT
             cn.id AS id_concesion,
+            cn.id_departamento,
+            dep.nombre AS departamento,
+            cn.id_provincia,
+            prov.nombre AS provincia,
+            cn.id_distrito,
+            dist.nombre AS distrito,
             cn.nombre,
-            cn.codigo_concesion,
             cn.codigo_reinfo,
-            cn.ubigeo,
-            cn.tipo_mineral,
             cn.estado,
-            (
-                SELECT 
-                    COUNT(*) 
-                FROM contrato_concesion cc 
-                WHERE 
-                    cc.id_concesion = cn.id AND 
-                    cc.estado = "Activo"
-            ) as contratos_activos
+            0 AS contratos_activos
         FROM
             concesion cn
+        LEFT JOIN departamento dep ON dep.id = cn.id_departamento
+        LEFT JOIN provincia prov ON prov.id = cn.id_provincia
+        LEFT JOIN distrito dist ON dist.id = cn.id_distrito
         ';
 
         $params = [];
@@ -62,18 +61,18 @@ class ConcesionesData
      * Crear una nueva concesión con parámetros explícitos
      */
     public static function crear_concesion(
+        int $id_departamento,
+        int $id_provincia,
+        int $id_distrito,
         string $nombre,
-        string $codigo_concesion,
-        ?string $codigo_reinfo,
-        ?string $ubigeo,
-        string $tipo_mineral
+        ?string $codigo_reinfo
     ): int {
         return Concesion::insertGetId([
+            'id_departamento' => $id_departamento,
+            'id_provincia' => $id_provincia,
+            'id_distrito' => $id_distrito,
             'nombre' => $nombre,
-            'codigo_concesion' => $codigo_concesion,
             'codigo_reinfo' => $codigo_reinfo,
-            'ubigeo' => $ubigeo,
-            'tipo_mineral' => $tipo_mineral,
             'estado' => EstadoBase::Activo->value,
         ]);
     }
@@ -84,5 +83,27 @@ class ConcesionesData
     public static function existe_nombre(string $nombre): bool
     {
         return Concesion::where('nombre', $nombre)->exists();
+    }
+
+    public static function editar_concesion(
+        int $id,
+        int $id_departamento,
+        int $id_provincia,
+        int $id_distrito,
+        string $nombre,
+        ?string $codigo_reinfo
+    ): bool {
+        return Concesion::where('id', $id)->update([
+            'id_departamento' => $id_departamento,
+            'id_provincia' => $id_provincia,
+            'id_distrito' => $id_distrito,
+            'nombre' => $nombre,
+            'codigo_reinfo' => $codigo_reinfo,
+        ]) >= 0;
+    }
+
+    public static function cambiar_estado_concesion(int $id, string $estado): bool
+    {
+        return Concesion::where('id', $id)->update(['estado' => $estado]) >= 0;
     }
 }

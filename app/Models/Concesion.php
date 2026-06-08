@@ -11,11 +11,11 @@ class Concesion extends Model
     public $timestamps = false;
 
     protected $fillable = [
+        'id_departamento',
+        'id_provincia',
+        'id_distrito',
         'nombre',
-        'codigo_concesion',
         'codigo_reinfo',
-        'ubigeo', // coordenadas
-        'tipo_mineral', // TipoMineral
         'estado',
     ];
 }

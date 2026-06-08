@@ -15,7 +15,7 @@ class EmpleadosController
     public function get_empleados(Request $request): JsonResponse
     {
         $id_empresa = $request->query('id_empresa') ? (int) $request->query('id_empresa') : null;
-        $result     = EmpleadosService::get_empleados($id_empresa);
+        $result = EmpleadosService::get_empleados($id_empresa);
 
         return response()->json($result);
     }
@@ -41,16 +41,6 @@ class EmpleadosController
     }
 
     /**
-     * Obtener minas
-     */
-    public function get_minas(Request $request): JsonResponse
-    {
-        $result = EmpleadosService::get_minas();
-
-        return response()->json($result);
-    }
-
-    /**
      * Obtener cargos por área
      */
     public function get_cargos(Request $request, int $id_area): JsonResponse
@@ -66,16 +56,16 @@ class EmpleadosController
     public function crear_empleado(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'id_empresa'         => 'required|integer',
-            'id_cargo'           => 'required|integer',
-            'nombre'             => 'required|string|max:255',
-            'apellido'           => 'required|string|max:255',
-            'dni'                => 'nullable|string|max:20',
-            'ruc'                => 'nullable|string|max:20',
+            'id_empresa' => 'required|integer',
+            'id_cargo' => 'required|integer',
+            'nombre' => 'required|string|max:255',
+            'apellido' => 'required|string|max:255',
+            'dni' => 'nullable|string|max:20',
+            'ruc' => 'nullable|string|max:20',
             'carnet_extranjeria' => 'nullable|string|max:20',
-            'pasaporte'          => 'nullable|string|max:20',
-            'fecha_nacimiento'   => 'nullable|date',
-            'path_foto'          => 'nullable|image|mimes:jpg,png,jpeg|max:2048',
+            'pasaporte' => 'nullable|string|max:20',
+            'fecha_nacimiento' => 'nullable|date',
+            'path_foto' => 'nullable|image|mimes:jpg,png,jpeg|max:2048',
         ]);
 
         if ($validator->fails()) {

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Modules\Proveedores\Data;
+namespace App\Modules\Bancos\Data;
 
 use App\Models\Banco;
 use App\Shared\Enums\_Generic\EstadoBase;
@@ -25,10 +25,12 @@ class BancosData
         if ($id_banco !== null) {
             $sql .= ' AND bc.id = :id_banco';
             $params['id_banco'] = $id_banco;
+
             return (array) DB::selectOne($sql, $params);
         }
 
         $sql .= ' ORDER BY bc.nombre ASC, bc.abreviatura ASC;';
+
         return DB::select($sql, $params);
     }
 
@@ -42,7 +44,7 @@ class BancosData
         return Banco::insertGetId([
             'nombre' => $nombre,
             'abreviatura' => $abreviatura,
-            'estado' => EstadoBase::Activo->value
+            'estado' => EstadoBase::Activo->value,
         ]);
     }
 }

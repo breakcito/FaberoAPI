@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Modules\Proveedores\Controllers;
+namespace App\Modules\Bancos\Controllers;
 
-use App\Modules\Proveedores\Services\BancosService;
+use App\Modules\Bancos\Services\BancosService;
 use Illuminate\Http\Request;
 
 class BancosController
