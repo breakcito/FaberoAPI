@@ -12,7 +12,7 @@ class ConductoresData
     {
         $sql = '
         SELECT
-            c.id,
+            c.id as id_conductor,
             c.dni,
             c.ruc,
             c.nombre,
@@ -40,23 +40,6 @@ class ConductoresData
     public static function get_conductor_by_id(int $id): array
     {
         return self::get_conductores(id: $id);
-    }
-
-    public static function crear_conductor(
-        string $dni,
-        ?string $ruc,
-        string $nombre,
-        string $apellido,
-        string $numeroLicencia
-    ): int {
-        return Conductor::insertGetId([
-            'dni' => $dni,
-            'ruc' => $ruc,
-            'nombre' => $nombre,
-            'apellido' => $apellido,
-            'numero_licencia' => $numeroLicencia,
-            'estado' => EstadoBase::Activo->value,
-        ]);
     }
 
     public static function editar_conductor(

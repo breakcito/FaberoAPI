@@ -7,6 +7,7 @@ use App\Services\EmpresasService;
 use App\Services\MarcasService;
 use App\Services\ProveedoresService;
 use App\Services\UbigeoService;
+use App\Services\ConductoresService;
 use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -109,6 +110,40 @@ class AuxController extends Controller
     {
         $id_provincia = (int) $request->input('id_provincia');
         $result = UbigeoService::get_distritos($id_provincia);
+
+        return response()->json($result);
+    }
+
+    /**
+     * Obtener el listado de conductores activos
+     */
+    public function get_conductores(): JsonResponse
+    {
+        $result = ConductoresService::get_conductores();
+        return response()->json($result);
+    }
+
+    /**
+     * Crear un nuevo conductor en el sistema
+     */
+    public function crear_conductor(Request $request): JsonResponse
+    {
+        $request->validate([
+            'dni' => 'required|string',
+            'nombre' => 'required|string',
+            'apellido' => 'required|string',
+            'numero_licencia' => 'required|string',
+            'ruc' => 'nullable|string',
+        ]);
+
+        $result = ConductoresService::crear_conductor(
+            dni: $request->input('dni'),
+            nombre: $request->input('nombre'),
+            apellido: $request->input('apellido'),
+            numeroLicencia: $request->input('numero_licencia'),
+            ruc: $request->input('ruc'),
+            return_object: true
+        );
 
         return response()->json($result);
     }

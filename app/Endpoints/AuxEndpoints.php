@@ -20,6 +20,10 @@ Route::middleware('auth.jwt.custom')->group(function () {
             Route::get('/marcas', 'get_marcas');
             Route::post('/marcas', 'crear_marca');
 
+            // conductores
+            Route::get('/conductores', 'get_conductores');
+            Route::post('/conductores', 'crear_conductor');
+
             // ubigeo
             Route::get('/departamentos', 'get_departamentos');
             Route::get('/provincias', 'get_provincias');

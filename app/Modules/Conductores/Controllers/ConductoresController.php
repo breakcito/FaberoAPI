@@ -24,18 +24,18 @@ class ConductoresController
 
         return response()->json(ConductoresService::crear_conductor(
             $request->dni,
-            $request->ruc,
             $request->nombre,
             $request->apellido,
-            $request->numero_licencia
+            $request->numero_licencia,
+            $request->ruc,
         ));
     }
 
     public function editar_conductor(Request $request, int $id)
     {
         $request->validate([
-            'dni' => 'required|string|size:8|unique:conductor,dni,'.$id,
-            'ruc' => 'nullable|string|size:11|unique:conductor,ruc,'.$id,
+            'dni' => 'required|string|size:8|unique:conductor,dni,' . $id,
+            'ruc' => 'nullable|string|size:11|unique:conductor,ruc,' . $id,
             'nombre' => 'required|string|max:100',
             'apellido' => 'required|string|max:100',
             'numero_licencia' => 'required|string|max:20',
