@@ -28,6 +28,27 @@ Route::middleware('auth.jwt.custom')->group(function () {
             Route::get('/departamentos', 'get_departamentos');
             Route::get('/provincias', 'get_provincias');
             Route::get('/distritos', 'get_distritos');
+
+            // tipos de vehiculo
+            Route::get('/tipos-vehiculo', 'get_tipos_vehiculo');
+            Route::post('/tipos-vehiculo', 'crear_tipo_vehiculo');
+            Route::put('/tipos-vehiculo/{id}', 'editar_tipo_vehiculo');
+            Route::patch('/tipos-vehiculo/{id}/estado', 'cambiar_estado_tipo_vehiculo');
+
+            // empresas de transporte
+            Route::get('/empresas-transporte', 'get_empresas_transporte');
+
+            // vehiculos
+            Route::get('/vehiculos', 'get_vehiculos');
+            Route::post('/vehiculos', 'crear_vehiculo');
+            Route::put('/vehiculos/{id}', 'editar_vehiculo');
+
+            // motivos de ingreso
+            Route::get('/motivos-ingreso', 'get_motivos_ingreso');
+
+            // visitantes
+            Route::get('/visitantes/buscar', 'buscar_visitante_por_dni');
+            Route::post('/visitantes', 'crear_visitante');
         });
     });
 });

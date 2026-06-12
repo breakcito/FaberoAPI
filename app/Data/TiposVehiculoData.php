@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Modules\TiposVehiculo\Data;
+namespace App\Data;
 
 use App\Models\TipoVehiculo;
 use App\Shared\Enums\_Generic\EstadoBase;
@@ -12,7 +12,7 @@ class TiposVehiculoData
     {
         $sql = '
         SELECT
-            tv.id,
+            tv.id AS id_tipo_vehiculo,
             tv.nombre,
             tv.tiene_carreta,
             tv.es_carreta,
@@ -33,11 +33,6 @@ class TiposVehiculoData
         $sql .= ' ORDER BY tv.nombre ASC;';
 
         return DB::select($sql, $params);
-    }
-
-    public static function get_tipo_vehiculo_by_id(int $id): array
-    {
-        return self::get_tipos_vehiculo(id: $id);
     }
 
     public static function crear_tipo_vehiculo(string $nombre, bool $tieneCarreta, bool $esCarreta): int

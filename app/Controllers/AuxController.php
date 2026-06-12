@@ -8,6 +8,11 @@ use App\Services\MarcasService;
 use App\Services\ProveedoresService;
 use App\Services\UbigeoService;
 use App\Services\ConductoresService;
+use App\Services\TiposVehiculoService;
+use App\Services\EmpresasTransporteService;
+use App\Services\VehiculosService;
+use App\Services\MotivoIngresoService;
+use App\Services\VisitanteService;
 use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -129,11 +134,11 @@ class AuxController extends Controller
     public function crear_conductor(Request $request): JsonResponse
     {
         $request->validate([
-            'dni' => 'required|string',
-            'nombre' => 'required|string',
-            'apellido' => 'required|string',
-            'numero_licencia' => 'required|string',
-            'ruc' => 'nullable|string',
+            'dni' => 'required|string|max:8',
+            'nombre' => 'required|string|max:100',
+            'apellido' => 'required|string|max:100',
+            'numero_licencia' => 'required|string|max:20',
+            'ruc' => 'nullable|string|max:11',
         ]);
 
         $result = ConductoresService::crear_conductor(
@@ -146,5 +151,158 @@ class AuxController extends Controller
         );
 
         return response()->json($result);
+    }
+    /**
+     * Función para obtener el listado de tipos de vehículo
+     */
+    public function get_tipos_vehiculo(Request $request): JsonResponse
+    {
+        $id = $request->input('id') ? (int) $request->input('id') : null;
+        return response()->json(TiposVehiculoService::get_tipos_vehiculo($id));
+    }
+    /**
+     * Crear un nuevo tipo de vehículo en el sistema
+     */
+    public function crear_tipo_vehiculo(Request $request): JsonResponse
+    {
+        $request->validate([
+            'nombre' => 'required|string|max:100',
+            'tiene_carreta' => 'nullable|boolean',
+            'es_carreta' => 'nullable|boolean',
+        ]);
+
+        return response()->json(TiposVehiculoService::crear_tipo_vehiculo(
+            $request->nombre,
+            (bool) $request->input('tiene_carreta', false),
+            (bool) $request->input('es_carreta', false)
+        ));
+    }
+
+    public function editar_tipo_vehiculo(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'nombre' => 'required|string|max:100',
+            'tiene_carreta' => 'nullable|boolean',
+            'es_carreta' => 'nullable|boolean',
+        ]);
+
+        return response()->json(TiposVehiculoService::editar_tipo_vehiculo(
+            $id,
+            $request->nombre,
+            (bool) $request->input('tiene_carreta', false),
+            (bool) $request->input('es_carreta', false)
+        ));
+    }
+
+    public function cambiar_estado_tipo_vehiculo(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'estado' => 'required|string|in:Activo,Inactivo',
+        ]);
+
+        return response()->json(TiposVehiculoService::cambiar_estado_tipo_vehiculo($id, $request->estado));
+    }
+
+    /**
+     * Obtener listado de empresas de transporte activas (datos simplificados)
+     */
+    public function get_empresas_transporte(Request $request): JsonResponse
+    {
+        $id = $request->input('id') ? (int) $request->input('id') : null;
+        return response()->json(EmpresasTransporteService::get_empresas_transporte($id));
+    }
+
+    /**
+     * Obtener listado de vehículos (datos simplificados)
+     */
+    public function get_vehiculos(Request $request): JsonResponse
+    {
+        $serie = $request->input('serie') ?? $request->input('serie_placa');
+        $numero_placa = $request->input('numero_placa');
+
+        return response()->json(VehiculosService::get_vehiculos($serie, $numero_placa));
+    }
+
+    /**
+     * Crear un nuevo vehículo de forma simplificada
+     */
+    public function crear_vehiculo(Request $request): JsonResponse
+    {
+        $request->validate([
+            'serie_placa' => 'nullable|string|max:10',
+            'numero_placa' => 'required|string|max:10',
+            'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
+            'id_tipo_vehiculo' => 'required|integer|exists:tipo_vehiculo,id',
+        ]);
+
+        $result = VehiculosService::crear_vehiculo_simplificado(
+            $request->input('serie_placa'),
+            $request->input('numero_placa'),
+            (int) $request->input('id_empresa_transporte'),
+            (int) $request->input('id_tipo_vehiculo')
+        );
+
+        return response()->json($result);
+    }
+
+    /**
+     * Editar un vehículo de forma simplificada (transportista y tipo de vehículo)
+     */
+    public function editar_vehiculo(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
+            'id_tipo_vehiculo' => 'required|integer|exists:tipo_vehiculo,id',
+        ]);
+
+        $result = VehiculosService::editar_vehiculo_simplificado(
+            $id,
+            (int) $request->input('id_empresa_transporte'),
+            (int) $request->input('id_tipo_vehiculo')
+        );
+
+        return response()->json($result);
+    }
+
+    /**
+     * Obtener listado de motivos de ingreso
+     */
+    public function get_motivos_ingreso(): JsonResponse
+    {
+        return response()->json(MotivoIngresoService::get_motivos_ingreso());
+    }
+
+    /**
+     * Buscar visitante por su DNI
+     */
+    public function buscar_visitante_por_dni(Request $request): JsonResponse
+    {
+        $request->validate([
+            'dni' => 'required|string|max:8',
+        ]);
+
+        return response()->json(VisitanteService::buscar_por_dni($request->query('dni')));
+    }
+
+    /**
+     * Crear un nuevo visitante
+     */
+    public function crear_visitante(Request $request): JsonResponse
+    {
+        $request->validate([
+            'nombre' => 'required|string|max:100',
+            'apellido' => 'required|string|max:100',
+            'dni' => 'required|string|max:8',
+            'telefono' => 'nullable|string|max:50',
+        ]);
+
+        $data = [
+            'nombre' => $request->input('nombre'),
+            'apellido' => $request->input('apellido'),
+            'dni' => $request->input('dni'),
+            'telefono' => $request->input('telefono'),
+        ];
+
+        return response()->json(VisitanteService::crear_visitante($data));
     }
 }

@@ -33,9 +33,10 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/Conductores/ConductoresEndpoints.php');
                 require base_path('app/Modules/EmpresasTransporte/EmpresasTransporteEndpoints.php');
                 require base_path('app/Modules/Vehiculos/VehiculosEndpoints.php');
-                require base_path('app/Modules/TiposVehiculo/TiposVehiculoEndpoints.php');
                 require base_path('app/Modules/Marcas/MarcasEndpoints.php');
                 require base_path('app/Modules/EncargadosMuestra/EncargadosMuestraEndpoints.php');
+                require base_path('app/Modules/RecepcionUnidades/RecepcionUnidadesEndpoints.php');
+                require base_path('app/Modules/RecepcionVisitas/RecepcionVisitasEndpoints.php');
             });
         },
     )

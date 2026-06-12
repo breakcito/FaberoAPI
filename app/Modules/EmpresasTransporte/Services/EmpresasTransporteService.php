@@ -50,6 +50,6 @@ class EmpresasTransporteService
         EmpresasTransporteData::cambiar_estado_empresa_transporte($id, $estado);
         $updated = EmpresasTransporteData::get_empresa_transporte_by_id($id);
 
-        return ApiResponse::success($updated, 'Estado de la empresa de transporte cambiado correctamente');
+        return ApiResponse::success($updated['id'], 'Estado de la empresa de transporte cambiado correctamente');
     }
 }

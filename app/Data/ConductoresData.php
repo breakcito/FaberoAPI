@@ -80,10 +80,17 @@ class ConductoresData
         ?string $ruc = null
     ): bool {
         return Conductor::where('dni', $dni)
-            ->orWhere('nombre', $nombre)
-            ->orWhere('apellido', $apellido)
+            ->orWhere(function ($query) use ($nombre, $apellido) {
+                $query->where('nombre', $nombre)->where('apellido', $apellido);
+            })
             ->orWhere('numero_licencia', $numeroLicencia)
-            ->orWhere('ruc', $ruc)
+            ->orWhere(function ($query) use ($ruc) {
+                if ($ruc !== null && $ruc !== '') {
+                    $query->where('ruc', $ruc);
+                } else {
+                    $query->whereRaw('1=0');
+                }
+            })
             ->exists();
     }
 }
