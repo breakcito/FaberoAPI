@@ -18,17 +18,16 @@ class ConductoresService
         string $nombre,
         string $apellido,
         string $numeroLicencia,
-        ?string $ruc = null,
         ?bool $return_object = false
     ): array {
         // Validamos si ya existe por dni, nombre + apellido, numero de licencia o ruc
-        $ya_existe = ConductoresData::ya_existe($dni, $nombre, $apellido, $numeroLicencia, $ruc);
+        $ya_existe = ConductoresData::ya_existe($dni, $nombre, $apellido, $numeroLicencia);
         if ($ya_existe) {
             return ApiResponse::error('El conductor ya existe');
         }
 
         // si no existe, lo creamos
-        $id = ConductoresData::crear_conductor($dni, $nombre, $apellido, $numeroLicencia, $ruc);
+        $id = ConductoresData::crear_conductor($dni, $nombre, $apellido, $numeroLicencia);
 
         // si se debe devolver el objeto creado
         if ($return_object) {

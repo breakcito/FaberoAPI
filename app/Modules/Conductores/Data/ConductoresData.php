@@ -14,7 +14,6 @@ class ConductoresData
         SELECT
             c.id as id_conductor,
             c.dni,
-            c.ruc,
             c.nombre,
             c.apellido,
             c.numero_licencia,
@@ -45,14 +44,12 @@ class ConductoresData
     public static function editar_conductor(
         int $id,
         string $dni,
-        ?string $ruc,
         string $nombre,
         string $apellido,
         string $numeroLicencia
     ): bool {
         return Conductor::where('id', $id)->update([
             'dni' => $dni,
-            'ruc' => $ruc,
             'nombre' => $nombre,
             'apellido' => $apellido,
             'numero_licencia' => $numeroLicencia,

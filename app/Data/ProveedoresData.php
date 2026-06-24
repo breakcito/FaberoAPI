@@ -22,6 +22,7 @@ class ProveedoresData
             p.id AS id_proveedor,
             p.razon_social,
             p.direccion,
+            p.telefono,
             IFNULL(p.ruc, p.dni) AS documento
         FROM proveedor p
         WHERE 1 = 1

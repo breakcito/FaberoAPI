@@ -18,13 +18,10 @@ class RecepcionVisita extends Model
         'id_empleado_contacto',
         'id_motivo_ingreso',
         'fecha_hora_ingreso',
-        'fecha_hora_salida',
         'observacion',
-        'observacion_salida',
         'con_vehiculo',
         'serie_placa',
         'numero_placa',
-        'estado',
     ];
 
     protected $casts = [

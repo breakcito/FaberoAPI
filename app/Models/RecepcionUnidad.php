@@ -29,9 +29,15 @@ class RecepcionUnidad extends Model
         'estado_salida',
         'fecha_hora_salida',
         'observacion_salida',
+        'id_surcusal',
+        'fecha_hora_inicio_pesaje',
+        'fecha_hora_final_pesaje',
+        'validacion_datos',
+        'estado_pesaje',
     ];
 
     protected $casts = [
         'evidencias' => 'array',
+        'validacion_datos' => 'array',
     ];
 }

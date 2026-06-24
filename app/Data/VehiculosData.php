@@ -20,7 +20,14 @@ class VehiculosData
             tv.nombre AS tipo_vehiculo_nombre,
             v.serie_placa,
             v.numero_placa,
-            v.estado
+            v.estado,
+            (
+                SELECT ru2.id_conductor
+                FROM recepcion_unidad ru2
+                WHERE ru2.id_vehiculo = v.id
+                ORDER BY ru2.id DESC
+                LIMIT 1
+            ) AS last_id_conductor
         FROM
             vehiculo v
         LEFT JOIN empresa_transporte et ON et.id = v.id_empresa_transporte

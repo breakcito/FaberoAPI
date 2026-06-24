@@ -27,6 +27,7 @@ class RecepcionUnidadesData
             ru.id_conductor,
             CONCAT(c.nombre, " ", c.apellido) AS conductor_nombre_completo,
             c.dni AS conductor_dni,
+            c.numero_licencia AS conductor_numero_licencia,
             ru.tipo_ingreso,
             ru.tipo_carga,
             ru.segunda_placa,
@@ -36,7 +37,8 @@ class RecepcionUnidadesData
             ru.estado,
             ru.estado_salida,
             ru.fecha_hora_salida,
-            ru.observacion_salida
+            ru.observacion_salida,
+            ru.estado_pesaje
         FROM
             recepcion_unidad ru
         INNER JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_registro
@@ -118,6 +120,7 @@ class RecepcionUnidadesData
             ru.id_conductor,
             CONCAT(c.nombre, " ", c.apellido) AS conductor_nombre_completo,
             c.dni AS conductor_dni,
+            c.numero_licencia AS conductor_numero_licencia,
             ru.tipo_ingreso,
             ru.tipo_carga,
             ru.segunda_placa,
@@ -127,7 +130,12 @@ class RecepcionUnidadesData
             ru.estado,
             ru.estado_salida,
             ru.fecha_hora_salida,
-            ru.observacion_salida
+            ru.observacion_salida,
+            ru.id_surcusal AS id_sucursal,
+            ru.fecha_hora_inicio_pesaje,
+            ru.fecha_hora_final_pesaje,
+            ru.validacion_datos,
+            ru.estado_pesaje
         FROM
             recepcion_unidad ru
         INNER JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_registro
@@ -141,8 +149,13 @@ class RecepcionUnidadesData
 
         $item = DB::selectOne($sql, ['id' => $id]);
 
-        if ($item && isset($item->evidencias)) {
-            $item->evidencias = json_decode($item->evidencias, true) ?? [];
+        if ($item) {
+            if (isset($item->evidencias)) {
+                $item->evidencias = json_decode($item->evidencias, true) ?? [];
+            }
+            if (isset($item->validacion_datos)) {
+                $item->validacion_datos = json_decode($item->validacion_datos, true) ?? [];
+            }
         }
 
         return $item ? (array) $item : null;
@@ -165,6 +178,8 @@ class RecepcionUnidadesData
             'evidencias' => $data['evidencias'] ?? [],
             'observacion' => $data['observacion'] ?? null,
             'estado' => 'En Planta',
+            'id_surcusal' => $data['id_surcusal'],
+            'estado_pesaje' => 'Sin Pesar',
         ]);
 
         return $recepcion->id;

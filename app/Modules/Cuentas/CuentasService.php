@@ -14,7 +14,21 @@ class CuentasService
 {
     public static function get_cuentas(): array|object
     {
-        return ApiResponse::success(CuentasData::get_cuentas());
+        $cuentas = CuentasData::get_cuentas();
+        
+        $asociaciones = DB::table('sucursal_usuario')
+            ->select('id_usuario', 'id_sucursal')
+            ->get()
+            ->groupBy('id_usuario');
+
+        foreach ($cuentas as $cuenta) {
+            $id_usuario = $cuenta->id_usuario;
+            $cuenta->sucursales = isset($asociaciones[$id_usuario]) 
+                ? $asociaciones[$id_usuario]->pluck('id_sucursal')->toArray() 
+                : [];
+        }
+
+        return ApiResponse::success($cuentas);
     }
 
     public static function get_empleados_sin_cuenta(): array|object
@@ -34,9 +48,10 @@ class CuentasService
         int $id_rol,
         int $id_empleado,
         string $username,
-        string $password
+        string $password,
+        array $sucursales = []
     ): array|object {
-        return DB::transaction(function () use ($id_rol, $id_empleado, $username, $password) {
+        return DB::transaction(function () use ($id_rol, $id_empleado, $username, $password, $sucursales) {
             $id_usuario = CuentasData::insert_usuario(
                 $id_rol,
                 $id_empleado,
@@ -44,7 +59,21 @@ class CuentasService
                 Hash::make($password)
             );
 
+            if (!empty($sucursales)) {
+                $insertData = [];
+                foreach ($sucursales as $id_sucursal) {
+                    $insertData[] = [
+                        'id_usuario' => $id_usuario,
+                        'id_sucursal' => $id_sucursal
+                    ];
+                }
+                DB::table('sucursal_usuario')->insert($insertData);
+            }
+
             $creado = CuentasData::get_usuario_by_id($id_usuario);
+            if ($creado) {
+                $creado->sucursales = $sucursales;
+            }
 
             return ApiResponse::success($creado, 'Cuenta creada correctamente.');
         });
@@ -58,24 +87,42 @@ class CuentasService
         int $id_rol,
         string $username,
         ?string $password = null,
-        ?string $estado = null
+        ?string $estado = null,
+        ?array $sucursales = null
     ): array|object {
-        $updateData = [
-            'id_rol' => $id_rol,
-            'username' => $username
-        ];
+        return DB::transaction(function () use ($id_usuario, $id_rol, $username, $password, $estado, $sucursales) {
+            $updateData = [
+                'id_rol' => $id_rol,
+                'username' => $username
+            ];
 
-        if (!empty($password)) {
-            $updateData['password'] = Hash::make($password);
-        }
+            if (!empty($password)) {
+                $updateData['password'] = Hash::make($password);
+            }
 
-        if (!empty($estado)) {
-            $updateData['estado'] = $estado;
-        }
+            if (!empty($estado)) {
+                $updateData['estado'] = $estado;
+            }
 
-        CuentasData::update_usuario($id_usuario, $updateData);
+            CuentasData::update_usuario($id_usuario, $updateData);
 
-        return ApiResponse::success(null, 'Cuenta actualizada correctamente.');
+            if ($sucursales !== null) {
+                DB::table('sucursal_usuario')->where('id_usuario', $id_usuario)->delete();
+
+                if (!empty($sucursales)) {
+                    $insertData = [];
+                    foreach ($sucursales as $id_sucursal) {
+                        $insertData[] = [
+                            'id_usuario' => $id_usuario,
+                            'id_sucursal' => $id_sucursal
+                        ];
+                    }
+                    DB::table('sucursal_usuario')->insert($insertData);
+                }
+            }
+
+            return ApiResponse::success(null, 'Cuenta actualizada correctamente.');
+        });
     }
 
     /**

@@ -67,7 +67,12 @@ class RecepcionVisitasController extends Controller
         foreach ($visitantes as $index => $v) {
             $fileKey = "visitantes.{$index}.foto_documento";
             if ($request->hasFile($fileKey)) {
-                $archivos[$index] = $request->file($fileKey);
+                $files = $request->file($fileKey);
+                if (is_array($files)) {
+                    $archivos[$index] = $files;
+                } else {
+                    $archivos[$index] = [$files];
+                }
             }
         }
 

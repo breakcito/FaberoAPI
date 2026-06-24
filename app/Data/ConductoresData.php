@@ -14,6 +14,7 @@ class ConductoresData
         SELECT
             c.id as id_conductor,
             c.dni,
+            c.numero_licencia,
             TRIM(CONCAT_WS(" ", NULLIF(TRIM(c.nombre), ""), NULLIF(TRIM(c.apellido), ""))) AS nombre_completo
         FROM
             conductor c
@@ -27,6 +28,8 @@ class ConductoresData
             return (array) DB::selectOne($sql, $params);
         }
 
+        $sql .= ' AND c.estado = \'Activo\'';
+
         $sql .= ' ORDER BY nombre_completo ASC;';
 
         return DB::select($sql, $params);
@@ -37,11 +40,9 @@ class ConductoresData
         string $nombre,
         string $apellido,
         string $numeroLicencia,
-        ?string $ruc,
     ): int {
         return Conductor::insertGetId([
             'dni' => $dni,
-            'ruc' => $ruc,
             'nombre' => $nombre,
             'apellido' => $apellido,
             'numero_licencia' => $numeroLicencia,
@@ -71,26 +72,18 @@ class ConductoresData
     }
 
 
-    // Metodo para validar si ya existe un conductor por dni, nombre + apellido, numero de licencia o ruc
+    // Metodo para validar si ya existe un conductor por dni, nombre + apellido, o numero de licencia
     public static function ya_existe(
         string $dni,
         string $nombre,
         string $apellido,
-        string $numeroLicencia,
-        ?string $ruc = null
+        string $numeroLicencia
     ): bool {
         return Conductor::where('dni', $dni)
             ->orWhere(function ($query) use ($nombre, $apellido) {
                 $query->where('nombre', $nombre)->where('apellido', $apellido);
             })
             ->orWhere('numero_licencia', $numeroLicencia)
-            ->orWhere(function ($query) use ($ruc) {
-                if ($ruc !== null && $ruc !== '') {
-                    $query->where('ruc', $ruc);
-                } else {
-                    $query->whereRaw('1=0');
-                }
-            })
             ->exists();
     }
 }

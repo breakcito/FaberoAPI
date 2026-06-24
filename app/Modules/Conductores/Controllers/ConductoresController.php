@@ -16,7 +16,6 @@ class ConductoresController
     {
         $request->validate([
             'dni' => 'required|string|size:8|unique:conductor,dni',
-            'ruc' => 'nullable|string|size:11|unique:conductor,ruc',
             'nombre' => 'required|string|max:100',
             'apellido' => 'required|string|max:100',
             'numero_licencia' => 'required|string|max:20',
@@ -27,7 +26,6 @@ class ConductoresController
             $request->nombre,
             $request->apellido,
             $request->numero_licencia,
-            $request->ruc,
         ));
     }
 
@@ -35,7 +33,6 @@ class ConductoresController
     {
         $request->validate([
             'dni' => 'required|string|size:8|unique:conductor,dni,' . $id,
-            'ruc' => 'nullable|string|size:11|unique:conductor,ruc,' . $id,
             'nombre' => 'required|string|max:100',
             'apellido' => 'required|string|max:100',
             'numero_licencia' => 'required|string|max:20',
@@ -44,7 +41,6 @@ class ConductoresController
         return response()->json(ConductoresService::editar_conductor(
             $id,
             $request->dni,
-            $request->ruc,
             $request->nombre,
             $request->apellido,
             $request->numero_licencia

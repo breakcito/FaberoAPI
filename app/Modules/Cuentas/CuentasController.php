@@ -47,7 +47,9 @@ class CuentasController extends Controller
             'id_rol' => 'required|exists:rol,id',
             'id_empleado' => 'required|exists:empleado,id|unique:usuario,id_empleado',
             'username' => 'required|string|max:64|unique:usuario,username',
-            'password' => 'required|string|min:6|max:512'
+            'password' => 'required|string|min:6|max:512',
+            'sucursales' => 'nullable|array',
+            'sucursales.*' => 'integer|exists:sucursal,id'
         ], [
             'id_empleado.unique' => 'Este empleado ya tiene una cuenta asignada.',
             'username.unique' => 'El nombre de usuario ya está en uso.',
@@ -64,7 +66,8 @@ class CuentasController extends Controller
             id_rol: (int) $v['id_rol'],
             id_empleado: (int) $v['id_empleado'],
             username: (string) $v['username'],
-            password: (string) $v['password']
+            password: (string) $v['password'],
+            sucursales: isset($v['sucursales']) ? (array) $v['sucursales'] : []
         );
         return response()->json($result);
     }
@@ -83,7 +86,9 @@ class CuentasController extends Controller
                 Rule::unique('usuario', 'username')->ignore($id_usuario)
             ],
             'password' => 'nullable|string|min:6|max:512',
-            'estado' => 'nullable|string'
+            'estado' => 'nullable|string',
+            'sucursales' => 'nullable|array',
+            'sucursales.*' => 'integer|exists:sucursal,id'
         ], [
             'username.unique' => 'El nombre de usuario ya está en uso.',
             'password.min' => 'La nueva contraseña debe tener al menos 6 caracteres.'
@@ -100,7 +105,8 @@ class CuentasController extends Controller
             id_rol: (int) $v['id_rol'],
             username: (string) $v['username'],
             password: isset($v['password']) ? (string) $v['password'] : null,
-            estado: isset($v['estado']) ? (string) $v['estado'] : null
+            estado: isset($v['estado']) ? (string) $v['estado'] : null,
+            sucursales: isset($v['sucursales']) ? (array) $v['sucursales'] : null
         );
         return response()->json($result);
     }

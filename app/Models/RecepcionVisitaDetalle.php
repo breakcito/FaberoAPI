@@ -17,5 +17,8 @@ class RecepcionVisitaDetalle extends Model
         'id_recepcion_visita',
         'id_visitante',
         'url_foto_documento',
+        'fecha_hora_salida',
+        'observacion_salida',
+        'estado',
     ];
 }

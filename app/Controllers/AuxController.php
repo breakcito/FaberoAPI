@@ -13,6 +13,9 @@ use App\Services\EmpresasTransporteService;
 use App\Services\VehiculosService;
 use App\Services\MotivoIngresoService;
 use App\Services\VisitanteService;
+use App\Services\SucursalService;
+use App\Services\ZonasOrigenService;
+use App\Services\EncargadosMuestraService;
 use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -138,7 +141,6 @@ class AuxController extends Controller
             'nombre' => 'required|string|max:100',
             'apellido' => 'required|string|max:100',
             'numero_licencia' => 'required|string|max:20',
-            'ruc' => 'nullable|string|max:11',
         ]);
 
         $result = ConductoresService::crear_conductor(
@@ -146,7 +148,6 @@ class AuxController extends Controller
             nombre: $request->input('nombre'),
             apellido: $request->input('apellido'),
             numeroLicencia: $request->input('numero_licencia'),
-            ruc: $request->input('ruc'),
             return_object: true
         );
 
@@ -304,5 +305,51 @@ class AuxController extends Controller
         ];
 
         return response()->json(VisitanteService::crear_visitante($data));
+    }
+
+    /**
+     * Obtener listado de sucursales activas para el select global
+     */
+    public function get_sucursales(Request $request): JsonResponse
+    {
+        $estado_val = $request->input('estado');
+        $estado = $estado_val ? EstadoBase::from($estado_val) : EstadoBase::Activo;
+
+        $authUser = $request->attributes->get('auth_user');
+        $id_usuario = $authUser ? $authUser->id_usuario : null;
+
+        return response()->json(SucursalService::get_sucursales($estado, $id_usuario));
+    }
+
+    /**
+     * Obtener listado de zonas de origen activas
+     */
+    public function get_zonas_origen(): JsonResponse
+    {
+        return response()->json(ZonasOrigenService::get_zonas_origen());
+    }
+
+    /**
+     * Registrar una nueva zona de origen
+     */
+    public function crear_zona_origen(Request $request): JsonResponse
+    {
+        $request->validate([
+            'nombre' => 'required|string|max:150',
+        ]);
+
+        $result = ZonasOrigenService::crear_zona_origen(
+            $request->input('nombre')
+        );
+
+        return response()->json($result);
+    }
+
+    /**
+     * Obtener listado global de encargados de muestra (solo id y nombre completo)
+     */
+    public function get_encargados_muestra(): JsonResponse
+    {
+        return response()->json(EncargadosMuestraService::get_encargados_muestra());
     }
 }

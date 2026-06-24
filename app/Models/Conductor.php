@@ -15,7 +15,6 @@ class Conductor extends Model
 
     protected $fillable = [
         'dni',
-        'ruc',
         'nombre',
         'apellido',
         'numero_licencia',

@@ -23,18 +23,15 @@ class RecepcionVisitasData
             rv.id_motivo_ingreso,
             mi.nombre AS motivo_ingreso_nombre,
             rv.fecha_hora_ingreso,
-            rv.fecha_hora_salida,
             rv.observacion,
-            rv.observacion_salida,
             rv.con_vehiculo,
             rv.serie_placa,
-            rv.numero_placa,
-            rv.estado
+            rv.numero_placa
         FROM
             recepcion_visita rv
-        INNER JOIN empleado emp_reg ON emp_reg.id = rv.id_empleado_registro
-        INNER JOIN empleado emp_cont ON emp_cont.id = rv.id_empleado_contacto
-        INNER JOIN motivo_ingreso mi ON mi.id = rv.id_motivo_ingreso
+        LEFT JOIN empleado emp_reg ON emp_reg.id = rv.id_empleado_registro
+        LEFT JOIN empleado emp_cont ON emp_cont.id = rv.id_empleado_contacto
+        LEFT JOIN motivo_ingreso mi ON mi.id = rv.id_motivo_ingreso
         WHERE 1 = 1
         ';
 
@@ -68,7 +65,10 @@ class RecepcionVisitasData
                     v.apellido AS visitante_apellido,
                     v.dni AS visitante_dni,
                     v.telefono AS visitante_telefono,
-                    rvd.url_foto_documento
+                    rvd.url_foto_documento,
+                    rvd.fecha_hora_salida,
+                    rvd.observacion_salida,
+                    CASE rvd.estado WHEN 2 THEN 'Fuera de Planta' ELSE 'En Planta' END AS estado
                 FROM
                     recepcion_visita_detalle rvd
                 INNER JOIN visitante v ON v.id = rvd.id_visitante
@@ -82,9 +82,22 @@ class RecepcionVisitasData
                 $detallesAgrupados[$det->id_recepcion_visita][] = (array) $det;
             }
 
-            // Asignar los visitantes a cada recepción
+            // Asignar los visitantes a cada recepción y decodificar fotos del documento
             foreach ($results as $item) {
                 $item->visitantes = $detallesAgrupados[$item->id] ?? [];
+                foreach ($item->visitantes as &$v) {
+                    $val = $v['url_foto_documento'] ?? null;
+                    if (!empty($val)) {
+                        $decoded = json_decode($val, true);
+                        if (is_array($decoded)) {
+                            $v['url_foto_documento'] = $decoded;
+                        } else {
+                            $v['url_foto_documento'] = [$val];
+                        }
+                    } else {
+                        $v['url_foto_documento'] = [];
+                    }
+                }
             }
         }
 
@@ -108,18 +121,15 @@ class RecepcionVisitasData
             rv.id_motivo_ingreso,
             mi.nombre AS motivo_ingreso_nombre,
             rv.fecha_hora_ingreso,
-            rv.fecha_hora_salida,
             rv.observacion,
-            rv.observacion_salida,
             rv.con_vehiculo,
             rv.serie_placa,
-            rv.numero_placa,
-            rv.estado
+            rv.numero_placa
         FROM
             recepcion_visita rv
-        INNER JOIN empleado emp_reg ON emp_reg.id = rv.id_empleado_registro
-        INNER JOIN empleado emp_cont ON emp_cont.id = rv.id_empleado_contacto
-        INNER JOIN motivo_ingreso mi ON mi.id = rv.id_motivo_ingreso
+        LEFT JOIN empleado emp_reg ON emp_reg.id = rv.id_empleado_registro
+        LEFT JOIN empleado emp_cont ON emp_cont.id = rv.id_empleado_contacto
+        LEFT JOIN motivo_ingreso mi ON mi.id = rv.id_motivo_ingreso
         WHERE rv.id = :id
         LIMIT 1;
         ';
@@ -139,7 +149,10 @@ class RecepcionVisitasData
                 v.apellido AS visitante_apellido,
                 v.dni AS visitante_dni,
                 v.telefono AS visitante_telefono,
-                rvd.url_foto_documento
+                rvd.url_foto_documento,
+                rvd.fecha_hora_salida,
+                rvd.observacion_salida,
+                CASE rvd.estado WHEN 2 THEN 'Fuera de Planta' ELSE 'En Planta' END AS estado
             FROM
                 recepcion_visita_detalle rvd
             INNER JOIN visitante v ON v.id = rvd.id_visitante
@@ -148,7 +161,19 @@ class RecepcionVisitasData
         ", ['id' => $id]);
 
         $item->visitantes = array_map(function ($det) {
-            return (array) $det;
+            $v = (array) $det;
+            $val = $v['url_foto_documento'] ?? null;
+            if (!empty($val)) {
+                $decoded = json_decode($val, true);
+                if (is_array($decoded)) {
+                    $v['url_foto_documento'] = $decoded;
+                } else {
+                    $v['url_foto_documento'] = [$val];
+                }
+            } else {
+                $v['url_foto_documento'] = [];
+            }
+            return $v;
         }, $detalles);
 
         return (array) $item;
@@ -168,7 +193,6 @@ class RecepcionVisitasData
             'serie_placa' => $data['serie_placa'] ?? null,
             'numero_placa' => $data['numero_placa'] ?? null,
             'fecha_hora_ingreso' => now()->toDateTimeString(),
-            'estado' => EstadoVisita::EnPlanta->value,
         ]);
 
         return $recepcion->id;

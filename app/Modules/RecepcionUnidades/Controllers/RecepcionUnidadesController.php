@@ -43,6 +43,7 @@ class RecepcionUnidadesController extends Controller
             'observacion' => 'nullable|string',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
+            'id_sucursal' => 'required|integer|exists:sucursal,id',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
@@ -60,6 +61,7 @@ class RecepcionUnidadesController extends Controller
             'tipo_carga' => $request->input('tipo_carga'),
             'segunda_placa' => $request->input('segunda_placa'),
             'observacion' => $request->input('observacion'),
+            'id_surcusal' => (int) $request->input('id_sucursal'),
         ];
 
         // Obtener archivos subidos

@@ -20,14 +20,12 @@ class ConductoresService
         string $nombre,
         string $apellido,
         string $numeroLicencia,
-        ?string $ruc = null,
     ): array {
         $response = ConductoresServiceGlobal::crear_conductor(
             $dni,
             $nombre,
             $apellido,
             $numeroLicencia,
-            $ruc
         );
 
         if ($response['success']) {
@@ -42,12 +40,11 @@ class ConductoresService
     public static function editar_conductor(
         int $id,
         string $dni,
-        ?string $ruc,
         string $nombre,
         string $apellido,
         string $numeroLicencia
     ): array {
-        ConductoresData::editar_conductor($id, $dni, $ruc, $nombre, $apellido, $numeroLicencia);
+        ConductoresData::editar_conductor($id, $dni, $nombre, $apellido, $numeroLicencia);
         $updated = ConductoresData::get_conductor_by_id($id);
 
         return ApiResponse::success($updated, 'Conductor editado correctamente');
