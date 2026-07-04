@@ -2,6 +2,7 @@
 
 namespace App\Modules\RecepcionMineral\Data;
 
+use App\Shared\Enums\_Generic\EstadoPesaje;
 use Illuminate\Support\Facades\DB;
 
 class RecepcionMineralData
@@ -53,7 +54,7 @@ class RecepcionMineralData
 
         $params = ['id_sucursal' => (int) $filters['id_sucursal']];
 
-        if (!empty($filters['estado_pesaje'])) {
+        if (! empty($filters['estado_pesaje'])) {
             $sql .= ' AND ru.estado_pesaje = :estado_pesaje';
             $params['estado_pesaje'] = $filters['estado_pesaje'];
         } else {
@@ -143,13 +144,13 @@ class RecepcionMineralData
             if (isset($item->evidencias)) {
                 $item->evidencias = json_decode($item->evidencias, true) ?? [];
             }
-            $item->peso_inicial = $item->peso_inicial !== null ? (float)$item->peso_inicial : null;
-            $item->peso_final = $item->peso_final !== null ? (float)$item->peso_final : null;
-            $item->peso_neto = $item->peso_neto !== null ? (float)$item->peso_neto : null;
-            $item->id_vehiculo = $item->id_vehiculo !== null ? (int)$item->id_vehiculo : null;
-            $item->id_empresa_transporte = $item->id_empresa_transporte !== null ? (int)$item->id_empresa_transporte : null;
-            $item->id_tipo_vehiculo = $item->id_tipo_vehiculo !== null ? (int)$item->id_tipo_vehiculo : null;
-            $item->id_conductor = $item->id_conductor !== null ? (int)$item->id_conductor : null;
+            $item->peso_inicial = $item->peso_inicial !== null ? (float) $item->peso_inicial : null;
+            $item->peso_final = $item->peso_final !== null ? (float) $item->peso_final : null;
+            $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
+            $item->id_vehiculo = $item->id_vehiculo !== null ? (int) $item->id_vehiculo : null;
+            $item->id_empresa_transporte = $item->id_empresa_transporte !== null ? (int) $item->id_empresa_transporte : null;
+            $item->id_tipo_vehiculo = $item->id_tipo_vehiculo !== null ? (int) $item->id_tipo_vehiculo : null;
+            $item->id_conductor = $item->id_conductor !== null ? (int) $item->id_conductor : null;
         }
 
         return $results;
@@ -221,14 +222,15 @@ class RecepcionMineralData
             if (isset($item->evidencias)) {
                 $item->evidencias = json_decode($item->evidencias, true) ?? [];
             }
-            $item->peso_inicial = $item->peso_inicial !== null ? (float)$item->peso_inicial : null;
-            $item->peso_final = $item->peso_final !== null ? (float)$item->peso_final : null;
-            $item->peso_neto = $item->peso_neto !== null ? (float)$item->peso_neto : null;
-            $item->id_vehiculo = $item->id_vehiculo !== null ? (int)$item->id_vehiculo : null;
-            $item->id_empresa_transporte = $item->id_empresa_transporte !== null ? (int)$item->id_empresa_transporte : null;
-            $item->id_tipo_vehiculo = $item->id_tipo_vehiculo !== null ? (int)$item->id_tipo_vehiculo : null;
-            $item->id_conductor = $item->id_conductor !== null ? (int)$item->id_conductor : null;
-            return (array)$item;
+            $item->peso_inicial = $item->peso_inicial !== null ? (float) $item->peso_inicial : null;
+            $item->peso_final = $item->peso_final !== null ? (float) $item->peso_final : null;
+            $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
+            $item->id_vehiculo = $item->id_vehiculo !== null ? (int) $item->id_vehiculo : null;
+            $item->id_empresa_transporte = $item->id_empresa_transporte !== null ? (int) $item->id_empresa_transporte : null;
+            $item->id_tipo_vehiculo = $item->id_tipo_vehiculo !== null ? (int) $item->id_tipo_vehiculo : null;
+            $item->id_conductor = $item->id_conductor !== null ? (int) $item->id_conductor : null;
+
+            return (array) $item;
         }
 
         return null;
@@ -289,7 +291,8 @@ class RecepcionMineralData
                 $item->validacion_datos = json_decode($item->validacion_datos, true) ?? [];
             }
             $item->lotes = self::get_lotes_by_recepcion($id);
-            return (array)$item;
+
+            return (array) $item;
         }
 
         return null;
@@ -360,40 +363,44 @@ class RecepcionMineralData
         LEFT JOIN empleado emp_reg ON emp_reg.id = lm.id_empleado_registro
         WHERE
             ru.id_surcusal = :id_sucursal
+            AND ru.estado_pesaje = :estado_pesaje
         ';
 
-        $params = ['id_sucursal' => (int)$filters['id_sucursal']];
+        $params = [
+            'id_sucursal' => (int) $filters['id_sucursal'],
+            'estado_pesaje' => EstadoPesaje::Pesado->value,
+        ];
 
-        if (!empty($filters['fecha_inicio'])) {
+        if (! empty($filters['fecha_inicio'])) {
             $sql .= ' AND DATE(lm.created_at) >= :fecha_inicio';
             $params['fecha_inicio'] = $filters['fecha_inicio'];
         }
 
-        if (!empty($filters['fecha_fin'])) {
+        if (! empty($filters['fecha_fin'])) {
             $sql .= ' AND DATE(lm.created_at) <= :fecha_fin';
             $params['fecha_fin'] = $filters['fecha_fin'];
         }
 
-        if (!empty($filters['tipo_ingreso'])) {
+        if (! empty($filters['tipo_ingreso'])) {
             $sql .= ' AND ru.tipo_ingreso = :tipo_ingreso';
             $params['tipo_ingreso'] = $filters['tipo_ingreso'];
         }
 
-        if (!empty($filters['placa'])) {
+        if (! empty($filters['placa'])) {
             $sql .= ' AND (v.numero_placa = :placa1 OR CONCAT(COALESCE(v.serie_placa, ""), "-", v.numero_placa) = :placa2 OR v.serie_placa = :placa3)';
             $params['placa1'] = $filters['placa'];
             $params['placa2'] = $filters['placa'];
             $params['placa3'] = $filters['placa'];
         }
 
-        if (!empty($filters['id_lote_mineral'])) {
+        if (! empty($filters['id_lote_mineral'])) {
             $sql .= ' AND lm.id = :id_lote_mineral';
-            $params['id_lote_mineral'] = (int)$filters['id_lote_mineral'];
+            $params['id_lote_mineral'] = (int) $filters['id_lote_mineral'];
         }
 
-        if (!empty($filters['id_empresa_transporte'])) {
+        if (! empty($filters['id_empresa_transporte'])) {
             $sql .= ' AND COALESCE(lm.id_empresa_transporte, ru.id_empresa_transporte) = :id_empresa_transporte';
-            $params['id_empresa_transporte'] = (int)$filters['id_empresa_transporte'];
+            $params['id_empresa_transporte'] = (int) $filters['id_empresa_transporte'];
         }
 
         $sql .= ' ORDER BY lm.created_at DESC;';
@@ -404,9 +411,9 @@ class RecepcionMineralData
             if (isset($item->lote_evidencias)) {
                 $item->lote_evidencias = json_decode($item->lote_evidencias, true) ?? [];
             }
-            $item->peso_inicial = $item->peso_inicial !== null ? (float)$item->peso_inicial : null;
-            $item->peso_final = $item->peso_final !== null ? (float)$item->peso_final : null;
-            $item->peso_neto = $item->peso_neto !== null ? (float)$item->peso_neto : null;
+            $item->peso_inicial = $item->peso_inicial !== null ? (float) $item->peso_inicial : null;
+            $item->peso_final = $item->peso_final !== null ? (float) $item->peso_final : null;
+            $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
         }
 
         return $results;
