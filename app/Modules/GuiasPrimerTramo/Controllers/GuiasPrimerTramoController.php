@@ -7,6 +7,7 @@ use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 
 class GuiasPrimerTramoController extends Controller
 {
@@ -77,13 +78,38 @@ class GuiasPrimerTramoController extends Controller
             'serie_guia_transportista' => 'nullable|string|max:10',
             'numero_guia_transportista' => 'nullable|string|max:20',
             'sin_guia_transportista' => 'nullable|boolean',
-            'lotes' => 'required|array|min:1',
-            'lotes.*.id_lote_mineral' => 'required|integer|exists:lote_mineral,id',
-            'lotes.*.peso_bruto' => 'required|numeric|min:0',
-            'lotes.*.tara' => 'required|numeric|min:0',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
         ]);
+
+        // El frontend envía `lotes` como JSON-string dentro de multipart/form-data.
+        // Lo parseamos manualmente y validamos su estructura.
+        $lotesRaw = $request->input('lotes');
+        $lotes = is_string($lotesRaw) ? json_decode($lotesRaw, true) : $lotesRaw;
+
+        if (! is_array($lotes) || count($lotes) === 0) {
+            return response()->json(ApiResponse::error('Debe agregar al menos un lote a la guía.'), 422);
+        }
+
+        foreach ($lotes as $idx => $lote) {
+            if (! is_array($lote)) {
+                return response()->json(ApiResponse::error("Lote en posición {$idx} con formato inválido."), 422);
+            }
+            if (empty($lote['id_lote_mineral']) || ! is_numeric($lote['id_lote_mineral'])) {
+                return response()->json(ApiResponse::error("Lote {$idx}: id_lote_mineral es requerido."), 422);
+            }
+            if (! isset($lote['peso_bruto']) || ! is_numeric($lote['peso_bruto']) || (float) $lote['peso_bruto'] < 0) {
+                return response()->json(ApiResponse::error("Lote {$idx}: peso_bruto inválido."), 422);
+            }
+            if (! isset($lote['tara']) || ! is_numeric($lote['tara']) || (float) $lote['tara'] < 0) {
+                return response()->json(ApiResponse::error("Lote {$idx}: tara inválida."), 422);
+            }
+            // Validar existencia del lote
+            $exists = DB::table('lote_mineral')->where('id', (int) $lote['id_lote_mineral'])->exists();
+            if (! $exists) {
+                return response()->json(ApiResponse::error("Lote {$idx}: id_lote_mineral no existe."), 422);
+            }
+        }
 
         $data = [
             'id_sucursal' => $request->input('id_sucursal'),
@@ -104,8 +130,6 @@ class GuiasPrimerTramoController extends Controller
             'numero_guia_transportista' => $request->input('numero_guia_transportista'),
             'sin_guia_transportista' => $request->boolean('sin_guia_transportista'),
         ];
-
-        $lotes = $request->input('lotes');
 
         $archivos = [];
         if ($request->hasFile('evidencias')) {

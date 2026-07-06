@@ -109,10 +109,8 @@ class GuiasPrimerTramoService
             ]);
 
             // 5. Crear los lotes de la guía con su correlativo individual.
-            // El correlativo se genera con CorrelativoHelper pasando el id_guia_primer_tramo como filtro,
-            // de modo que cada guía tenga su propia numeración 1, 2, 3, ...
-            $filtrosLote = ['id_guia_primer_tramo' => $guiaId];
-
+           
+           
             foreach ($lotes as $idx => $lote) {
                 $pesoBruto = (float) ($lote['peso_bruto'] ?? 0);
                 $tara = (float) ($lote['tara'] ?? 0);
@@ -121,7 +119,7 @@ class GuiasPrimerTramoService
                 $correlativoData = CorrelativoHelper::generar(
                     tabla: 'lote_guia',
                     prefijo: 'FB',
-                    filtros: $filtrosLote,
+                    filtros: [],
                     longitudCeros: 5,
                     reseteo: Periodo::Anual
                 );
