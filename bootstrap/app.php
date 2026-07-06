@@ -39,6 +39,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/RecepcionUnidades/RecepcionUnidadesEndpoints.php');
                 require base_path('app/Modules/RecepcionVisitas/RecepcionVisitasEndpoints.php');
                 require base_path('app/Modules/RecepcionMineral/RecepcionMineralEndpoints.php');
+                require base_path('app/Modules/GuiasPrimerTramo/GuiasPrimerTramoEndpoints.php');
             });
         },
     )

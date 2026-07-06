@@ -2,13 +2,13 @@
 
 namespace App\Modules\RecepcionMineral\Services;
 
+use App\Models\LoteMineral;
 use App\Models\RecepcionUnidad;
 use App\Models\Vehiculo;
-use App\Models\LoteMineral;
 use App\Modules\RecepcionMineral\Data\RecepcionMineralData;
+use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Helpers\CorrelativoHelper;
-use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Support\Facades\DB;
 
@@ -24,6 +24,7 @@ class RecepcionMineralService
         }
 
         $data = RecepcionMineralData::get_recepciones_mineral($filters);
+
         return ApiResponse::success($data, 'Recepciones obtenidas correctamente');
     }
 
@@ -33,7 +34,7 @@ class RecepcionMineralService
     public static function iniciar_pesaje(int $id): array
     {
         $recepcion = RecepcionUnidad::find($id);
-        if (!$recepcion) {
+        if (! $recepcion) {
             return ApiResponse::error('No se encontró el registro de recepción.');
         }
 
@@ -42,6 +43,7 @@ class RecepcionMineralService
         $recepcion->save();
 
         $updated = RecepcionMineralData::get_recepcion_by_id_with_lotes($id);
+
         return ApiResponse::success($updated, 'Proceso de pesaje iniciado correctamente.');
     }
 
@@ -51,7 +53,7 @@ class RecepcionMineralService
     public static function validar_campo(int $id, string $field, $value): array
     {
         $recepcion = RecepcionUnidad::find($id);
-        if (!$recepcion) {
+        if (! $recepcion) {
             return ApiResponse::error('No se encontró el registro de recepción.');
         }
 
@@ -76,10 +78,10 @@ class RecepcionMineralService
                     $vehiculo = Vehiculo::find($recepcion->id_vehiculo);
                 }
 
-                if (!$vehiculo) {
+                if (! $vehiculo) {
                     // Si no tiene vehículo (caso ficticio sin asignar), creamos uno nuevo
                     $vehiculo = Vehiculo::create([
-                        'estado' => 'Activo'
+                        'estado' => 'Activo',
                     ]);
                     $recepcion->id_vehiculo = $vehiculo->id;
                 }
@@ -97,15 +99,15 @@ class RecepcionMineralService
                 break;
 
             case 'empresa_transporte':
-                $recepcion->id_empresa_transporte = $value ? (int)$value : null;
+                $recepcion->id_empresa_transporte = $value ? (int) $value : null;
                 break;
 
             case 'tipo_vehiculo':
-                $recepcion->id_tipo_vehiculo = $value ? (int)$value : null;
+                $recepcion->id_tipo_vehiculo = $value ? (int) $value : null;
                 if ($recepcion->id_vehiculo) {
                     $vehiculo = Vehiculo::find($recepcion->id_vehiculo);
                     if ($vehiculo) {
-                        $vehiculo->id_tipo_vehiculo = $value ? (int)$value : null;
+                        $vehiculo->id_tipo_vehiculo = $value ? (int) $value : null;
                         $vehiculo->save();
                     }
                 }
@@ -116,7 +118,16 @@ class RecepcionMineralService
                 break;
 
             case 'conductor':
-                $recepcion->id_conductor = $value ? (int)$value : null;
+                $recepcion->id_conductor = $value ? (int) $value : null;
+                break;
+
+            case 'fecha_hora_ingreso':
+                if ($value) {
+                    $parsed = date('Y-m-d H:i:s', strtotime($value));
+                    if ($parsed) {
+                        $recepcion->fecha_hora_ingreso = $parsed;
+                    }
+                }
                 break;
         }
 
@@ -126,6 +137,7 @@ class RecepcionMineralService
         $recepcion->save();
 
         $updated = RecepcionMineralData::get_recepcion_by_id_with_lotes($id);
+
         return ApiResponse::success($updated, 'Campo validado y actualizado correctamente.');
     }
 
@@ -135,7 +147,7 @@ class RecepcionMineralService
     public static function crear_lote(int $id, int $idEmpleadoRegistro): array
     {
         $recepcion = RecepcionUnidad::find($id);
-        if (!$recepcion) {
+        if (! $recepcion) {
             return ApiResponse::error('No se encontró el registro de recepción.');
         }
 
@@ -157,6 +169,7 @@ class RecepcionMineralService
         ]);
 
         $loteDetalle = RecepcionMineralData::get_lote_by_id($lote->id);
+
         return ApiResponse::success($loteDetalle, 'Lote generado correctamente.');
     }
 
@@ -166,11 +179,12 @@ class RecepcionMineralService
     public static function eliminar_lote(int $loteId): array
     {
         $lote = LoteMineral::find($loteId);
-        if (!$lote) {
+        if (! $lote) {
             return ApiResponse::error('No se encontró el registro de lote.');
         }
 
         $lote->delete();
+
         return ApiResponse::success(null, 'Lote eliminado correctamente.');
     }
 
@@ -180,24 +194,24 @@ class RecepcionMineralService
     public static function registrar_peso_inicial(int $loteId, array $data, array $archivos): array
     {
         $lote = LoteMineral::find($loteId);
-        if (!$lote) {
+        if (! $lote) {
             return ApiResponse::error('No se encontró el registro de lote.');
         }
 
         // Guardar los archivos de evidencias físicas en storage/app/public/lotes
         $evidenciasGuardadas = [];
-        if (!empty($archivos)) {
+        if (! empty($archivos)) {
             $evidenciasGuardadas = ArchivoHelper::guardarArchivos('lotes', $archivos);
         }
 
-        $lote->id_proveedor_minero = $data['id_proveedor_minero'] ? (int)$data['id_proveedor_minero'] : null;
-        $lote->id_encargado_muestra = $data['id_encargado_muestra'] ? (int)$data['id_encargado_muestra'] : null;
-        $lote->id_zona_origen = $data['id_zona_origen'] ? (int)$data['id_zona_origen'] : null;
+        $lote->id_proveedor_minero = $data['id_proveedor_minero'] ? (int) $data['id_proveedor_minero'] : null;
+        $lote->id_encargado_muestra = $data['id_encargado_muestra'] ? (int) $data['id_encargado_muestra'] : null;
+        $lote->id_zona_origen = $data['id_zona_origen'] ? (int) $data['id_zona_origen'] : null;
         $lote->numero_contacto = $data['numero_contacto'];
         $lote->tipo_carga = $data['tipo_carga'];
         $lote->tipo_producto = $data['tipo_producto'];
         $lote->tipo_mineral = $data['tipo_mineral'];
-        $lote->peso_inicial = (float)$data['peso_inicial'];
+        $lote->peso_inicial = (float) $data['peso_inicial'];
         $lote->observacion_peso_inicial = $data['observacion_peso_inicial'] ?? null;
         $lote->fecha_hora_peso_inicial = now()->toDateTimeString();
         $lote->evidencias = $evidenciasGuardadas;
@@ -214,6 +228,7 @@ class RecepcionMineralService
         $lote->save();
 
         $updatedLote = RecepcionMineralData::get_lote_by_id($loteId);
+
         return ApiResponse::success($updatedLote, 'Peso inicial registrado correctamente.');
     }
 
@@ -223,11 +238,11 @@ class RecepcionMineralService
     public static function registrar_peso_final(int $loteId, array $data, array $archivos): array
     {
         $lote = LoteMineral::find($loteId);
-        if (!$lote) {
+        if (! $lote) {
             return ApiResponse::error('No se encontró el registro de lote.');
         }
 
-        if ($lote->peso_inicial === null && !isset($data['peso_inicial'])) {
+        if ($lote->peso_inicial === null && ! isset($data['peso_inicial'])) {
             return ApiResponse::error('Debe registrar primero el peso inicial del lote.');
         }
 
@@ -241,20 +256,20 @@ class RecepcionMineralService
             $evidenciasGuardadas = $lote->evidencias ?? [];
         }
 
-        if (!empty($archivos)) {
+        if (! empty($archivos)) {
             $nuevosArchivos = ArchivoHelper::guardarArchivos('lotes', $archivos);
             $evidenciasGuardadas = array_merge($evidenciasGuardadas, $nuevosArchivos);
         }
 
         // Actualizar datos del peso inicial si fueron provistos
         if (array_key_exists('id_proveedor_minero', $data)) {
-            $lote->id_proveedor_minero = $data['id_proveedor_minero'] ? (int)$data['id_proveedor_minero'] : null;
+            $lote->id_proveedor_minero = $data['id_proveedor_minero'] ? (int) $data['id_proveedor_minero'] : null;
         }
         if (array_key_exists('id_encargado_muestra', $data)) {
-            $lote->id_encargado_muestra = $data['id_encargado_muestra'] ? (int)$data['id_encargado_muestra'] : null;
+            $lote->id_encargado_muestra = $data['id_encargado_muestra'] ? (int) $data['id_encargado_muestra'] : null;
         }
         if (array_key_exists('id_zona_origen', $data)) {
-            $lote->id_zona_origen = $data['id_zona_origen'] ? (int)$data['id_zona_origen'] : null;
+            $lote->id_zona_origen = $data['id_zona_origen'] ? (int) $data['id_zona_origen'] : null;
         }
         if (array_key_exists('numero_contacto', $data)) {
             $lote->numero_contacto = $data['numero_contacto'];
@@ -269,26 +284,26 @@ class RecepcionMineralService
             $lote->tipo_mineral = $data['tipo_mineral'];
         }
         if (array_key_exists('peso_inicial', $data) && $data['peso_inicial'] !== null) {
-            $lote->peso_inicial = (float)$data['peso_inicial'];
+            $lote->peso_inicial = (float) $data['peso_inicial'];
         }
         if (array_key_exists('observacion_peso_inicial', $data)) {
             $lote->observacion_peso_inicial = $data['observacion_peso_inicial'];
         }
         if (array_key_exists('id_vehiculo', $data)) {
-            $lote->id_vehiculo = $data['id_vehiculo'] ? (int)$data['id_vehiculo'] : null;
+            $lote->id_vehiculo = $data['id_vehiculo'] ? (int) $data['id_vehiculo'] : null;
         }
         if (array_key_exists('id_empresa_transporte', $data)) {
-            $lote->id_empresa_transporte = $data['id_empresa_transporte'] ? (int)$data['id_empresa_transporte'] : null;
+            $lote->id_empresa_transporte = $data['id_empresa_transporte'] ? (int) $data['id_empresa_transporte'] : null;
         }
         if (array_key_exists('id_tipo_vehiculo', $data)) {
-            $lote->id_tipo_vehiculo = $data['id_tipo_vehiculo'] ? (int)$data['id_tipo_vehiculo'] : null;
+            $lote->id_tipo_vehiculo = $data['id_tipo_vehiculo'] ? (int) $data['id_tipo_vehiculo'] : null;
         }
         if (array_key_exists('id_conductor', $data)) {
-            $lote->id_conductor = $data['id_conductor'] ? (int)$data['id_conductor'] : null;
+            $lote->id_conductor = $data['id_conductor'] ? (int) $data['id_conductor'] : null;
         }
 
-        $pesoFinal = (float)$data['peso_final'];
-        $pesoInicial = (float)$lote->peso_inicial;
+        $pesoFinal = (float) $data['peso_final'];
+        $pesoInicial = (float) $lote->peso_inicial;
 
         $lote->peso_final = $pesoFinal;
         $lote->observacion_peso_final = $data['observacion_peso_final'] ?? null;
@@ -298,6 +313,7 @@ class RecepcionMineralService
         $lote->save();
 
         $updatedLote = RecepcionMineralData::get_lote_by_id($loteId);
+
         return ApiResponse::success($updatedLote, 'Peso final registrado correctamente.');
     }
 
@@ -307,18 +323,18 @@ class RecepcionMineralService
     public static function cerrar_proceso(int $id): array
     {
         $recepcion = RecepcionUnidad::find($id);
-        if (!$recepcion) {
+        if (! $recepcion) {
             return ApiResponse::error('No se encontró el registro de recepción.');
         }
 
-        // Validaciones: 
+        // Validaciones:
         // 1. Que todos los checks de validacion_datos sean true
         $validacionDatos = $recepcion->validacion_datos;
         if (empty($validacionDatos)) {
             return ApiResponse::error('No se han validado los datos de vigilancia.');
         }
         foreach ($validacionDatos as $key => $val) {
-            if (!$val) {
+            if (! $val) {
                 return ApiResponse::error("Falta validar el campo: {$key}.");
             }
         }
@@ -348,14 +364,19 @@ class RecepcionMineralService
     {
         // 1. Crear un vehículo ficticio en la BD
         $uniqueId = rand(1000, 9999);
-        $plateNum = date('ymd') . $uniqueId;
+        $plateNum = date('ymd').$uniqueId;
         $vehiculo = Vehiculo::create([
             'serie_placa' => 'FICT',
             'numero_placa' => $plateNum,
-            'estado' => 'Activo'
+            'estado' => 'Activo',
         ]);
 
-        // 2. Crear el registro de recepcion_unidad vacío
+        // 2. Resolver la fecha/hora de ingreso (provista o ahora)
+        $fechaHoraIngreso = ! empty($data['fecha_hora_ingreso'])
+            ? date('Y-m-d H:i:s', strtotime($data['fecha_hora_ingreso']))
+            : now()->toDateTimeString();
+
+        // 3. Crear el registro de recepcion_unidad vacío
         $recepcion = RecepcionUnidad::create([
             'id_empleado_registro' => $data['id_empleado_registro'],
             'id_vehiculo' => $vehiculo->id,
@@ -365,7 +386,7 @@ class RecepcionMineralService
             'tipo_ingreso' => 'Ficticio',
             'tipo_carga' => 'Mixto',
             'segunda_placa' => null,
-            'fecha_hora_ingreso' => now()->toDateTimeString(),
+            'fecha_hora_ingreso' => $fechaHoraIngreso,
             'estado' => 'En Planta',
             'estado_pesaje' => 'Sin Pesar',
             'id_surcusal' => $data['id_sucursal'],
@@ -376,10 +397,11 @@ class RecepcionMineralService
                 'tipo_vehiculo' => false,
                 'segunda_placa' => false,
                 'conductor' => false,
-            ]
+            ],
         ]);
 
         $nuevaRecepcion = RecepcionMineralData::get_recepcion_by_id_with_lotes($recepcion->id);
+
         return ApiResponse::success($nuevaRecepcion, 'Unidad ficticia creada correctamente.');
     }
 
@@ -393,6 +415,7 @@ class RecepcionMineralService
         }
 
         $data = RecepcionMineralData::get_resumen_balanza($filters);
+
         return ApiResponse::success($data, 'Resumen de balanza obtenido correctamente.');
     }
 
@@ -402,7 +425,7 @@ class RecepcionMineralService
     public static function actualizar_lote(int $loteId, array $data, array $archivos): array
     {
         $lote = LoteMineral::find($loteId);
-        if (!$lote) {
+        if (! $lote) {
             return ApiResponse::error('No se encontró el registro de lote.');
         }
 
@@ -416,23 +439,23 @@ class RecepcionMineralService
             $evidenciasGuardadas = $lote->evidencias ?? [];
         }
 
-        if (!empty($archivos)) {
+        if (! empty($archivos)) {
             $nuevosArchivos = ArchivoHelper::guardarArchivos('lotes', $archivos);
             $evidenciasGuardadas = array_merge($evidenciasGuardadas, $nuevosArchivos);
         }
 
         // Actualizar datos del lote
-        $lote->id_proveedor_minero = $data['id_proveedor_minero'] ? (int)$data['id_proveedor_minero'] : null;
-        $lote->id_encargado_muestra = $data['id_encargado_muestra'] ? (int)$data['id_encargado_muestra'] : null;
-        $lote->id_zona_origen = $data['id_zona_origen'] ? (int)$data['id_zona_origen'] : null;
+        $lote->id_proveedor_minero = $data['id_proveedor_minero'] ? (int) $data['id_proveedor_minero'] : null;
+        $lote->id_encargado_muestra = $data['id_encargado_muestra'] ? (int) $data['id_encargado_muestra'] : null;
+        $lote->id_zona_origen = $data['id_zona_origen'] ? (int) $data['id_zona_origen'] : null;
         $lote->numero_contacto = $data['numero_contacto'];
         $lote->tipo_carga = $data['tipo_carga'];
         $lote->tipo_producto = $data['tipo_producto'];
         $lote->tipo_mineral = $data['tipo_mineral'];
-        $lote->peso_inicial = $data['peso_inicial'] !== null ? (float)$data['peso_inicial'] : null;
+        $lote->peso_inicial = $data['peso_inicial'] !== null ? (float) $data['peso_inicial'] : null;
         $lote->observacion_peso_inicial = $data['observacion_peso_inicial'] ?? null;
-        
-        $lote->peso_final = $data['peso_final'] !== null ? (float)$data['peso_final'] : null;
+
+        $lote->peso_final = $data['peso_final'] !== null ? (float) $data['peso_final'] : null;
         $lote->observacion_peso_final = $data['observacion_peso_final'] ?? null;
 
         // Calcular peso neto si ambos pesos existen
@@ -443,9 +466,9 @@ class RecepcionMineralService
         }
 
         // Vehículo, conductor y transporte
-        $lote->id_vehiculo = $data['id_vehiculo'] ? (int)$data['id_vehiculo'] : null;
-        $lote->id_empresa_transporte = $data['id_empresa_transporte'] ? (int)$data['id_empresa_transporte'] : null;
-        $lote->id_conductor = $data['id_conductor'] ? (int)$data['id_conductor'] : null;
+        $lote->id_vehiculo = $data['id_vehiculo'] ? (int) $data['id_vehiculo'] : null;
+        $lote->id_empresa_transporte = $data['id_empresa_transporte'] ? (int) $data['id_empresa_transporte'] : null;
+        $lote->id_conductor = $data['id_conductor'] ? (int) $data['id_conductor'] : null;
 
         // Heredar el id_tipo_vehiculo del vehículo seleccionado
         if ($lote->id_vehiculo) {
@@ -463,6 +486,7 @@ class RecepcionMineralService
         $lote->save();
 
         $updatedLote = RecepcionMineralData::get_lote_by_id($loteId);
+
         return ApiResponse::success($updatedLote, 'Lote actualizado correctamente.');
     }
 
@@ -472,6 +496,7 @@ class RecepcionMineralService
     public static function get_resumen_filtros(int $idSucursal): array
     {
         $data = RecepcionMineralData::get_resumen_filtros($idSucursal);
+
         return ApiResponse::success($data, 'Metadatos de filtros obtenidos correctamente.');
     }
 }

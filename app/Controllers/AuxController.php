@@ -2,24 +2,25 @@
 
 namespace App\Controllers;
 
+use App\Services\ConductoresService;
 use App\Services\EmpleadosService;
 use App\Services\EmpresasService;
-use App\Services\MarcasService;
-use App\Services\ProveedoresService;
-use App\Services\UbigeoService;
-use App\Services\ConductoresService;
-use App\Services\TiposVehiculoService;
 use App\Services\EmpresasTransporteService;
-use App\Services\VehiculosService;
-use App\Services\MotivoIngresoService;
-use App\Services\VisitanteService;
-use App\Services\SucursalService;
-use App\Services\ZonasOrigenService;
 use App\Services\EncargadosMuestraService;
+use App\Services\MarcasService;
+use App\Services\MotivoIngresoService;
+use App\Services\ProveedoresService;
+use App\Services\SucursalService;
+use App\Services\TiposVehiculoService;
+use App\Services\UbigeoService;
+use App\Services\VehiculosService;
+use App\Services\VisitanteService;
+use App\Services\ZonasOrigenService;
 use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 
 class AuxController extends Controller
 {
@@ -128,6 +129,7 @@ class AuxController extends Controller
     public function get_conductores(): JsonResponse
     {
         $result = ConductoresService::get_conductores();
+
         return response()->json($result);
     }
 
@@ -153,14 +155,17 @@ class AuxController extends Controller
 
         return response()->json($result);
     }
+
     /**
      * Función para obtener el listado de tipos de vehículo
      */
     public function get_tipos_vehiculo(Request $request): JsonResponse
     {
         $id = $request->input('id') ? (int) $request->input('id') : null;
+
         return response()->json(TiposVehiculoService::get_tipos_vehiculo($id));
     }
+
     /**
      * Crear un nuevo tipo de vehículo en el sistema
      */
@@ -210,6 +215,7 @@ class AuxController extends Controller
     public function get_empresas_transporte(Request $request): JsonResponse
     {
         $id = $request->input('id') ? (int) $request->input('id') : null;
+
         return response()->json(EmpresasTransporteService::get_empresas_transporte($id));
     }
 
@@ -220,8 +226,10 @@ class AuxController extends Controller
     {
         $serie = $request->input('serie') ?? $request->input('serie_placa');
         $numero_placa = $request->input('numero_placa');
+        $esCarretaParam = $request->input('es_carreta');
+        $esCarreta = $esCarretaParam === null ? null : filter_var($esCarretaParam, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
 
-        return response()->json(VehiculosService::get_vehiculos($serie, $numero_placa));
+        return response()->json(VehiculosService::get_vehiculos($serie, $numero_placa, null, $esCarreta));
     }
 
     /**
@@ -351,5 +359,74 @@ class AuxController extends Controller
     public function get_encargados_muestra(): JsonResponse
     {
         return response()->json(EncargadosMuestraService::get_encargados_muestra());
+    }
+
+    /**
+     * Obtener lotes de mineral disponibles (Pesado, sin asignar a una guía) para el modal de selección.
+     */
+    public function get_lotes_mineral_disponibles(Request $request): JsonResponse
+    {
+        $idSucursal = $request->query('id_sucursal') ? (int) $request->query('id_sucursal') : null;
+        $idProveedor = $request->query('id_proveedor') ? (int) $request->query('id_proveedor') : null;
+
+        $sql = '
+        SELECT
+            lm.id,
+            lm.id_recepcion_unidad,
+            lm.id_proveedor_minero,
+            lm.correlativo,
+            lm.numero_correlativo,
+            lm.tipo_producto,
+            lm.tipo_mineral,
+            lm.tipo_carga,
+            lm.peso_inicial,
+            lm.peso_final,
+            lm.peso_neto,
+            lm.created_at,
+            p.razon_social AS proveedor_nombre,
+            v.numero_placa AS vehiculo_placa,
+            v.serie_placa AS vehiculo_serie,
+            (
+                SELECT COUNT(*)
+                FROM lote_guia lg
+                WHERE lg.id_lote_mineral = lm.id
+            ) AS en_guia
+        FROM lote_mineral lm
+        INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
+        INNER JOIN vehiculo v ON v.id = ru.id_vehiculo
+        LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero
+        WHERE lm.peso_inicial IS NOT NULL
+          AND lm.peso_final IS NOT NULL
+          AND ru.estado_pesaje = :estado_pesaje
+        ';
+
+        $params = ['estado_pesaje' => 'Pesado'];
+
+        if ($idSucursal !== null) {
+            $sql .= ' AND ru.id_surcusal = :id_sucursal';
+            $params['id_sucursal'] = $idSucursal;
+        }
+
+        if ($idProveedor !== null) {
+            $sql .= ' AND lm.id_proveedor_minero = :id_proveedor';
+            $params['id_proveedor'] = $idProveedor;
+        }
+
+        $sql .= ' ORDER BY lm.correlativo ASC;';
+
+        $rows = DB::select($sql, $params);
+
+        foreach ($rows as $row) {
+            $row->peso_inicial = $row->peso_inicial !== null ? (float) $row->peso_inicial : null;
+            $row->peso_final = $row->peso_final !== null ? (float) $row->peso_final : null;
+            $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
+            $row->en_guia = (int) $row->en_guia > 0;
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Lotes de mineral disponibles obtenidos correctamente',
+            'data' => $rows,
+        ]);
     }
 }

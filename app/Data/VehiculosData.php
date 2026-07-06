@@ -9,7 +9,7 @@ class VehiculosData
     /**
      * Obtener listado global de vehículos simplificado, filtrable por serie, número de placa y/o ID.
      */
-    public static function get_vehiculos(?string $seriePlaca = null, ?string $numeroPlaca = null, ?int $id = null)
+    public static function get_vehiculos(?string $seriePlaca = null, ?string $numeroPlaca = null, ?int $id = null, ?bool $esCarreta = null)
     {
         $sql = '
         SELECT
@@ -18,6 +18,7 @@ class VehiculosData
             tv.id AS id_tipo_vehiculo,
             et.razon_social,
             tv.nombre AS tipo_vehiculo_nombre,
+            tv.es_carreta,
             v.serie_placa,
             v.numero_placa,
             v.estado,
@@ -50,6 +51,12 @@ class VehiculosData
         if ($numeroPlaca !== null && $numeroPlaca !== '') {
             $sql .= ' AND v.numero_placa = :numero_placa';
             $params['numero_placa'] = $numeroPlaca;
+        }
+
+        if ($esCarreta === true) {
+            $sql .= ' AND tv.es_carreta = 1';
+        } elseif ($esCarreta === false) {
+            $sql .= ' AND (tv.es_carreta = 0 OR tv.es_carreta IS NULL)';
         }
 
         $sql .= ' ORDER BY v.numero_placa ASC;';

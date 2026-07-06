@@ -14,6 +14,16 @@ class ConcesionesService
         return ApiResponse::success($data, 'Concesiones obtenidas correctamente');
     }
 
+    /**
+     * Obtener concesiones filtradas por proveedor.
+     */
+    public static function get_concesiones_by_proveedor(int $idProveedor): array
+    {
+        $data = ConcesionesData::get_concesiones_by_proveedor($idProveedor);
+
+        return ApiResponse::success($data, 'Concesiones del proveedor obtenidas correctamente');
+    }
+
     public static function crear_concesion(
         int $idDepartamento,
         int $idProvincia,

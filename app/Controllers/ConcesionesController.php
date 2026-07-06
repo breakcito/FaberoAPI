@@ -14,6 +14,17 @@ class ConcesionesController extends Controller
         return response()->json(ConcesionesService::get_concesiones());
     }
 
+    public function get_concesiones_by_proveedor(Request $request): JsonResponse
+    {
+        $request->validate([
+            'id_proveedor' => 'required|integer|min:1',
+        ]);
+
+        return response()->json(ConcesionesService::get_concesiones_by_proveedor(
+            (int) $request->query('id_proveedor')
+        ));
+    }
+
     public function crear_concesion(Request $request): JsonResponse
     {
         $request->validate([

@@ -37,7 +37,7 @@ class RecepcionMineralController extends Controller
     public function validar_campo(Request $request, int $id): JsonResponse
     {
         $request->validate([
-            'field' => 'required|string|in:condicion_ingreso,placa,empresa_transporte,tipo_vehiculo,segunda_placa,conductor',
+            'field' => 'required|string|in:condicion_ingreso,placa,empresa_transporte,tipo_vehiculo,segunda_placa,conductor,fecha_hora_ingreso',
             'value' => 'nullable',
         ]);
 
@@ -53,11 +53,11 @@ class RecepcionMineralController extends Controller
     public function crear_lote(Request $request, int $id): JsonResponse
     {
         $authUser = $request->attributes->get('auth_user');
-        if (!$authUser || empty($authUser->id_empleado)) {
+        if (! $authUser || empty($authUser->id_empleado)) {
             return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
         }
 
-        return response()->json(RecepcionMineralService::crear_lote($id, (int)$authUser->id_empleado));
+        return response()->json(RecepcionMineralService::crear_lote($id, (int) $authUser->id_empleado));
     }
 
     /**
@@ -102,7 +102,7 @@ class RecepcionMineralController extends Controller
         $archivos = [];
         if ($request->hasFile('evidencias')) {
             $archivos = $request->file('evidencias');
-            if (!is_array($archivos)) {
+            if (! is_array($archivos)) {
                 $archivos = [$archivos];
             }
         }
@@ -158,7 +158,7 @@ class RecepcionMineralController extends Controller
         $archivos = [];
         if ($request->hasFile('evidencias')) {
             $archivos = $request->file('evidencias');
-            if (!is_array($archivos)) {
+            if (! is_array($archivos)) {
                 $archivos = [$archivos];
             }
         }
@@ -181,16 +181,18 @@ class RecepcionMineralController extends Controller
     {
         $request->validate([
             'id_sucursal' => 'required|integer|exists:sucursal,id',
+            'fecha_hora_ingreso' => 'nullable|date',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
-        if (!$authUser || empty($authUser->id_empleado)) {
+        if (! $authUser || empty($authUser->id_empleado)) {
             return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
         }
 
         $data = [
-            'id_empleado_registro' => (int)$authUser->id_empleado,
-            'id_sucursal' => (int)$request->input('id_sucursal'),
+            'id_empleado_registro' => (int) $authUser->id_empleado,
+            'id_sucursal' => (int) $request->input('id_sucursal'),
+            'fecha_hora_ingreso' => $request->input('fecha_hora_ingreso'),
         ];
 
         return response()->json(RecepcionMineralService::crear_unidad_ficticia($data));
@@ -260,7 +262,7 @@ class RecepcionMineralController extends Controller
         $archivos = [];
         if ($request->hasFile('evidencias')) {
             $archivos = $request->file('evidencias');
-            if (!is_array($archivos)) {
+            if (! is_array($archivos)) {
                 $archivos = [$archivos];
             }
         }
@@ -273,8 +275,8 @@ class RecepcionMineralController extends Controller
      */
     public function get_resumen_filtros(Request $request): JsonResponse
     {
-        $idSucursal = (int)$request->query('id_sucursal');
-        if (!$idSucursal) {
+        $idSucursal = (int) $request->query('id_sucursal');
+        if (! $idSucursal) {
             return response()->json(ApiResponse::error('Debe especificar la sucursal.'), 400);
         }
 

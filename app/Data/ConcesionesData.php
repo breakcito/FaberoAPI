@@ -57,6 +57,40 @@ class ConcesionesData
     }
 
     /**
+     * Obtener concesiones asociadas a un proveedor específico a través de concesion_proveedor.
+     *
+     * @return array<int, object>
+     */
+    public static function get_concesiones_by_proveedor(int $idProveedor): array
+    {
+        $sql = '
+        SELECT
+            c.id AS id_concesion,
+            c.id_departamento,
+            dep.nombre AS departamento,
+            c.id_provincia,
+            prov.nombre AS provincia,
+            c.id_distrito,
+            dist.nombre AS distrito,
+            c.nombre,
+            c.codigo_reinfo,
+            c.estado,
+            cp.id AS id_concesion_proveedor
+        FROM
+            concesion_proveedor cp
+        INNER JOIN concesion c ON c.id = cp.id_concesion
+        LEFT JOIN departamento dep ON dep.id = c.id_departamento
+        LEFT JOIN provincia prov ON prov.id = c.id_provincia
+        LEFT JOIN distrito dist ON dist.id = c.id_distrito
+        WHERE
+            cp.id_proveedor = :id_proveedor
+        ORDER BY c.nombre ASC;
+        ';
+
+        return DB::select($sql, ['id_proveedor' => $idProveedor]);
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     public static function get_concesion_by_id(int $id): ?array

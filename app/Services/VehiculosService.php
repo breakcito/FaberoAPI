@@ -10,9 +10,10 @@ class VehiculosService
     /**
      * Obtener listado global de vehículos (datos simplificados)
      */
-    public static function get_vehiculos(?string $seriePlaca = null, ?string $numeroPlaca = null, ?int $id = null): array
+    public static function get_vehiculos(?string $seriePlaca = null, ?string $numeroPlaca = null, ?int $id = null, ?bool $esCarreta = null): array
     {
-        $data = VehiculosData::get_vehiculos($seriePlaca, $numeroPlaca, $id);
+        $data = VehiculosData::get_vehiculos($seriePlaca, $numeroPlaca, $id, $esCarreta);
+
         return ApiResponse::success($data);
     }
 
@@ -27,6 +28,7 @@ class VehiculosService
     ): array {
         $id = VehiculosData::crear_vehiculo_simplificado($seriePlaca, $numeroPlaca, $idEmpresaTransporte, $idTipoVehiculo);
         $vehiculos = VehiculosData::get_vehiculos(id: $id);
+
         return ApiResponse::success($vehiculos[0] ?? null, 'Vehículo registrado correctamente');
     }
 
@@ -40,6 +42,7 @@ class VehiculosService
     ): array {
         VehiculosData::editar_vehiculo_simplificado($id, $idEmpresaTransporte, $idTipoVehiculo);
         $vehiculos = VehiculosData::get_vehiculos(id: $id);
+
         return ApiResponse::success($vehiculos[0] ?? null, 'Vehículo actualizado correctamente');
     }
 }
