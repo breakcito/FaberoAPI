@@ -9,5 +9,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/filtros-metadata', 'get_filtros_metadata');
         Route::get('/{id}', 'get_guia_by_id');
         Route::post('/', 'crear_guia');
+        Route::post('/{id}/update', 'actualizar_guia');
+        Route::patch('/{id}/anular', 'anular_guia');
     });
 });

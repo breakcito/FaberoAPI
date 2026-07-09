@@ -47,6 +47,7 @@ class GuiasPrimerTramoData
             gpt.serie_guia_transportista,
             gpt.numero_guia_transportista,
             gpt.sin_guia_transportista,
+            gpt.estado,
             gpt.created_at
         FROM guia_primer_tramo gpt
         INNER JOIN sucursal suc ON suc.id = gpt.id_sucursal
