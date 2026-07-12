@@ -19,7 +19,7 @@ class VehiculosController
             'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
             'id_tipo_vehiculo' => 'required|integer|exists:tipo_vehiculo,id',
             'serie_placa' => 'nullable|string|max:20',
-            'numero_placa' => 'required|string|max:15|unique:vehiculo,numero_placa',
+            'numero_placa' => 'required|string|max:15',
             'numero_constancia_mtc' => 'nullable|string|max:50',
             'capacidad' => 'required|numeric|min:0',
             'tara' => 'required|numeric|min:0',

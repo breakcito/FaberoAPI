@@ -78,24 +78,49 @@ class RecepcionMineralService
                     $vehiculo = Vehiculo::find($recepcion->id_vehiculo);
                 }
 
-                if (! $vehiculo) {
-                    // Si no tiene vehículo (caso ficticio sin asignar), creamos uno nuevo
-                    $vehiculo = Vehiculo::create([
-                        'estado' => 'Activo',
-                    ]);
-                    $recepcion->id_vehiculo = $vehiculo->id;
-                }
-
                 // Separar serie y número si viene en formato XXX-YYY
+                $serie = null;
+                $numero = $value ? strtoupper(trim($value)) : '';
                 if ($value && str_contains($value, '-')) {
                     $parts = explode('-', $value, 2);
-                    $vehiculo->serie_placa = strtoupper(trim($parts[0]));
-                    $vehiculo->numero_placa = strtoupper(trim($parts[1]));
-                } else {
-                    $vehiculo->serie_placa = null;
-                    $vehiculo->numero_placa = strtoupper(trim($value));
+                    $serie = strtoupper(trim($parts[0]));
+                    $numero = strtoupper(trim($parts[1]));
                 }
-                $vehiculo->save();
+
+                // Buscar si existe un vehículo con esa placa en la BD
+                $query = Vehiculo::where('numero_placa', $numero);
+                if ($serie !== null && $serie !== '') {
+                    $query->where('serie_placa', $serie);
+                } else {
+                    $query->whereNull('serie_placa');
+                }
+                $vehiculoExistente = $query->first();
+
+                if ($vehiculoExistente) {
+                    // Si ya existe el vehículo, asociamos su ID
+                    $recepcion->id_vehiculo = $vehiculoExistente->id;
+                    $recepcion->save();
+
+                    // Si el vehículo que tenía asignado anteriormente era ficticio o temporal, lo borramos para no dejar basura
+                    if ($vehiculo && $vehiculo->id !== $vehiculoExistente->id) {
+                        if ($vehiculo->serie_placa === 'FICT' || empty($vehiculo->numero_placa)) {
+                            $vehiculo->delete();
+                        }
+                    }
+                } else {
+                    // Si no existe, creamos o modificamos el vehículo actual
+                    if (! $vehiculo) {
+                        $vehiculo = Vehiculo::create([
+                            'estado' => 'Activo',
+                        ]);
+                        $recepcion->id_vehiculo = $vehiculo->id;
+                    }
+                    $vehiculo->serie_placa = $serie;
+                    $vehiculo->numero_placa = $numero;
+                    $vehiculo->save();
+                    
+                    $recepcion->save();
+                }
                 break;
 
             case 'empresa_transporte':

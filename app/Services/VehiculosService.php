@@ -26,10 +26,24 @@ class VehiculosService
         int $idEmpresaTransporte,
         int $idTipoVehiculo
     ): array {
+        $existenteId = VehiculosData::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
+        if ($existenteId !== null) {
+            $vehiculos = VehiculosData::get_vehiculos(id: $existenteId);
+            $vehiculo = $vehiculos[0] ?? null;
+            if ($vehiculo) {
+                $vehiculo->ya_existia = true;
+            }
+            return ApiResponse::success($vehiculo, 'El vehículo ya se encontraba registrado.');
+        }
+
         $id = VehiculosData::crear_vehiculo_simplificado($seriePlaca, $numeroPlaca, $idEmpresaTransporte, $idTipoVehiculo);
         $vehiculos = VehiculosData::get_vehiculos(id: $id);
+        $vehiculo = $vehiculos[0] ?? null;
+        if ($vehiculo) {
+            $vehiculo->ya_existia = false;
+        }
 
-        return ApiResponse::success($vehiculos[0] ?? null, 'Vehículo registrado correctamente');
+        return ApiResponse::success($vehiculo, 'Vehículo registrado correctamente');
     }
 
     /**

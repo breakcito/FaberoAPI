@@ -27,6 +27,15 @@ class VehiculosService
         ?float $ancho,
         ?float $alto
     ): array {
+        $existenteId = VehiculosData::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
+        if ($existenteId !== null) {
+            $vehiculo = VehiculosData::get_vehiculo_by_id($existenteId);
+            if (!empty($vehiculo)) {
+                $vehiculo['ya_existia'] = true;
+            }
+            return ApiResponse::success($vehiculo, 'El vehículo ya se encontraba registrado.');
+        }
+
         $id = VehiculosData::crear_vehiculo(
             $idMarca,
             $idEmpresaTransporte,
@@ -41,6 +50,9 @@ class VehiculosService
             $alto
         );
         $nuevoVehiculo = VehiculosData::get_vehiculo_by_id($id);
+        if (!empty($nuevoVehiculo)) {
+            $nuevoVehiculo['ya_existia'] = false;
+        }
 
         return ApiResponse::success($nuevoVehiculo, 'Vehículo registrado correctamente');
     }

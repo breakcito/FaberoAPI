@@ -66,7 +66,8 @@ class VehiculosData
     }
 
     /**
-     * Crear un nuevo vehículo de forma simplificada
+     * Crear un nuevo vehículo de forma simplificada.
+     * Si ya existe un vehículo con la misma (serie_placa, numero_placa), retorna su id sin crear duplicado.
      */
     public static function crear_vehiculo_simplificado(
         ?string $seriePlaca,
@@ -74,6 +75,11 @@ class VehiculosData
         int $idEmpresaTransporte,
         int $idTipoVehiculo
     ): int {
+        $existenteId = self::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
+        if ($existenteId !== null) {
+            return $existenteId;
+        }
+
         return DB::table('vehiculo')->insertGetId([
             'id_marca' => null,
             'id_empresa_transporte' => $idEmpresaTransporte,
@@ -88,6 +94,21 @@ class VehiculosData
             'alto' => null,
             'estado' => 'Activo',
         ]);
+    }
+
+    public static function buscar_vehiculo_existente(?string $seriePlaca, string $numeroPlaca): ?int
+    {
+        $query = DB::table('vehiculo')->where('numero_placa', $numeroPlaca);
+        if ($seriePlaca !== null && $seriePlaca !== '') {
+            $query->where('serie_placa', $seriePlaca);
+        } else {
+            $query->where(function($q) {
+                $q->whereNull('serie_placa')
+                  ->orWhere('serie_placa', '');
+            });
+        }
+
+        return $query->value('id');
     }
 
     /**

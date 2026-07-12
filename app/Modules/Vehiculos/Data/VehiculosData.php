@@ -35,6 +35,7 @@ class VehiculosData
         LEFT JOIN empresa_transporte et ON et.id = v.id_empresa_transporte
         LEFT JOIN tipo_vehiculo tv ON tv.id = v.id_tipo_vehiculo
         WHERE 1 = 1
+          AND (v.serie_placa IS NULL OR v.serie_placa <> \'FICT\')
         ';
 
         $params = [];
@@ -68,6 +69,11 @@ class VehiculosData
         ?float $ancho,
         ?float $alto
     ): int {
+        $existenteId = self::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
+        if ($existenteId !== null) {
+            return $existenteId;
+        }
+
         return Vehiculo::insertGetId([
             'id_marca' => $idMarca,
             'id_empresa_transporte' => $idEmpresaTransporte,
@@ -82,6 +88,21 @@ class VehiculosData
             'alto' => $alto,
             'estado' => EstadoBase::Activo->value,
         ]);
+    }
+
+    public static function buscar_vehiculo_existente(?string $seriePlaca, string $numeroPlaca): ?int
+    {
+        $query = DB::table('vehiculo')->where('numero_placa', $numeroPlaca);
+        if ($seriePlaca !== null && $seriePlaca !== '') {
+            $query->where('serie_placa', $seriePlaca);
+        } else {
+            $query->where(function($q) {
+                $q->whereNull('serie_placa')
+                  ->orWhere('serie_placa', '');
+            });
+        }
+
+        return $query->value('id');
     }
 
     public static function editar_vehiculo(

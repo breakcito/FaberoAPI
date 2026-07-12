@@ -336,6 +336,9 @@ class RecepcionMineralData
             COALESCE(lm.id_empresa_transporte, ru.id_empresa_transporte) AS id_empresa_transporte,
             et.razon_social AS empresa_transporte_razon_social,
             
+            COALESCE(lm.id_tipo_vehiculo, ru.id_tipo_vehiculo) AS id_tipo_vehiculo,
+            tv.nombre AS tipo_vehiculo_nombre,
+            
             p.id AS id_proveedor,
             p.razon_social AS proveedor_razon_social,
             
@@ -356,6 +359,7 @@ class RecepcionMineralData
         INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
         LEFT JOIN vehiculo v ON v.id = COALESCE(lm.id_vehiculo, ru.id_vehiculo)
         LEFT JOIN empresa_transporte et ON et.id = COALESCE(lm.id_empresa_transporte, ru.id_empresa_transporte)
+        LEFT JOIN tipo_vehiculo tv ON tv.id = COALESCE(lm.id_tipo_vehiculo, ru.id_tipo_vehiculo)
         LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero
         LEFT JOIN zona_origen zo ON zo.id = lm.id_zona_origen
         LEFT JOIN encargado_muestra em ON em.id = lm.id_encargado_muestra
