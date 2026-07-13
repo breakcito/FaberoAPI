@@ -139,7 +139,7 @@ class GuiasPrimerTramoController extends Controller
             }
         }
 
-        return response()->json(GuiasPrimerTramoService::crear_guia($data, $lotes, $archivos));
+        return response()->json(GuiasPrimerTramoService::crear_guia($data, $lotes, $archivos, $request));
     }
 
     /**
@@ -233,14 +233,22 @@ class GuiasPrimerTramoController extends Controller
             }
         }
 
-        return response()->json(GuiasPrimerTramoService::actualizar_guia($id, $data, $lotes, $archivos));
+        return response()->json(GuiasPrimerTramoService::actualizar_guia($id, $data, $lotes, $archivos, $request));
     }
 
     /**
      * Anular una guía de primer tramo (cambiar su estado a inactivo).
      */
-    public function anular_guia(int $id): JsonResponse
+    public function anular_guia(Request $request, int $id): JsonResponse
     {
-        return response()->json(GuiasPrimerTramoService::anular_guia($id));
+        return response()->json(GuiasPrimerTramoService::anular_guia($id, $request));
+    }
+
+    /**
+     * Obtener el historial (cabecera + lotes) de una guía, en orden cronológico DESC.
+     */
+    public function get_historial(int $id): JsonResponse
+    {
+        return response()->json(GuiasPrimerTramoService::get_historial($id));
     }
 }

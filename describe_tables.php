@@ -17,7 +17,7 @@ foreach ($tables as $table) {
             echo "Field: {$col->Field} | Type: {$col->Type} | Null: {$col->Null} | Key: {$col->Key} | Default: {$col->Default} | Extra: {$col->Extra}\n";
         }
     } catch (\Exception $e) {
-        echo "Error: " . $e->getMessage() . "\n";
+        echo 'Error: '.$e->getMessage()."\n";
     }
     echo "\n";
 }

@@ -3,15 +3,58 @@
 namespace App\Modules\GuiasPrimerTramo\Services;
 
 use App\Modules\GuiasPrimerTramo\Data\GuiasPrimerTramoData;
+use App\Modules\GuiasPrimerTramo\Data\GuiasPrimerTramoHistorialData;
+use App\Modules\GuiasPrimerTramo\Helpers\HistorialDiff;
+use App\Modules\GuiasPrimerTramo\Helpers\HistorialLookup;
+use App\Modules\GuiasPrimerTramo\Helpers\HistorialUsuarioHelper;
+use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\Periodo;
+use App\Shared\Enums\GuiaPrimerTramoHistorialAccion;
+use App\Shared\Enums\LoteGuiaHistorialAccion;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Helpers\CorrelativoHelper;
 use App\Shared\Responses\ApiResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class GuiasPrimerTramoService
 {
+    /**
+     * Campos de la cabecera que se rastrean en historial (todos los editables).
+     * Excluye: id, qr_token_*, estado (cambia solo vía anular), created_at.
+     */
+    private const CAMPOS_CABECERA = [
+        'id_sucursal',
+        'id_proveedor',
+        'id_concesion',
+        'id_conductor',
+        'id_vehiculo',
+        'id_empresa_transporte',
+        'id_vehiculo_carreta',
+        'id_empresa_transporte_carreta',
+        'motivo_traslado',
+        'fecha_inicio_traslado',
+        'fecha_emision',
+        'fecha_en_planta',
+        'serie_guia_remitente',
+        'numero_guia_remitente',
+        'serie_guia_transportista',
+        'numero_guia_transportista',
+        'sin_guia_transportista',
+    ];
+
+    /**
+     * Campos de un lote que se rastrean en historial.
+     */
+    private const CAMPOS_LOTE = [
+        'correlativo',
+        'numero_correlativo',
+        'peso_bruto',
+        'tara',
+        'peso_neto',
+    ];
+
     /**
      * Listar guías filtradas por sucursal.
      */
@@ -50,35 +93,41 @@ class GuiasPrimerTramoService
     }
 
     /**
-     * Crear una nueva guía de primer tramo con sus lotes.
-     *
-     * $lotes es un array de objetos con keys: id_lote_mineral, peso_bruto, tara (los pesos
-     * pueden ser ajustados en el frontend). El orden de inserción define el correlativo.
-     *
-     * $archivos son los archivos físicos de evidencias a guardar.
+     * Obtener el historial (cabecera + lotes) de una guía, en orden cronológico DESC.
      */
-    public static function crear_guia(array $data, array $lotes, array $archivos): array
+    public static function get_historial(int $idGuia): array
     {
-        // 1. Validaciones mínimas
+        $guia = DB::table('guia_primer_tramo')->where('id', $idGuia)->exists();
+        if (! $guia) {
+            return ApiResponse::error('No se encontró la guía de primer tramo.');
+        }
+
+        $historial = GuiasPrimerTramoHistorialData::get_historial($idGuia);
+
+        return ApiResponse::success($historial, 'Historial de la guía obtenido correctamente.');
+    }
+
+    /**
+     * Crear una nueva guía de primer tramo con sus lotes.
+     */
+    public static function crear_guia(array $data, array $lotes, array $archivos, ?Request $request = null): array
+    {
         if (empty($lotes)) {
             return ApiResponse::error('Debe agregar al menos un lote a la guía.');
         }
 
-        // 2. Generar los QR tokens (UUID v4) desde el backend
         $qrTransportista = (string) Str::uuid();
         $qrRemitente = (string) Str::uuid();
 
-        // 3. Guardar evidencias físicas en disco
         $evidenciasGuardadas = [];
         if (! empty($archivos)) {
             $evidenciasGuardadas = ArchivoHelper::guardarArchivos('guias-primer-tramo', $archivos);
         }
 
-        // 4. Transacción: crear guía + sus lotes con correlativo individual
         try {
             DB::beginTransaction();
 
-            $guiaId = DB::table('guia_primer_tramo')->insertGetId([
+            $valoresNuevos = [
                 'id_sucursal' => (int) $data['id_sucursal'],
                 'id_proveedor' => (int) $data['id_proveedor'],
                 'id_concesion' => (int) $data['id_concesion'],
@@ -96,7 +145,7 @@ class GuiasPrimerTramoService
                 'qr_token_transportista' => $qrTransportista,
                 'qr_token_remitente' => $qrRemitente,
                 'motivo_traslado' => $data['motivo_traslado'],
-                'evidencias' => ! empty($evidenciasGuardadas) ? json_encode($evidenciasGuardadas) : null,
+                'evidencias' => ! empty($evidenciasGuardadas) ? $evidenciasGuardadas : null,
                 'fecha_inicio_traslado' => $data['fecha_inicio_traslado'] ?? null,
                 'fecha_emision' => $data['fecha_emision'] ?? null,
                 'fecha_en_planta' => $data['fecha_en_planta'] ?? null,
@@ -105,13 +154,19 @@ class GuiasPrimerTramoService
                 'serie_guia_transportista' => $data['serie_guia_transportista'] ?? null,
                 'numero_guia_transportista' => $data['numero_guia_transportista'] ?? null,
                 'sin_guia_transportista' => ! empty($data['sin_guia_transportista']),
-                'estado' => \App\Shared\Enums\_Generic\EstadoBase::Activo->value,
-                'created_at' => now()->toDateTimeString(),
-            ]);
+                'estado' => EstadoBase::Activo->value,
+            ];
 
-            // 5. Crear los lotes de la guía con su correlativo individual.
-           
-           
+            $valoresNuevos['created_at'] = now()->toDateTimeString();
+
+            // evidencia se guarda como JSON en la BD pero la lógica de DB::insert acepta array → se serializa automático.
+            // Si preferimos explícito, usar json_encode abajo. Aquí usamos array y Laravel lo serializa.
+            $insertGuia = $valoresNuevos;
+            $insertGuia['evidencias'] = ! empty($evidenciasGuardadas) ? json_encode($evidenciasGuardadas) : null;
+
+            $guiaId = DB::table('guia_primer_tramo')->insertGetId($insertGuia);
+
+            $lotesInsertados = [];
             foreach ($lotes as $idx => $lote) {
                 $pesoBruto = (float) ($lote['peso_bruto'] ?? 0);
                 $tara = (float) ($lote['tara'] ?? 0);
@@ -125,7 +180,7 @@ class GuiasPrimerTramoService
                     reseteo: Periodo::Anual
                 );
 
-                DB::table('lote_guia')->insert([
+                $loteId = DB::table('lote_guia')->insertGetId([
                     'id_guia_primer_tramo' => $guiaId,
                     'id_lote_mineral' => (int) $lote['id_lote_mineral'],
                     'correlativo' => $correlativoData['correlativo'],
@@ -133,6 +188,47 @@ class GuiasPrimerTramoService
                     'peso_bruto' => $pesoBruto,
                     'tara' => $tara,
                     'peso_neto' => $pesoNeto,
+                ]);
+
+                $lotesInsertados[] = [
+                    'id' => $loteId,
+                    'id_guia_primer_tramo' => $guiaId,
+                    'id_lote_mineral' => (int) $lote['id_lote_mineral'],
+                    'correlativo' => $correlativoData['correlativo'],
+                    'numero_correlativo' => $correlativoData['numero_correlativo'],
+                    'peso_bruto' => $pesoBruto,
+                    'tara' => $tara,
+                    'peso_neto' => $pesoNeto,
+                ];
+            }
+
+            $usuarioHistorial = HistorialUsuarioHelper::resolverDesdeRequest($request);
+
+            // Historial cabecera: CREADO (solo valores_nuevos, no hay anteriores)
+            DB::table('guia_primer_tramo_historial')->insert([
+                'id_guia_primer_tramo' => $guiaId,
+                'accion' => GuiaPrimerTramoHistorialAccion::Creado->value,
+                'id_usuario' => $usuarioHistorial['id_usuario'],
+                'usuario_nombre' => $usuarioHistorial['usuario_nombre'],
+                'cambios' => null,
+                'valores_anteriores' => null,
+                'valores_nuevos' => self::snapshotSinJson($valoresNuevos),
+                'created_at' => now()->toDateTimeString(),
+            ]);
+
+            // Historial lotes: LOTE_CREADO por cada uno
+            foreach ($lotesInsertados as $loteInsert) {
+                DB::table('lote_guia_historial')->insert([
+                    'id_lote_guia' => $loteInsert['id'],
+                    'id_guia_primer_tramo' => $guiaId,
+                    'id_lote_mineral' => $loteInsert['id_lote_mineral'],
+                    'accion' => LoteGuiaHistorialAccion::LoteCreado->value,
+                    'id_usuario' => $usuarioHistorial['id_usuario'],
+                    'usuario_nombre' => $usuarioHistorial['usuario_nombre'],
+                    'cambios' => null,
+                    'valores_anteriores' => null,
+                    'valores_nuevos' => self::snapshotLote($loteInsert),
+                    'created_at' => now()->toDateTimeString(),
                 ]);
             }
 
@@ -151,9 +247,8 @@ class GuiasPrimerTramoService
     /**
      * Actualizar una guía de primer tramo con sus lotes y evidencias.
      */
-    public static function actualizar_guia(int $id, array $data, array $lotes, array $archivos): array
+    public static function actualizar_guia(int $id, array $data, array $lotes, array $archivos, ?Request $request = null): array
     {
-        // 1. Validaciones mínimas
         if (empty($lotes)) {
             return ApiResponse::error('Debe agregar al menos un lote a la guía.');
         }
@@ -164,10 +259,12 @@ class GuiasPrimerTramoService
             $guia = DB::table('guia_primer_tramo')->where('id', $id)->first();
             if (! $guia) {
                 DB::rollBack();
+
                 return ApiResponse::error('No se encontró la guía de primer tramo.');
             }
 
-            // 2. Procesar evidencias (conserver existentes + guardar nuevas)
+            $valoresAnterioresCab = self::rowToArray($guia);
+
             $evidenciasGuardadas = [];
             if (array_key_exists('evidencias_existentes', $data)) {
                 $evidenciasGuardadas = is_array($data['evidencias_existentes'])
@@ -182,8 +279,7 @@ class GuiasPrimerTramoService
                 $evidenciasGuardadas = array_merge($evidenciasGuardadas, $nuevasEvidencias);
             }
 
-            // 3. Actualizar la guía
-            DB::table('guia_primer_tramo')->where('id', $id)->update([
+            $nuevosValoresCab = [
                 'id_sucursal' => (int) $data['id_sucursal'],
                 'id_proveedor' => (int) $data['id_proveedor'],
                 'id_concesion' => (int) $data['id_concesion'],
@@ -199,7 +295,7 @@ class GuiasPrimerTramoService
                     ? (int) $data['id_empresa_transporte_carreta']
                     : null,
                 'motivo_traslado' => $data['motivo_traslado'],
-                'evidencias' => ! empty($evidenciasGuardadas) ? json_encode(array_values($evidenciasGuardadas)) : null,
+                'evidencias' => $evidenciasGuardadas,
                 'fecha_inicio_traslado' => $data['fecha_inicio_traslado'] ?? null,
                 'fecha_emision' => $data['fecha_emision'] ?? null,
                 'fecha_en_planta' => $data['fecha_en_planta'] ?? null,
@@ -208,20 +304,68 @@ class GuiasPrimerTramoService
                 'serie_guia_transportista' => $data['serie_guia_transportista'] ?? null,
                 'numero_guia_transportista' => $data['numero_guia_transportista'] ?? null,
                 'sin_guia_transportista' => ! empty($data['sin_guia_transportista']),
+            ];
+
+            DB::table('guia_primer_tramo')->where('id', $id)->update([
+                'id_sucursal' => $nuevosValoresCab['id_sucursal'],
+                'id_proveedor' => $nuevosValoresCab['id_proveedor'],
+                'id_concesion' => $nuevosValoresCab['id_concesion'],
+                'id_conductor' => $nuevosValoresCab['id_conductor'],
+                'id_vehiculo' => $nuevosValoresCab['id_vehiculo'],
+                'id_empresa_transporte' => $nuevosValoresCab['id_empresa_transporte'],
+                'id_vehiculo_carreta' => $nuevosValoresCab['id_vehiculo_carreta'],
+                'id_empresa_transporte_carreta' => $nuevosValoresCab['id_empresa_transporte_carreta'],
+                'motivo_traslado' => $nuevosValoresCab['motivo_traslado'],
+                'evidencias' => ! empty($evidenciasGuardadas) ? json_encode(array_values($evidenciasGuardadas)) : null,
+                'fecha_inicio_traslado' => $nuevosValoresCab['fecha_inicio_traslado'],
+                'fecha_emision' => $nuevosValoresCab['fecha_emision'],
+                'fecha_en_planta' => $nuevosValoresCab['fecha_en_planta'],
+                'serie_guia_remitente' => $nuevosValoresCab['serie_guia_remitente'],
+                'numero_guia_remitente' => $nuevosValoresCab['numero_guia_remitente'],
+                'serie_guia_transportista' => $nuevosValoresCab['serie_guia_transportista'],
+                'numero_guia_transportista' => $nuevosValoresCab['numero_guia_transportista'],
+                'sin_guia_transportista' => $nuevosValoresCab['sin_guia_transportista'],
             ]);
 
-            // 4. Sincronizar lotes en la tabla `lote_guia`
+            // Diff cabecera (campos top-level)
+            $diffCabecera = HistorialDiff::calcular(
+                self::rowToArray($guia),
+                $nuevosValoresCab,
+                self::CAMPOS_CABECERA
+            );
+
+            // Diff evidencias: comparamos contra el json crudo del registro original (decoded)
+            $oldEvidencias = json_decode($guia->evidencias ?? '[]', true) ?: [];
+            $diffEvidencias = HistorialDiff::diffEvidencias($oldEvidencias, $evidenciasGuardadas);
+            if (! empty($diffEvidencias['agregados']) || ! empty($diffEvidencias['eliminados'])) {
+                $diffCabecera['evidencias'] = [
+                    'anterior' => [
+                        'total' => count($oldEvidencias),
+                        'nombres' => $diffEvidencias['eliminados'],
+                    ],
+                    'nuevo' => [
+                        'total' => count($evidenciasGuardadas),
+                        'nombres' => $diffEvidencias['agregados'],
+                    ],
+                ];
+            }
+
+            // Reemplaza los IDs de FK por nombres legibles (id_vehiculo -> "ABC-123", etc.)
+            $diffCabecera = HistorialLookup::enrichDiff($diffCabecera);
+
+            // Sincronizar lotes
+            $usuarioHistorial = HistorialUsuarioHelper::resolverDesdeRequest($request);
+
             $lotesExistentes = DB::table('lote_guia')
                 ->where('id_guia_primer_tramo', $id)
                 ->orderBy('numero_correlativo', 'ASC')
                 ->get();
 
-            // Guardamos el pool de correlativos existentes para re-utilizarlos en orden
             $poolCorrelativos = [];
             foreach ($lotesExistentes as $item) {
                 $poolCorrelativos[] = [
                     'numero' => $item->numero_correlativo,
-                    'correlativo' => $item->correlativo
+                    'correlativo' => $item->correlativo,
                 ];
             }
 
@@ -236,7 +380,6 @@ class GuiasPrimerTramoService
 
                 $nuevosLotesIds[] = $idLoteMineral;
 
-                // Asignar correlativo del pool o generar uno nuevo si es una adición
                 if (isset($poolCorrelativos[$idx])) {
                     $numeroCorrelativo = $poolCorrelativos[$idx]['numero'];
                     $correlativoStr = $poolCorrelativos[$idx]['correlativo'];
@@ -252,8 +395,17 @@ class GuiasPrimerTramoService
                     $correlativoStr = $correlativoData['correlativo'];
                 }
 
+                $nuevoSnapshot = [
+                    'id_guia_primer_tramo' => $id,
+                    'id_lote_mineral' => $idLoteMineral,
+                    'correlativo' => $correlativoStr,
+                    'numero_correlativo' => $numeroCorrelativo,
+                    'peso_bruto' => $pesoBruto,
+                    'tara' => $tara,
+                    'peso_neto' => $pesoNeto,
+                ];
+
                 if ($existentesMap->has($idLoteMineral)) {
-                    // Si ya existía, actualizamos pesos y su nuevo correlativo/orden
                     $existente = $existentesMap->get($idLoteMineral);
                     DB::table('lote_guia')
                         ->where('id', $existente->id)
@@ -265,39 +417,145 @@ class GuiasPrimerTramoService
                             'peso_neto' => $pesoNeto,
                         ]);
                 } else {
-                    // Si es una nueva adición
-                    DB::table('lote_guia')->insert([
-                        'id_guia_primer_tramo' => $id,
-                        'id_lote_mineral' => $idLoteMineral,
-                        'correlativo' => $correlativoStr,
-                        'numero_correlativo' => $numeroCorrelativo,
-                        'peso_bruto' => $pesoBruto,
-                        'tara' => $tara,
-                        'peso_neto' => $pesoNeto,
-                    ]);
+                    $loteInsert = $nuevoSnapshot;
+                    $loteId = DB::table('lote_guia')->insertGetId($loteInsert);
+                    $existente = (object) array_merge(['id' => $loteId], $loteInsert);
+                }
+
+                // Recalculamos con el row actualizado (id incluido) para snapshot final
+                $rowPost = DB::table('lote_guia')->where('id_lote_mineral', $idLoteMineral)->where('id_guia_primer_tramo', $id)->first();
+                $rowPostArr = self::rowToArray($rowPost);
+
+                if ($existentesMap->has($idLoteMineral)) {
+                    // Edición: comparar old vs new (sólo campos que efectivamente cambiaron)
+                    $diffLote = HistorialDiff::calcular(
+                        self::rowToArray($existentesMap->get($idLoteMineral)),
+                        $rowPostArr,
+                        self::CAMPOS_LOTE
+                    );
+                    if (! empty($diffLote)) {
+                        self::persistirHistorialLote(
+                            idGuia: $id,
+                            idLoteGuia: (int) $rowPost->id,
+                            idLoteMineral: (int) $rowPost->id_lote_mineral,
+                            accion: LoteGuiaHistorialAccion::LoteEditado,
+                            cambios: $diffLote,
+                            valoresAnteriores: self::snapshotLote(self::rowToArray($existentesMap->get($idLoteMineral))),
+                            valoresNuevos: self::snapshotLote($rowPostArr),
+                            usuarioHistorial: $usuarioHistorial
+                        );
+                    }
+                } else {
+                    // Lote nuevo: poblar cambios con campos clave + correlativo del lote mineral
+                    $correlativoLoteMineral = HistorialLookup::loteMineralCorrelativo($idLoteMineral);
+                    $cambiosLoteNuevo = [
+                        'lote_agregado' => [
+                            'anterior' => null,
+                            'nuevo' => $correlativoLoteMineral,
+                        ],
+                        'peso_bruto' => [
+                            'anterior' => null,
+                            'nuevo' => $pesoBruto,
+                        ],
+                        'tara' => [
+                            'anterior' => null,
+                            'nuevo' => $tara,
+                        ],
+                        'peso_neto' => [
+                            'anterior' => null,
+                            'nuevo' => $pesoNeto,
+                        ],
+                    ];
+                    self::persistirHistorialLote(
+                        idGuia: $id,
+                        idLoteGuia: (int) $rowPost->id,
+                        idLoteMineral: (int) $rowPost->id_lote_mineral,
+                        accion: LoteGuiaHistorialAccion::LoteCreado,
+                        cambios: $cambiosLoteNuevo,
+                        valoresAnteriores: null,
+                        valoresNuevos: self::snapshotLote($rowPostArr),
+                        usuarioHistorial: $usuarioHistorial
+                    );
                 }
             }
 
-            // Eliminar lotes que ya no estén asociados
-            DB::table('lote_guia')
+            // Eliminar lotes removidos y registrar eliminación
+            $lotesEliminados = DB::table('lote_guia')
                 ->where('id_guia_primer_tramo', $id)
                 ->whereNotIn('id_lote_mineral', $nuevosLotesIds)
-                ->delete();
+                ->get();
+
+            foreach ($lotesEliminados as $eliminado) {
+                $snapshotEliminado = self::rowToArray($eliminado);
+                $correlativoLoteMineral = HistorialLookup::loteMineralCorrelativo((int) $eliminado->id_lote_mineral);
+                $cambiosLoteEliminado = [
+                    'lote_eliminado' => [
+                        'anterior' => $correlativoLoteMineral,
+                        'nuevo' => null,
+                    ],
+                    'peso_bruto' => [
+                        'anterior' => $eliminado->peso_bruto,
+                        'nuevo' => null,
+                    ],
+                    'tara' => [
+                        'anterior' => $eliminado->tara,
+                        'nuevo' => null,
+                    ],
+                    'peso_neto' => [
+                        'anterior' => $eliminado->peso_neto,
+                        'nuevo' => null,
+                    ],
+                ];
+                self::persistirHistorialLote(
+                    idGuia: $id,
+                    idLoteGuia: (int) $eliminado->id,
+                    idLoteMineral: (int) $eliminado->id_lote_mineral,
+                    accion: LoteGuiaHistorialAccion::LoteEliminado,
+                    cambios: $cambiosLoteEliminado,
+                    valoresAnteriores: self::snapshotLote($snapshotEliminado),
+                    valoresNuevos: null,
+                    usuarioHistorial: $usuarioHistorial
+                );
+            }
+
+            if (! empty($lotesEliminados)) {
+                DB::table('lote_guia')
+                    ->where('id_guia_primer_tramo', $id)
+                    ->whereNotIn('id_lote_mineral', $nuevosLotesIds)
+                    ->delete();
+            }
+
+            // Persistir historial cabecera solo si hay diff real
+            if (! empty($diffCabecera)) {
+                DB::table('guia_primer_tramo_historial')->insert([
+                    'id_guia_primer_tramo' => $id,
+                    'accion' => GuiaPrimerTramoHistorialAccion::Editado->value,
+                    'id_usuario' => $usuarioHistorial['id_usuario'],
+                    'usuario_nombre' => $usuarioHistorial['usuario_nombre'],
+                    'cambios' => json_encode($diffCabecera),
+                    'valores_anteriores' => self::snapshotCabecera($valoresAnterioresCab),
+                    'valores_nuevos' => self::snapshotCabecera($nuevosValoresCab),
+                    'created_at' => now()->toDateTimeString(),
+                ]);
+            }
 
             DB::commit();
         } catch (\Throwable $e) {
             DB::rollBack();
+
             return ApiResponse::error('Error al actualizar la guía: '.$e->getMessage());
         }
 
         $guiaActualizada = GuiasPrimerTramoData::get_guia_by_id($id);
+
         return ApiResponse::success($guiaActualizada, 'Guía de primer tramo actualizada correctamente.');
     }
 
     /**
      * Anular una guía de primer tramo (cambiar estado a Inactivo).
+     * Se registra como EDITADO con diff único en el campo `estado`.
      */
-    public static function anular_guia(int $id): array
+    public static function anular_guia(int $id, ?Request $request = null): array
     {
         try {
             DB::beginTransaction();
@@ -305,20 +563,141 @@ class GuiasPrimerTramoService
             $guia = DB::table('guia_primer_tramo')->where('id', $id)->first();
             if (! $guia) {
                 DB::rollBack();
+
                 return ApiResponse::error('No se encontró la guía de primer tramo.');
             }
 
+            $estadoAnterior = $guia->estado;
+
             DB::table('guia_primer_tramo')->where('id', $id)->update([
-                'estado' => \App\Shared\Enums\_Generic\EstadoBase::Inactivo->value,
+                'estado' => EstadoBase::Inactivo->value,
+            ]);
+
+            $usuarioHistorial = HistorialUsuarioHelper::resolverDesdeRequest($request);
+
+            DB::table('guia_primer_tramo_historial')->insert([
+                'id_guia_primer_tramo' => $id,
+                'accion' => GuiaPrimerTramoHistorialAccion::Editado->value,
+                'id_usuario' => $usuarioHistorial['id_usuario'],
+                'usuario_nombre' => $usuarioHistorial['usuario_nombre'],
+                'cambios' => json_encode([
+                    'estado' => [
+                        'anterior' => $estadoAnterior,
+                        'nuevo' => EstadoBase::Inactivo->value,
+                    ],
+                ]),
+                'valores_anteriores' => json_encode([
+                    'estado' => $estadoAnterior,
+                ]),
+                'valores_nuevos' => json_encode([
+                    'estado' => EstadoBase::Inactivo->value,
+                ]),
+                'created_at' => now()->toDateTimeString(),
             ]);
 
             DB::commit();
         } catch (\Throwable $e) {
             DB::rollBack();
+
             return ApiResponse::error('Error al anular la guía: '.$e->getMessage());
         }
 
         $guiaAnulada = GuiasPrimerTramoData::get_guia_by_id($id);
+
         return ApiResponse::success($guiaAnulada, 'Guía de primer tramo anulada correctamente.');
+    }
+
+    /**
+     * Persiste una fila en lote_guia_historial.
+     *
+     * @param  array<string, mixed>|null  $cambios  Diff campo-a-campo (se serializa aquí).
+     * @param  string|null  $valoresAnteriores  Snapshot completo ya serializado en JSON (o null).
+     * @param  string|null  $valoresNuevos  Snapshot completo ya serializado en JSON (o null).
+     * @param  array{id_usuario: int, usuario_nombre: string}  $usuarioHistorial
+     */
+    private static function persistirHistorialLote(
+        int $idGuia,
+        int $idLoteGuia,
+        int $idLoteMineral,
+        LoteGuiaHistorialAccion $accion,
+        ?array $cambios,
+        ?string $valoresAnteriores,
+        ?string $valoresNuevos,
+        array $usuarioHistorial,
+    ): void {
+        DB::table('lote_guia_historial')->insert([
+            'id_lote_guia' => $idLoteGuia,
+            'id_guia_primer_tramo' => $idGuia,
+            'id_lote_mineral' => $idLoteMineral,
+            'accion' => $accion->value,
+            'id_usuario' => $usuarioHistorial['id_usuario'],
+            'usuario_nombre' => $usuarioHistorial['usuario_nombre'],
+            'cambios' => $cambios !== null ? json_encode($cambios) : null,
+            'valores_anteriores' => $valoresAnteriores,
+            'valores_nuevos' => $valoresNuevos,
+            'created_at' => now()->toDateTimeString(),
+        ]);
+    }
+
+    /**
+     * Convierte un stdClass (fila DB::first) en array asociativo.
+     *
+     * @return array<string, mixed>
+     */
+    private static function rowToArray(?object $row): array
+    {
+        if ($row === null) {
+            return [];
+        }
+
+        return json_decode(json_encode($row), true) ?? [];
+    }
+
+    /**
+     * Snapshot "limpio" de la cabecera para almacenar en valores_nuevos.
+     * Excluye campos inmutables / derivados.
+     *
+     * @param  array<string, mixed>  $valores
+     * @return string|null JSON serializado.
+     */
+    private static function snapshotCabecera(array $valores): ?string
+    {
+        $excluidos = ['id', 'qr_token_transportista', 'qr_token_remitente', 'created_at'];
+        $filtrado = array_filter(
+            $valores,
+            static fn ($key) => ! in_array($key, $excluidos, true),
+            ARRAY_FILTER_USE_KEY
+        );
+
+        return json_encode($filtrado, JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Snapshot "limpio" de un lote para almacenar en valores_nuevos.
+     *
+     * @param  array<string, mixed>  $valores
+     */
+    private static function snapshotLote(array $valores): string
+    {
+        return json_encode($valores, JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Snapshot sin serializar (cuando el caller ya inserta con DB::table y serializa explícito).
+     * Usado solo en crear_guia para construir el array que se almacenará.
+     *
+     * @param  array<string, mixed>  $valores
+     * @return string JSON.
+     */
+    private static function snapshotSinJson(array $valores): string
+    {
+        $excluidos = ['id', 'qr_token_transportista', 'qr_token_remitente', 'created_at'];
+        $filtrado = array_filter(
+            $valores,
+            static fn ($key) => ! in_array($key, $excluidos, true),
+            ARRAY_FILTER_USE_KEY
+        );
+
+        return json_encode($filtrado, JSON_UNESCAPED_UNICODE);
     }
 }
