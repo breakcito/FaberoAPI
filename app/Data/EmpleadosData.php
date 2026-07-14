@@ -11,7 +11,7 @@ class EmpleadosData
      * Obtener listado simple de empleados
      */
     public static function get_empleados(
-        ?int $id_empleado = null,
+        int|array|null $id_empleado = null,
         ?EstadoBase $estado = EstadoBase::Activo,
     ): array {
         $sql = '
@@ -27,12 +27,31 @@ class EmpleadosData
             emp.estado = :estado
         ';
 
-        $params = [];
-        $params['estado'] = $estado->value;
+        $params = [
+            'estado' => $estado->value,
+        ];
 
         if ($id_empleado !== null) {
-            $sql .= ' AND emp.id = :id_empleado';
-            $params['id_empleado'] = $id_empleado;
+            if (is_array($id_empleado)) {
+                // Eliminar duplicados
+                $ids = array_values(array_unique($id_empleado));
+
+                if (!empty($ids)) {
+                    $placeholders = [];
+
+                    foreach ($ids as $i => $id) {
+                        $key = "id_empleado_$i";
+                        $placeholders[] = ":$key";
+                        $params[$key] = (int) $id;
+                    }
+
+                    $sql .= ' AND emp.id IN (' . implode(',', $placeholders) . ')';
+                }
+
+            } else {
+                $sql .= ' AND emp.id = :id_empleado';
+                $params['id_empleado'] = $id_empleado;
+            }
         }
 
         $sql .= ' ORDER BY nombre_completo ASC';

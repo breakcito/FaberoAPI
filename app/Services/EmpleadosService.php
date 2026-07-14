@@ -8,10 +8,10 @@ use App\Shared\Responses\ApiResponse;
 class EmpleadosService
 {
     /**
-     * Listar almacenes.
+     * Listar empleados.
      */
     public static function get_empleados(
-        ?int $id_empleado = null,
+        int|array|null $id_empleado = null,
         ?EstadoBase $estado = EstadoBase::Activo,
     ) {
         $empleados = EmpleadosData::get_empleados(

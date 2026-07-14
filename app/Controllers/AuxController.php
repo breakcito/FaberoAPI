@@ -26,7 +26,7 @@ class AuxController extends Controller
 {
     public function get_empleados(Request $request): JsonResponse
     {
-        $id_empleado = $request->input('id_empleado') ? (int) $request->input('id_empleado') : null;
+        $id_empleado = $request->input('id_empleado') ? $request->input('id_empleado') : null;
         $estado_val = $request->input('estado');
         $estado = $estado_val ? EstadoBase::from($estado_val) : EstadoBase::Activo;
 
