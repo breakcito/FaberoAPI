@@ -16,7 +16,7 @@ class CorrelativoHelper
         Periodo $reseteo = Periodo::Anual,
         string $columnaFecha = 'created_at',
         ?Closure $queryModifier = null,
-        ?string $alias = null 
+        ?string $alias = null
     ): array {
         // Configuramos la tabla principal con su alias en el constructor de la consulta
         $tablaQuery = $alias ? "{$tabla} as {$alias}" : $tabla;
@@ -49,9 +49,41 @@ class CorrelativoHelper
         };
 
         // 3. Otros filtros
-        foreach ($filtros as $col => $val) {
-            $columnaFiltro = str_contains($col, '.') ? $col : "{$prefijoTabla}.{$col}";
-            $query->where($columnaFiltro, $val);
+        foreach ($filtros as $col => $valor) {
+
+            $columnaFiltro = str_contains($col, '.')
+                ? $col
+                : "{$prefijoTabla}.{$col}";
+
+            if (!is_array($valor)) {
+                $query->where($columnaFiltro, $valor);
+                continue;
+            }
+
+            [$operador, $dato] = $valor;
+
+            switch (strtolower($operador)) {
+
+                case 'in':
+                    $query->whereIn($columnaFiltro, $dato);
+                    break;
+
+                case 'not in':
+                    $query->whereNotIn($columnaFiltro, $dato);
+                    break;
+
+                case 'null':
+                    $query->whereNull($columnaFiltro);
+                    break;
+
+                case 'not null':
+                    $query->whereNotNull($columnaFiltro);
+                    break;
+
+                default:
+                    $query->where($columnaFiltro, $operador, $dato);
+                    break;
+            }
         }
 
         // 4. Obtenemos el máximo usando el prefijo correcto
@@ -68,8 +100,8 @@ class CorrelativoHelper
         };
 
         $correlativo = $segmentoFecha
-            ? "{$prefijo}-{$segmentoFecha}-{$numeroFormateado}"
-            : "{$prefijo}-{$numeroFormateado}";
+            ? "{$segmentoFecha}-{$prefijo}-{$numeroFormateado}"
+            : "{$numeroFormateado}-{$prefijo}";
 
         return [
             'correlativo' => $correlativo,
