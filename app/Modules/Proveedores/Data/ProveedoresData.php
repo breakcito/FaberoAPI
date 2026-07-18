@@ -153,6 +153,4 @@ class ProveedoresData
             ->where('id_concesion', $id_concesion)
             ->delete() > 0;
     }
-
-
 }

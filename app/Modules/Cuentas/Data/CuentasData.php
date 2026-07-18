@@ -12,7 +12,7 @@ class CuentasData
      */
     public static function get_cuentas(): array
     {
-        $sql = "
+        $sql = '
             SELECT 
                 u.id as id_usuario,
                 u.username,
@@ -30,7 +30,7 @@ class CuentasData
             LEFT JOIN empresa emp ON emp.id = e.id_empresa
             INNER JOIN rol r ON r.id = u.id_rol
             ORDER BY e.apellido ASC
-        ";
+        ';
 
         return DB::select($sql);
     }
@@ -73,7 +73,7 @@ class CuentasData
      */
     public static function get_usuario_by_id(int $id_usuario)
     {
-        $sql = "
+        $sql = '
             SELECT 
                 u.id as id_usuario,
                 u.username,
@@ -91,7 +91,7 @@ class CuentasData
             LEFT JOIN empresa emp ON emp.id = e.id_empresa
             INNER JOIN rol r ON r.id = u.id_rol
             WHERE u.id = :id_usuario
-        ";
+        ';
 
         return DB::selectOne($sql, ['id_usuario' => $id_usuario]);
     }

@@ -99,5 +99,4 @@ class ProveedoresController
             $id_concesion
         ));
     }
-
 }

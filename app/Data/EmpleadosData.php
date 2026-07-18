@@ -36,7 +36,7 @@ class EmpleadosData
                 // Eliminar duplicados
                 $ids = array_values(array_unique($id_empleado));
 
-                if (!empty($ids)) {
+                if (! empty($ids)) {
                     $placeholders = [];
 
                     foreach ($ids as $i => $id) {
@@ -45,7 +45,7 @@ class EmpleadosData
                         $params[$key] = (int) $id;
                     }
 
-                    $sql .= ' AND emp.id IN (' . implode(',', $placeholders) . ')';
+                    $sql .= ' AND emp.id IN ('.implode(',', $placeholders).')';
                 }
 
             } else {

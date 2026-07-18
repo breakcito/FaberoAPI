@@ -2,10 +2,10 @@
 
 namespace App\Modules\Login;
 
-use App\Shared\Enums\_Generic\EstadoBase;
-use Illuminate\Support\Facades\Hash;
-use App\Shared\Responses\ApiResponse;
 use App\Modules\Login\Data\LoginData;
+use App\Shared\Enums\_Generic\EstadoBase;
+use App\Shared\Responses\ApiResponse;
+use Illuminate\Support\Facades\Hash;
 use PHPOpenSourceSaver\JWTAuth\Facades\JWTAuth;
 
 class LoginService
@@ -16,18 +16,18 @@ class LoginService
         // Buscamos al usuario
         $user = LoginData::get_usuario_by_username($username);
 
-        if (!$user) {
+        if (! $user) {
             return ApiResponse::error('Usuario incorreto');
         }
 
         // Comparamos las contraseñas
-        if (!Hash::check($password, $user->password)) {
+        if (! Hash::check($password, $user->password)) {
             return ApiResponse::error('Contraseña incorrecta');
         }
 
         // Si todo salio bien, obtenemos su informacion
         $infoUsuario = LoginData::getInfoUsuarioById($user->id);
-        if (!$infoUsuario) {
+        if (! $infoUsuario) {
             return ApiResponse::error('Error al obtener información del usuario');
         }
 

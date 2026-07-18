@@ -13,6 +13,7 @@ class EncargadosMuestraService
     public static function get_encargados_muestra(): array
     {
         $data = EncargadosMuestraData::get_encargados_muestra();
+
         return ApiResponse::success($data, 'Encargados de muestra obtenidos correctamente');
     }
 }

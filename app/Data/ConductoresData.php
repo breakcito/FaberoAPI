@@ -25,6 +25,7 @@ class ConductoresData
         if ($id_conductor !== null) {
             $sql .= ' AND c.id = :id_conductor';
             $params['id_conductor'] = $id_conductor;
+
             return (array) DB::selectOne($sql, $params);
         }
 
@@ -53,7 +54,8 @@ class ConductoresData
     /**
      * Obtiene información dinámica de uno o varios conductores.
      * Permite especificar las columnas exactas a consultar mediante un array.
-     * @param array $columnas Array de strings con los nombres de las columnas a recuperar.
+     *
+     * @param  array  $columnas  Array de strings con los nombres de las columnas a recuperar.
      * @return array|null Retorna un array con los resultados o null si no se encuentra el registro.
      */
     public static function get_conductores_by_id(int|array $id_conductor, array $columnas): ?array
@@ -61,16 +63,16 @@ class ConductoresData
         $esArray = is_array($id_conductor);
         $ids = $esArray ? $id_conductor : [$id_conductor];
         // Forzamos la inclusión del ID con su alias
-        if (!in_array('id as id_conductor', $columnas)) {
+        if (! in_array('id as id_conductor', $columnas)) {
             $columnas[] = 'id as id_conductor';
         }
         $query = Conductor::whereIn('id', $ids)->get($columnas);
         if ($esArray) {
             return $query->toArray();
         }
+
         return $query->first()?->toArray();
     }
-
 
     // Metodo para validar si ya existe un conductor por dni, nombre + apellido, o numero de licencia
     public static function ya_existe(

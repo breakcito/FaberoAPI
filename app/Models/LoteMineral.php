@@ -34,6 +34,8 @@ class LoteMineral extends Model
         'id_empresa_transporte',
         'id_tipo_vehiculo',
         'id_conductor',
+        'condicion_ingreso',
+        'log_cambios',
         'created_at',
     ];
 
@@ -42,5 +44,6 @@ class LoteMineral extends Model
         'peso_inicial' => 'float',
         'peso_final' => 'float',
         'peso_neto' => 'float',
+        'log_cambios' => 'array',
     ];
 }

@@ -31,6 +31,7 @@ class EmpresasData
         if ($id_empresa !== null) {
             $sql .= ' AND emp.id = :id_empresa';
             $params['id_empresa'] = $id_empresa;
+
             return DB::selectOne($sql, $params);
         }
 

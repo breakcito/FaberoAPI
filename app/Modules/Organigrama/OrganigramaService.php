@@ -2,19 +2,19 @@
 
 namespace App\Modules\Organigrama;
 
-use App\Shared\Responses\ApiResponse;
 use App\Modules\Organigrama\Data\AreasData;
 use App\Modules\Organigrama\Data\CargosData;
+use App\Shared\Responses\ApiResponse;
 
 class OrganigramaService
 {
     /**
      * ÁREAS
      */
-
     public static function get_areas(): array|object
     {
         $areas = AreasData::get_areas();
+
         return ApiResponse::success($areas);
     }
 
@@ -33,10 +33,10 @@ class OrganigramaService
     /**
      * CARGOS
      */
-
     public static function get_cargos(int $id_area): array|object
     {
         $cargos = CargosData::get_cargos(id_area: $id_area);
+
         return ApiResponse::success($cargos);
     }
 

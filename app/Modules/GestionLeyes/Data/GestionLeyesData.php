@@ -2,9 +2,9 @@
 
 namespace App\Modules\GestionLeyes\Data;
 
+use App\Models\Analito;
 use App\Models\GrupoAnalisis;
 use App\Models\GrupoAnalisisDetalle;
-use App\Models\Analito;
 use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Support\Facades\DB;
 
@@ -50,7 +50,7 @@ class GestionLeyesData
         $grupos = [];
         foreach ($rawResults as $row) {
             $gid = $row->grupo_id;
-            if (!isset($grupos[$gid])) {
+            if (! isset($grupos[$gid])) {
                 $grupos[$gid] = [
                     'id' => $row->grupo_id,
                     'nombre' => $row->grupo_nombre,
@@ -142,7 +142,7 @@ class GestionLeyesData
             WHERE id = :id
         ', ['id' => $id]);
 
-        return $res ? (array)$res : [];
+        return $res ? (array) $res : [];
     }
 
     public static function crear_analito(string $nombre, bool $esDesplegable): int

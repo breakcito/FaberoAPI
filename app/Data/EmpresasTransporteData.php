@@ -2,8 +2,6 @@
 
 namespace App\Data;
 
-use App\Models\EmpresaTransporte;
-use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Support\Facades\DB;
 
 class EmpresasTransporteData
@@ -34,5 +32,4 @@ class EmpresasTransporteData
 
         return DB::select($sql, $params);
     }
-
 }

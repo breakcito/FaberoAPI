@@ -3,7 +3,6 @@
 namespace App\Modules\RecepcionVisitas\Data;
 
 use App\Models\RecepcionVisita;
-use App\Shared\Enums\_Generic\EstadoVisita;
 use Illuminate\Support\Facades\DB;
 
 class RecepcionVisitasData
@@ -38,14 +37,14 @@ class RecepcionVisitasData
         $params = [];
 
         // Filtro por fecha de ingreso (Rango)
-        if (!empty($filters['fecha_inicio'])) {
+        if (! empty($filters['fecha_inicio'])) {
             $sql .= ' AND rv.fecha_hora_ingreso >= :fecha_inicio';
-            $params['fecha_inicio'] = $filters['fecha_inicio'] . ' 00:00:00';
+            $params['fecha_inicio'] = $filters['fecha_inicio'].' 00:00:00';
         }
 
-        if (!empty($filters['fecha_fin'])) {
+        if (! empty($filters['fecha_fin'])) {
             $sql .= ' AND rv.fecha_hora_ingreso <= :fecha_fin';
-            $params['fecha_fin'] = $filters['fecha_fin'] . ' 23:59:59';
+            $params['fecha_fin'] = $filters['fecha_fin'].' 23:59:59';
         }
 
         $sql .= ' ORDER BY rv.fecha_hora_ingreso DESC;';
@@ -54,7 +53,7 @@ class RecepcionVisitasData
 
         // Cargar visitantes de forma masiva para evitar consultas N+1
         $visitIds = array_column($results, 'id');
-        if (!empty($visitIds)) {
+        if (! empty($visitIds)) {
             $idsString = implode(',', array_map('intval', $visitIds));
             $detalles = DB::select("
                 SELECT
@@ -87,7 +86,7 @@ class RecepcionVisitasData
                 $item->visitantes = $detallesAgrupados[$item->id] ?? [];
                 foreach ($item->visitantes as &$v) {
                     $val = $v['url_foto_documento'] ?? null;
-                    if (!empty($val)) {
+                    if (! empty($val)) {
                         $decoded = json_decode($val, true);
                         if (is_array($decoded)) {
                             $v['url_foto_documento'] = $decoded;
@@ -136,7 +135,7 @@ class RecepcionVisitasData
 
         $item = DB::selectOne($sql, ['id' => $id]);
 
-        if (!$item) {
+        if (! $item) {
             return null;
         }
 
@@ -163,7 +162,7 @@ class RecepcionVisitasData
         $item->visitantes = array_map(function ($det) {
             $v = (array) $det;
             $val = $v['url_foto_documento'] ?? null;
-            if (!empty($val)) {
+            if (! empty($val)) {
                 $decoded = json_decode($val, true);
                 if (is_array($decoded)) {
                     $v['url_foto_documento'] = $decoded;
@@ -173,6 +172,7 @@ class RecepcionVisitasData
             } else {
                 $v['url_foto_documento'] = [];
             }
+
             return $v;
         }, $detalles);
 

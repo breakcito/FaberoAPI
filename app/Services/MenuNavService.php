@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Shared\Responses\ApiResponse;
 use App\Data\MenuNavData;
+use App\Shared\Responses\ApiResponse;
 
 class MenuNavService
 {
@@ -11,7 +11,9 @@ class MenuNavService
     {
         // 1. Obtener todos los menus
         $menus = MenuNavData::get_menus_by_rol($idRol);
-        if (empty($menus)) return ApiResponse::success([]);
+        if (empty($menus)) {
+            return ApiResponse::success([]);
+        }
 
         $idsMenus = array_column($menus, 'id_menu');
 
@@ -20,7 +22,7 @@ class MenuNavService
         $idsSubmenus = array_column($todosLosSubmenus, 'id_submenu');
 
         // 3. Obtener TODOS los modulos de esos submenus
-        $todosLosModulos = !empty($idsSubmenus)
+        $todosLosModulos = ! empty($idsSubmenus)
             ? MenuNavData::get_modulos_by_rol_and_submenus($idRol, $idsSubmenus)
             : [];
 
@@ -51,22 +53,22 @@ class MenuNavService
 
                 $submenusData[] = [
                     'id_submenu' => $submenu->id_submenu,
-                    'nombre'     => $submenu->nombre,
-                    'path'       => $submenu->path,
-                    'modulos'    => array_map(function ($modulo) use ($menu, $submenu) {
+                    'nombre' => $submenu->nombre,
+                    'path' => $submenu->path,
+                    'modulos' => array_map(function ($modulo) use ($menu, $submenu) {
                         return [
                             'id_modulo' => $modulo->id_modulo,
-                            'nombre'    => $modulo->nombre,
-                            'url'       => "/{$menu->path}/{$submenu->path}/{$modulo->path}",
+                            'nombre' => $modulo->nombre,
+                            'url' => "/{$menu->path}/{$submenu->path}/{$modulo->path}",
                         ];
                     }, $misModulos),
                 ];
             }
 
             $estructura[] = [
-                'id_menu'  => $menu->id_menu,
-                'nombre'   => $menu->nombre,
-                'path'     => $menu->path,
+                'id_menu' => $menu->id_menu,
+                'nombre' => $menu->nombre,
+                'path' => $menu->path,
                 'submenus' => $submenusData,
             ];
         }

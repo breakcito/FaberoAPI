@@ -33,6 +33,7 @@ class VehiculosService
             if ($vehiculo) {
                 $vehiculo->ya_existia = true;
             }
+
             return ApiResponse::success($vehiculo, 'El vehículo ya se encontraba registrado.');
         }
 

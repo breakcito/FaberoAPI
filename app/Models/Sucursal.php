@@ -19,6 +19,6 @@ class Sucursal extends Model
         'direccion',
         'telefono',
         //
-        'estado' // EstadoBase
+        'estado', // EstadoBase
     ];
 }

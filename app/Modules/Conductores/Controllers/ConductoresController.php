@@ -32,7 +32,7 @@ class ConductoresController
     public function editar_conductor(Request $request, int $id)
     {
         $request->validate([
-            'dni' => 'required|string|size:8|unique:conductor,dni,' . $id,
+            'dni' => 'required|string|size:8|unique:conductor,dni,'.$id,
             'nombre' => 'required|string|max:100',
             'apellido' => 'required|string|max:100',
             'numero_licencia' => 'required|string|max:20',

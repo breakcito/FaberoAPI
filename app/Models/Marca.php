@@ -5,7 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Modelo que representa las marcas de productos/activos, 
+ * Modelo que representa las marcas de productos/activos,
  */
 class Marca extends Model
 {

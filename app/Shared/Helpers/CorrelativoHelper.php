@@ -3,8 +3,8 @@
 namespace App\Shared\Helpers;
 
 use App\Shared\Enums\_Generic\Periodo;
-use Illuminate\Support\Facades\DB;
 use Closure;
+use Illuminate\Support\Facades\DB;
 
 class CorrelativoHelper
 {
@@ -55,8 +55,9 @@ class CorrelativoHelper
                 ? $col
                 : "{$prefijoTabla}.{$col}";
 
-            if (!is_array($valor)) {
+            if (! is_array($valor)) {
                 $query->where($columnaFiltro, $valor);
+
                 continue;
             }
 
@@ -92,9 +93,9 @@ class CorrelativoHelper
         $numeroFormateado = str_pad($siguienteNumero, $longitudCeros, '0', STR_PAD_LEFT);
 
         $segmentoFecha = match ($reseteo) {
-            Periodo::Diario => $now->format('d') . '-' . $now->format('m') . '-' . $now->format('y'),
-            Periodo::Semanal => $now->weekOfMonth . '-' . $now->format('m') . '-' . $now->format('y'),
-            Periodo::Mensual => $now->format('m') . '-' . $now->format('y'),
+            Periodo::Diario => $now->format('d').'-'.$now->format('m').'-'.$now->format('y'),
+            Periodo::Semanal => $now->weekOfMonth.'-'.$now->format('m').'-'.$now->format('y'),
+            Periodo::Mensual => $now->format('m').'-'.$now->format('y'),
             Periodo::Anual => $now->format('y'),
             Periodo::Ninguno => null,
         };

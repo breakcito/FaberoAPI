@@ -3,13 +3,11 @@
 namespace App\Data;
 
 use App\Models\Marca;
-use App\Models\PersonalExterno;
 use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Support\Facades\DB;
 
 class MarcasData
 {
-
     /**
      * Crear una marca
      */
@@ -51,6 +49,7 @@ class MarcasData
         if ($id_marca) {
             $sql .= ' AND mr.id = :id_marca';
             $params['id_marca'] = $id_marca;
+
             return DB::selectOne($sql, $params);
         }
 

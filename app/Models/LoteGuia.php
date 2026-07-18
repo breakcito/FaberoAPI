@@ -13,16 +13,16 @@ class LoteGuia extends Model
     protected $fillable = [
         'id_guia_primer_tramo',
         'id_lote_mineral',
-        'correlativo',
-        'numero_correlativo',
         'peso_bruto',
         'tara',
         'peso_neto',
+        'log_cambios',
     ];
 
     protected $casts = [
         'peso_bruto' => 'float',
         'tara' => 'float',
         'peso_neto' => 'float',
+        'log_cambios' => 'array',
     ];
 }

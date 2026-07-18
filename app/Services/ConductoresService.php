@@ -10,6 +10,7 @@ class ConductoresService
     public static function get_conductores(?int $id_conductor = null): array
     {
         $data = ConductoresData::get_conductores(id_conductor: $id_conductor);
+
         return ApiResponse::success($data, 'Conductores obtenidos correctamente');
     }
 
@@ -32,6 +33,7 @@ class ConductoresService
         // si se debe devolver el objeto creado
         if ($return_object) {
             $nuevoConductor = ConductoresData::get_conductores(id_conductor: $id);
+
             return ApiResponse::success($nuevoConductor, 'Conductor creado correctamente');
         }
 

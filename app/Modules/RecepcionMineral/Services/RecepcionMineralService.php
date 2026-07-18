@@ -118,7 +118,7 @@ class RecepcionMineralService
                     $vehiculo->serie_placa = $serie;
                     $vehiculo->numero_placa = $numero;
                     $vehiculo->save();
-                    
+
                     $recepcion->save();
                 }
                 break;
@@ -169,18 +169,24 @@ class RecepcionMineralService
     /**
      * Crear un lote vacío para una recepción de unidad
      */
-    public static function crear_lote(int $id, int $idEmpleadoRegistro): array
+    public static function crear_lote(int $id, int $idEmpleadoRegistro, string $condicionIngreso): array
     {
         $recepcion = RecepcionUnidad::find($id);
         if (! $recepcion) {
             return ApiResponse::error('No se encontró el registro de recepción.');
         }
 
+        $isComercial = $condicionIngreso === 'comercializacion';
+        $prefijo = $isComercial ? 'FB' : 'LOT';
+        $filtros = $isComercial
+            ? ['condicion_ingreso' => 'comercializacion']
+            : ['condicion_ingreso' => ['!=', 'comercializacion']];
+
         // Generar correlativo usando CorrelativoHelper
         $correlativoData = CorrelativoHelper::generar(
             tabla: 'lote_mineral',
-            prefijo: 'LOT',
-            filtros: [],
+            prefijo: $prefijo,
+            filtros: $filtros,
             longitudCeros: 5,
             reseteo: Periodo::Anual
         );
@@ -188,6 +194,7 @@ class RecepcionMineralService
         $lote = LoteMineral::create([
             'id_recepcion_unidad' => $id,
             'id_empleado_registro' => $idEmpleadoRegistro,
+            'condicion_ingreso' => $condicionIngreso,
             'correlativo' => $correlativoData['correlativo'],
             'numero_correlativo' => $correlativoData['numero_correlativo'],
             'created_at' => now()->toDateTimeString(),
@@ -447,11 +454,179 @@ class RecepcionMineralService
     /**
      * Actualizar toda la información de un lote de mineral (para Resumen de Balanza)
      */
-    public static function actualizar_lote(int $loteId, array $data, array $archivos): array
+    public static function actualizar_lote(int $loteId, array $data, array $archivos, ?int $idEmpleado = null): array
     {
         $lote = LoteMineral::find($loteId);
         if (! $lote) {
             return ApiResponse::error('No se encontró el registro de lote.');
+        }
+
+        $cambios = [];
+        $motivo = $data['motivo'] ?? null;
+
+        // 1. Validar cambio de condición de ingreso y generar nuevo correlativo si aplica
+        $oldCondicion = $lote->condicion_ingreso;
+        $newCondicion = $data['condicion_ingreso'];
+
+        if ($oldCondicion !== $newCondicion) {
+            $isComercial = $newCondicion === 'comercializacion';
+            $prefijo = $isComercial ? 'FB' : 'LOT';
+            $filtros = $isComercial
+                ? ['condicion_ingreso' => 'comercializacion']
+                : ['condicion_ingreso' => ['!=', 'comercializacion']];
+
+            // Generar correlativo usando CorrelativoHelper
+            $correlativoData = CorrelativoHelper::generar(
+                tabla: 'lote_mineral',
+                prefijo: $prefijo,
+                filtros: $filtros,
+                longitudCeros: 5,
+                reseteo: Periodo::Anual
+            );
+
+            $cambios[] = [
+                'campo_bd' => 'condicion_ingreso',
+                'campo' => 'Condición de ingreso',
+                'valor_anterior' => $oldCondicion,
+                'valor_nuevo' => $newCondicion,
+            ];
+
+            $cambios[] = [
+                'campo_bd' => 'correlativo',
+                'campo' => 'Correlativo del lote',
+                'valor_anterior' => $lote->correlativo,
+                'valor_nuevo' => $correlativoData['correlativo'],
+            ];
+
+            $lote->condicion_ingreso = $newCondicion;
+            $lote->correlativo = $correlativoData['correlativo'];
+            $lote->numero_correlativo = $correlativoData['numero_correlativo'];
+        }
+
+        $ru = \DB::table('recepcion_unidad')->where('id', $lote->id_recepcion_unidad)->first();
+
+        // 2. Comparar el resto de los campos editables
+        $camposAuditar = [
+            'id_proveedor_minero' => [
+                'nombre' => 'Proveedor minero',
+                'tipo' => 'int',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $p = \DB::table('proveedor')->where('id', $id)->first();
+
+                    return $p ? $p->razon_social : "ID #$id";
+                },
+            ],
+            'id_encargado_muestra' => [
+                'nombre' => 'Encargado de muestra',
+                'tipo' => 'int',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $em = \DB::table('encargado_muestra')->where('id', $id)->first();
+
+                    return $em ? trim($em->nombre.' '.$em->apellido) : "ID #$id";
+                },
+            ],
+            'id_zona_origen' => [
+                'nombre' => 'Zona de origen',
+                'tipo' => 'int',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $z = \DB::table('zona_origen')->where('id', $id)->first();
+
+                    return $z ? $z->nombre : "ID #$id";
+                },
+            ],
+            'numero_contacto' => ['nombre' => 'Número de contacto', 'tipo' => 'string'],
+            'tipo_carga' => ['nombre' => 'Tipo de carga', 'tipo' => 'string'],
+            'tipo_producto' => ['nombre' => 'Tipo de producto', 'tipo' => 'string'],
+            'tipo_mineral' => ['nombre' => 'Tipo de mineral', 'tipo' => 'string'],
+            'peso_inicial' => ['nombre' => 'Peso inicial', 'tipo' => 'float'],
+            'observacion_peso_inicial' => ['nombre' => 'Observación de peso inicial', 'tipo' => 'string'],
+            'peso_final' => ['nombre' => 'Peso final (tara)', 'tipo' => 'float'],
+            'observacion_peso_final' => ['nombre' => 'Observación de peso final', 'tipo' => 'string'],
+            'id_vehiculo' => [
+                'nombre' => 'Vehículo',
+                'tipo' => 'int',
+                'coalesce_key' => 'id_vehiculo',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $v = \DB::table('vehiculo')->where('id', $id)->first();
+                    if ($v) {
+                        return $v->serie_placa ? trim($v->serie_placa.'-'.$v->numero_placa) : $v->numero_placa;
+                    }
+
+                    return "ID #$id";
+                },
+            ],
+            'id_empresa_transporte' => [
+                'nombre' => 'Empresa de transporte',
+                'tipo' => 'int',
+                'coalesce_key' => 'id_empresa_transporte',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $et = \DB::table('empresa_transporte')->where('id', $id)->first();
+
+                    return $et ? $et->razon_social : "ID #$id";
+                },
+            ],
+            'id_conductor' => [
+                'nombre' => 'Conductor',
+                'tipo' => 'int',
+                'coalesce_key' => 'id_conductor',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $c = \DB::table('conductor')->where('id', $id)->first();
+
+                    return $c ? trim($c->nombre.' '.$c->apellido) : "ID #$id";
+                },
+            ],
+        ];
+
+        foreach ($camposAuditar as $campoBd => $meta) {
+            $valAnt = $lote->$campoBd;
+            $valNue = $data[$campoBd];
+
+            if ($valAnt === null && isset($meta['coalesce_key']) && $ru) {
+                $coalesceCol = $meta['coalesce_key'];
+                $valAnt = $ru->$coalesceCol;
+            }
+
+            // Normalizar tipos para la comparación
+            if ($meta['tipo'] === 'int') {
+                $valAnt = $valAnt !== null ? (int) $valAnt : null;
+                $valNue = ($valNue !== null && $valNue !== '') ? (int) $valNue : null;
+            } elseif ($meta['tipo'] === 'float') {
+                $valAnt = $valAnt !== null ? (float) $valAnt : null;
+                $valNue = ($valNue !== null && $valNue !== '') ? (float) $valNue : null;
+            } else {
+                $valAnt = $valAnt !== null ? trim((string) $valAnt) : '';
+                $valNue = $valNue !== null ? trim((string) $valNue) : '';
+            }
+
+            if ($valAnt !== $valNue) {
+                $valAntLabel = isset($meta['resolver']) ? $meta['resolver']($valAnt) : $valAnt;
+                $valNueLabel = isset($meta['resolver']) ? $meta['resolver']($valNue) : $valNue;
+
+                $cambios[] = [
+                    'campo_bd' => $campoBd,
+                    'campo' => $meta['nombre'],
+                    'valor_anterior' => $valAntLabel,
+                    'valor_nuevo' => $valNueLabel,
+                ];
+            }
         }
 
         // Evidencias: manejar existentes y agregar nuevas
@@ -467,6 +642,52 @@ class RecepcionMineralService
         if (! empty($archivos)) {
             $nuevosArchivos = ArchivoHelper::guardarArchivos('lotes', $archivos);
             $evidenciasGuardadas = array_merge($evidenciasGuardadas, $nuevosArchivos);
+        }
+
+        // Comparar evidencias
+        $vAntEvidencias = $lote->evidencias ?? [];
+        if (! is_array($vAntEvidencias)) {
+            $vAntEvidencias = json_decode($vAntEvidencias, true) ?? [];
+        }
+        $nombresAnt = [];
+        foreach ($vAntEvidencias as $e) {
+            if (isset($e['nombre_original'])) {
+                $nombresAnt[] = $e['nombre_original'];
+            }
+        }
+        $nombresNue = [];
+        foreach ($evidenciasGuardadas as $e) {
+            if (isset($e['nombre_original'])) {
+                $nombresNue[] = $e['nombre_original'];
+            }
+        }
+
+        sort($nombresAnt);
+        sort($nombresNue);
+
+        if ($nombresAnt !== $nombresNue) {
+            $cambios[] = [
+                'campo_bd' => 'evidencias',
+                'campo' => 'Evidencias',
+                'valor_anterior' => ! empty($nombresAnt) ? implode(', ', $nombresAnt) : '— (sin evidencias)',
+                'valor_nuevo' => ! empty($nombresNue) ? implode(', ', $nombresNue) : '— (sin evidencias)',
+            ];
+        }
+
+        // 3. Registrar auditoría si hubo algún cambio
+        if (! empty($cambios)) {
+            $logActual = $lote->log_cambios ?? [];
+            if (! is_array($logActual)) {
+                $logActual = json_decode($logActual, true) ?? [];
+            }
+            $nuevoLog = [
+                'id_empleado' => $idEmpleado,
+                'motivo' => $motivo,
+                'update_at' => now()->toDateTimeString(),
+                'cambios' => $cambios,
+            ];
+            array_unshift($logActual, $nuevoLog);
+            $lote->log_cambios = $logActual;
         }
 
         // Actualizar datos del lote

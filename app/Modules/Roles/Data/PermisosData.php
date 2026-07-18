@@ -3,9 +3,9 @@
 namespace App\Modules\Roles\Data;
 
 use App\Models\Menu;
-use App\Models\Submenu;
 use App\Models\Modulo;
 use App\Models\ModuloRol;
+use App\Models\Submenu;
 
 class PermisosData
 {
@@ -43,7 +43,7 @@ class PermisosData
     {
         ModuloRol::create([
             'id_rol' => $id_rol,
-            'id_modulo' => $id_modulo
+            'id_modulo' => $id_modulo,
         ]);
     }
 

@@ -31,6 +31,8 @@ class GuiaPrimerTramo extends Model
         'serie_guia_transportista',
         'numero_guia_transportista',
         'sin_guia_transportista',
+        'id_empleado_registro',
+        'log_cambios',
         'created_at',
     ];
 
@@ -40,5 +42,7 @@ class GuiaPrimerTramo extends Model
         'fecha_emision' => 'datetime',
         'fecha_en_planta' => 'datetime',
         'sin_guia_transportista' => 'boolean',
+        'id_empleado_registro' => 'integer',
+        'log_cambios' => 'array',
     ];
 }

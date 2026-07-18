@@ -17,6 +17,7 @@ class CuentasController extends Controller
     public function get_cuentas(): JsonResponse
     {
         $result = CuentasService::get_cuentas();
+
         return response()->json($result);
     }
 
@@ -26,6 +27,7 @@ class CuentasController extends Controller
     public function get_empleados_sin_cuenta(): JsonResponse
     {
         $result = CuentasService::get_empleados_sin_cuenta();
+
         return response()->json($result);
     }
 
@@ -35,6 +37,7 @@ class CuentasController extends Controller
     public function get_roles_disponibles(): JsonResponse
     {
         $result = CuentasService::get_roles_disponibles();
+
         return response()->json($result);
     }
 
@@ -49,11 +52,11 @@ class CuentasController extends Controller
             'username' => 'required|string|max:64|unique:usuario,username',
             'password' => 'required|string|min:6|max:512',
             'sucursales' => 'nullable|array',
-            'sucursales.*' => 'integer|exists:sucursal,id'
+            'sucursales.*' => 'integer|exists:sucursal,id',
         ], [
             'id_empleado.unique' => 'Este empleado ya tiene una cuenta asignada.',
             'username.unique' => 'El nombre de usuario ya está en uso.',
-            'password.min' => 'La contraseña debe tener al menos 6 caracteres.'
+            'password.min' => 'La contraseña debe tener al menos 6 caracteres.',
         ]);
 
         if ($validator->fails()) {
@@ -69,6 +72,7 @@ class CuentasController extends Controller
             password: (string) $v['password'],
             sucursales: isset($v['sucursales']) ? (array) $v['sucursales'] : []
         );
+
         return response()->json($result);
     }
 
@@ -83,15 +87,15 @@ class CuentasController extends Controller
                 'required',
                 'string',
                 'max:64',
-                Rule::unique('usuario', 'username')->ignore($id_usuario)
+                Rule::unique('usuario', 'username')->ignore($id_usuario),
             ],
             'password' => 'nullable|string|min:6|max:512',
             'estado' => 'nullable|string',
             'sucursales' => 'nullable|array',
-            'sucursales.*' => 'integer|exists:sucursal,id'
+            'sucursales.*' => 'integer|exists:sucursal,id',
         ], [
             'username.unique' => 'El nombre de usuario ya está en uso.',
-            'password.min' => 'La nueva contraseña debe tener al menos 6 caracteres.'
+            'password.min' => 'La nueva contraseña debe tener al menos 6 caracteres.',
         ]);
 
         if ($validator->fails()) {
@@ -108,6 +112,7 @@ class CuentasController extends Controller
             estado: isset($v['estado']) ? (string) $v['estado'] : null,
             sucursales: isset($v['sucursales']) ? (array) $v['sucursales'] : null
         );
+
         return response()->json($result);
     }
 
@@ -116,11 +121,12 @@ class CuentasController extends Controller
      */
     public function actualizar_foto_empleado(Request $request, int $id_empleado): JsonResponse
     {
-        if (!$request->hasFile('foto')) {
+        if (! $request->hasFile('foto')) {
             return response()->json(ApiResponse::error('No se ha enviado ninguna imagen.'));
         }
 
         $result = CuentasService::actualizar_foto_empleado($id_empleado, $request->file('foto'));
+
         return response()->json($result);
     }
 }

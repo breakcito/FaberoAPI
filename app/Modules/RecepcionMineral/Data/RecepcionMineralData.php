@@ -103,6 +103,8 @@ class RecepcionMineralData
             lm.numero_contacto,
             lm.tipo_producto,
             lm.tipo_mineral,
+            lm.condicion_ingreso,
+            lm.log_cambios,
             lm.evidencias,
             lm.peso_inicial,
             lm.fecha_hora_peso_inicial,
@@ -151,6 +153,7 @@ class RecepcionMineralData
             $item->id_empresa_transporte = $item->id_empresa_transporte !== null ? (int) $item->id_empresa_transporte : null;
             $item->id_tipo_vehiculo = $item->id_tipo_vehiculo !== null ? (int) $item->id_tipo_vehiculo : null;
             $item->id_conductor = $item->id_conductor !== null ? (int) $item->id_conductor : null;
+            $item->log_cambios = isset($item->log_cambios) ? json_decode($item->log_cambios, true) ?? [] : [];
         }
 
         return $results;
@@ -180,6 +183,8 @@ class RecepcionMineralData
             lm.numero_contacto,
             lm.tipo_producto,
             lm.tipo_mineral,
+            lm.condicion_ingreso,
+            lm.log_cambios,
             lm.evidencias,
             lm.peso_inicial,
             lm.fecha_hora_peso_inicial,
@@ -229,6 +234,7 @@ class RecepcionMineralData
             $item->id_empresa_transporte = $item->id_empresa_transporte !== null ? (int) $item->id_empresa_transporte : null;
             $item->id_tipo_vehiculo = $item->id_tipo_vehiculo !== null ? (int) $item->id_tipo_vehiculo : null;
             $item->id_conductor = $item->id_conductor !== null ? (int) $item->id_conductor : null;
+            $item->log_cambios = isset($item->log_cambios) ? json_decode($item->log_cambios, true) ?? [] : [];
 
             return (array) $item;
         }
@@ -322,6 +328,8 @@ class RecepcionMineralData
             lm.peso_neto,
             lm.created_at AS lote_fecha_creacion,
             lm.evidencias AS lote_evidencias,
+            lm.condicion_ingreso AS lote_condicion_ingreso,
+            lm.log_cambios AS lote_log_cambios,
             
             ru.tipo_ingreso,
             ru.fecha_hora_ingreso,
@@ -414,6 +422,9 @@ class RecepcionMineralData
         foreach ($results as $item) {
             if (isset($item->lote_evidencias)) {
                 $item->lote_evidencias = json_decode($item->lote_evidencias, true) ?? [];
+            }
+            if (isset($item->lote_log_cambios)) {
+                $item->lote_log_cambios = json_decode($item->lote_log_cambios, true) ?? [];
             }
             $item->peso_inicial = $item->peso_inicial !== null ? (float) $item->peso_inicial : null;
             $item->peso_final = $item->peso_final !== null ? (float) $item->peso_final : null;

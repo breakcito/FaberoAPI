@@ -175,6 +175,7 @@ class GuiasPrimerTramoController extends Controller
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
             'evidencias_existentes' => 'nullable|string',
+            'motivo' => 'nullable|string',
         ]);
 
         $lotesRaw = $request->input('lotes');
@@ -223,6 +224,7 @@ class GuiasPrimerTramoController extends Controller
             'numero_guia_transportista' => $request->input('numero_guia_transportista'),
             'sin_guia_transportista' => $request->boolean('sin_guia_transportista'),
             'evidencias_existentes' => $request->input('evidencias_existentes'),
+            'motivo' => $request->input('motivo'),
         ];
 
         $archivos = [];
@@ -242,13 +244,5 @@ class GuiasPrimerTramoController extends Controller
     public function anular_guia(Request $request, int $id): JsonResponse
     {
         return response()->json(GuiasPrimerTramoService::anular_guia($id, $request));
-    }
-
-    /**
-     * Obtener el historial (cabecera + lotes) de una guía, en orden cronológico DESC.
-     */
-    public function get_historial(int $id): JsonResponse
-    {
-        return response()->json(GuiasPrimerTramoService::get_historial($id));
     }
 }
