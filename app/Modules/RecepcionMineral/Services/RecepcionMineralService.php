@@ -6,6 +6,8 @@ use App\Models\LoteMineral;
 use App\Models\RecepcionUnidad;
 use App\Models\Vehiculo;
 use App\Modules\RecepcionMineral\Data\RecepcionMineralData;
+use App\Shared\Enums\_Generic\CondicionIngreso;
+use App\Shared\Enums\_Generic\EstadoLeyes;
 use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Helpers\CorrelativoHelper;
@@ -176,11 +178,11 @@ class RecepcionMineralService
             return ApiResponse::error('No se encontró el registro de recepción.');
         }
 
-        $isComercial = $condicionIngreso === 'comercializacion';
+        $isComercial = $condicionIngreso === CondicionIngreso::Comercializacion->value;
         $prefijo = $isComercial ? 'FB' : 'LOT';
         $filtros = $isComercial
-            ? ['condicion_ingreso' => 'comercializacion']
-            : ['condicion_ingreso' => ['!=', 'comercializacion']];
+            ? ['condicion_ingreso' => CondicionIngreso::Comercializacion->value]
+            : ['condicion_ingreso' => ['!=', CondicionIngreso::Comercializacion->value]];
 
         // Generar correlativo usando CorrelativoHelper
         $correlativoData = CorrelativoHelper::generar(
@@ -197,6 +199,7 @@ class RecepcionMineralService
             'condicion_ingreso' => $condicionIngreso,
             'correlativo' => $correlativoData['correlativo'],
             'numero_correlativo' => $correlativoData['numero_correlativo'],
+            'estado_leyes' => EstadoLeyes::Pendiente->value,
             'created_at' => now()->toDateTimeString(),
         ]);
 
@@ -469,11 +472,11 @@ class RecepcionMineralService
         $newCondicion = $data['condicion_ingreso'];
 
         if ($oldCondicion !== $newCondicion) {
-            $isComercial = $newCondicion === 'comercializacion';
+            $isComercial = $newCondicion === CondicionIngreso::Comercializacion->value;
             $prefijo = $isComercial ? 'FB' : 'LOT';
             $filtros = $isComercial
-                ? ['condicion_ingreso' => 'comercializacion']
-                : ['condicion_ingreso' => ['!=', 'comercializacion']];
+                ? ['condicion_ingreso' => CondicionIngreso::Comercializacion->value]
+                : ['condicion_ingreso' => ['!=', CondicionIngreso::Comercializacion->value]];
 
             // Generar correlativo usando CorrelativoHelper
             $correlativoData = CorrelativoHelper::generar(

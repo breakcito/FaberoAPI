@@ -3,10 +3,12 @@
 namespace App\Modules\RecepcionMineral\Controllers;
 
 use App\Modules\RecepcionMineral\Services\RecepcionMineralService;
+use App\Shared\Enums\_Generic\CondicionIngreso;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Validation\Rule;
 
 class RecepcionMineralController extends Controller
 {
@@ -58,7 +60,7 @@ class RecepcionMineralController extends Controller
         }
 
         $request->validate([
-            'condicion_ingreso' => 'required|string|in:comercializacion,chancado,almacen',
+            'condicion_ingreso' => ['required', Rule::enum(CondicionIngreso::class)],
         ]);
 
         $condicionIngreso = $request->input('condicion_ingreso');
@@ -248,7 +250,7 @@ class RecepcionMineralController extends Controller
             'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
             'id_empresa_transporte' => 'nullable|integer|exists:empresa_transporte,id',
             'id_conductor' => 'nullable|integer|exists:conductor,id',
-            'condicion_ingreso' => 'required|string|in:comercializacion,chancado,almacen',
+            'condicion_ingreso' => ['required', Rule::enum(CondicionIngreso::class)],
             'motivo' => 'nullable|string',
         ]);
 

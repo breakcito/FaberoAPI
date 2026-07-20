@@ -41,6 +41,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/RecepcionMineral/RecepcionMineralEndpoints.php');
                 require base_path('app/Modules/GuiasPrimerTramo/GuiasPrimerTramoEndpoints.php');
                 require base_path('app/Modules/GestionLeyes/GestionLeyesEndpoints.php');
+                require base_path('app/Modules/CierreLeyes/CierreLeyesEndpoints.php');
             });
         },
     )
