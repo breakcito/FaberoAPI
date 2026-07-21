@@ -2,17 +2,17 @@
 
 namespace App\Modules\CierreLeyes\Services;
 
-use App\Models\AnalisisMineral;
-use App\Models\GrupoAnalisisDetalle;
-use App\Models\LoteMineral;
 use App\Modules\CierreLeyes\Data\CierreLeyesData;
 use App\Shared\Enums\_Generic\EstadoLeyes;
 use App\Shared\Responses\ApiResponse;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class CierreLeyesService
 {
+    /**
+     * Obtener los lotes sugeridos pendientes de análisis.
+     */
     public static function get_lotes_sugeridos(): array
     {
         $data = CierreLeyesData::get_lotes_sugeridos();
@@ -20,50 +20,26 @@ class CierreLeyesService
         return ApiResponse::success($data, 'Lotes sugeridos obtenidos correctamente');
     }
 
-    private static function crear_registros_vacios_analisis(int $idLote, string $uuidFila, int $idEmpleado): void
-    {
-        $detallesActivos = DB::table('grupo_analisis_detalle as gad')
-            ->join('grupo_analisis as ga', 'gad.id_grupo_analisis', '=', 'ga.id')
-            ->where('ga.estado', 'Activo')
-            ->select('gad.id as detalle_id', 'ga.indicar_origen')
-            ->get();
-
-        foreach ($detallesActivos as $detalle) {
-            // El tipo_origen siempre arranca null: el usuario debe elegirlo
-            // explicitamente para grupos con indicar_origen=true.
-            AnalisisMineral::create([
-                'id_lote_mineral' => $idLote,
-                'id_grupo_analisis_detalle' => $detalle->detalle_id,
-                'tipo_origen' => null,
-                'uuid_fila' => $uuidFila,
-                'ley' => 0.0,
-                'esta_confirmada' => 0, // Unchecked/Unconfirmed by default
-                'id_empleado_registro' => $idEmpleado,
-            ]);
-        }
-    }
-
+    /**
+     * Iniciar el proceso de análisis de leyes para un lote.
+     */
     public static function iniciar_lote(int $idLote, int $idEmpleado): array
     {
-        $lote = LoteMineral::find($idLote);
+        $lote = CierreLeyesData::get_lote_by_id($idLote);
         if (! $lote) {
             return ApiResponse::error('Lote no encontrado');
         }
 
-        if ($lote->estado_leyes !== 'Pendiente' && ! empty($lote->estado_leyes)) {
+        if ($lote->estado_leyes !== EstadoLeyes::Pendiente->value && ! empty($lote->estado_leyes)) {
             return ApiResponse::error('El lote no se encuentra en estado Pendiente');
         }
 
         DB::beginTransaction();
         try {
-            $lote->estado_leyes = EstadoLeyes::EnProceso->value;
-            $lote->id_empleado_inicio_analisis = $idEmpleado;
-            $lote->fecha_hora_inicio_analisis = Carbon::now();
-            $lote->save();
+            CierreLeyesData::actualizar_estado_inicio_lote($lote, $idEmpleado);
 
-            // Generar primer uuid_fila y crear los registros vacíos iniciales
-            $uuidFila = \Illuminate\Support\Str::uuid()->toString();
-            self::crear_registros_vacios_analisis($idLote, $uuidFila, $idEmpleado);
+            $uuidFila = Str::uuid()->toString();
+            CierreLeyesData::crear_registros_vacios_analisis($idLote, $uuidFila, $idEmpleado);
 
             DB::commit();
 
@@ -78,22 +54,24 @@ class CierreLeyesService
         }
     }
 
+    /**
+     * Agregar una nueva corrida de análisis a un lote en proceso.
+     */
     public static function agregar_analisis(int $idLote, int $idEmpleado): array
     {
-        $lote = LoteMineral::find($idLote);
+        $lote = CierreLeyesData::get_lote_by_id($idLote);
         if (! $lote) {
             return ApiResponse::error('Lote no encontrado');
         }
 
-        if ($lote->estado_leyes !== 'En Proceso') {
+        if ($lote->estado_leyes !== EstadoLeyes::EnProceso->value) {
             return ApiResponse::error('El lote no se encuentra en proceso de análisis');
         }
 
         DB::beginTransaction();
         try {
-            // Generar nuevo uuid_fila y crear los registros vacíos
-            $uuidFila = \Illuminate\Support\Str::uuid()->toString();
-            self::crear_registros_vacios_analisis($idLote, $uuidFila, $idEmpleado);
+            $uuidFila = Str::uuid()->toString();
+            CierreLeyesData::crear_registros_vacios_analisis($idLote, $uuidFila, $idEmpleado);
 
             DB::commit();
 
@@ -108,6 +86,9 @@ class CierreLeyesService
         }
     }
 
+    /**
+     * Obtener el listado de lotes en proceso o confirmados para el cierre de leyes.
+     */
     public static function get_lotes_cierre(?string $estado = null, ?string $fechaInicio = null, ?string $fechaFin = null, ?int $id = null): array
     {
         $filtros = [];
@@ -116,7 +97,6 @@ class CierreLeyesService
             $filtros['id_lookup'] = $id;
         }
 
-        // Estados: si llega uno solo, lo usamos; si llega "Todos", incluimos ambos.
         if ($estado !== null && $estado !== '' && $estado !== 'Todos') {
             $filtros['estados'] = [$estado];
         }
@@ -129,8 +109,6 @@ class CierreLeyesService
             $filtros['fecha_fin'] = $fechaFin;
         }
 
-        // Para mantener compatibilidad con el helper que acepta ?int $id,
-        // separamos ese parametro del array de filtros.
         $idLookup = $filtros['id_lookup'] ?? null;
         unset($filtros['id_lookup']);
 
@@ -139,6 +117,9 @@ class CierreLeyesService
         return ApiResponse::success($data, 'Lotes en proceso/confirmados obtenidos correctamente');
     }
 
+    /**
+     * Guardar o actualizar el valor de una ley en el análisis mineral.
+     */
     public static function guardar_valor_ley(
         int $idLoteMineral,
         int $idGrupoAnalisisDetalle,
@@ -155,8 +136,7 @@ class CierreLeyesService
 
         DB::beginTransaction();
         try {
-            // Verificar si el detalle y analito es desplegable
-            $detalle = GrupoAnalisisDetalle::with('analito')->find($idGrupoAnalisisDetalle);
+            $detalle = CierreLeyesData::get_detalle_con_analito($idGrupoAnalisisDetalle);
             if (! $detalle) {
                 return ApiResponse::error('El detalle del grupo de análisis no existe');
             }
@@ -164,18 +144,16 @@ class CierreLeyesService
             $esDesplegable = $detalle->analito ? (bool) $detalle->analito->es_desplegable : false;
 
             if (! $esDesplegable) {
-                // Si no es desplegable, actualizamos todos los registros de este detalle en el lote
-                // (incluyendo cualquier origen o fila de corrida)
-                $affected = AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
-                    ->where('id_grupo_analisis_detalle', $idGrupoAnalisisDetalle)
-                    ->update([
-                        'ley' => $ley,
-                        'esta_confirmada' => $estaConfirmada ? 1 : 0,
-                        'id_empleado_registro' => $idEmpleadoRegistro,
-                    ]);
+                $affected = CierreLeyesData::actualizar_leyes_no_desplegables(
+                    $idLoteMineral,
+                    $idGrupoAnalisisDetalle,
+                    $ley,
+                    $estaConfirmada,
+                    $idEmpleadoRegistro
+                );
 
                 if ($affected === 0) {
-                    AnalisisMineral::create([
+                    CierreLeyesData::crear_analisis_mineral([
                         'id_lote_mineral' => $idLoteMineral,
                         'id_grupo_analisis_detalle' => $idGrupoAnalisisDetalle,
                         'tipo_origen' => $tipoOrigen,
@@ -187,17 +165,13 @@ class CierreLeyesService
                 }
             } else {
                 if ($id !== null) {
-                    $registro = AnalisisMineral::find($id);
+                    $registro = CierreLeyesData::get_registro_analisis_by_id($id);
                     if (! $registro) {
                         return ApiResponse::error('Registro de análisis no encontrado para actualizar');
                     }
-                    $registro->update([
-                        'ley' => $ley,
-                        'esta_confirmada' => $estaConfirmada ? 1 : 0,
-                        'id_empleado_registro' => $idEmpleadoRegistro,
-                    ]);
+                    CierreLeyesData::actualizar_registro_analisis($registro, $ley, $estaConfirmada, $idEmpleadoRegistro);
                 } else {
-                    AnalisisMineral::create([
+                    CierreLeyesData::crear_analisis_mineral([
                         'id_lote_mineral' => $idLoteMineral,
                         'id_grupo_analisis_detalle' => $idGrupoAnalisisDetalle,
                         'tipo_origen' => $tipoOrigen,
@@ -211,7 +185,6 @@ class CierreLeyesService
 
             DB::commit();
 
-            // Retornar los lotes actualizados para sincronizar el frontend
             $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
             $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
 
@@ -223,30 +196,32 @@ class CierreLeyesService
         }
     }
 
+    /**
+     * Eliminar un registro individual de ley.
+     */
     public static function eliminar_valor(int $id): array
     {
-        $registro = AnalisisMineral::find($id);
+        $registro = CierreLeyesData::get_registro_analisis_by_id($id);
         if (! $registro) {
             return ApiResponse::error('Registro de análisis no encontrado');
         }
 
-        $idLoteMineral = $registro->id_lote_mineral;
-        $registro->delete();
+        $idLoteMineral = (int) $registro->id_lote_mineral;
+        CierreLeyesData::eliminar_registro_analisis($registro);
 
-        // Retornar el lote actualizado
         $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
         $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
 
         return ApiResponse::success($loteData, 'Registro de análisis eliminado correctamente');
     }
 
+    /**
+     * Eliminar todas las celdas asociadas a una corrida de análisis por su uuid_fila.
+     */
     public static function eliminar_fila(int $idLoteMineral, string $uuidFila): array
     {
-        AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
-            ->where('uuid_fila', $uuidFila)
-            ->delete();
+        CierreLeyesData::eliminar_fila_analisis($idLoteMineral, $uuidFila);
 
-        // Retornar el lote actualizado
         $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
         $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
 
@@ -254,15 +229,13 @@ class CierreLeyesService
     }
 
     /**
-     * Valida que el lote pueda cerrarse:
-     *  - Todos los analisis_mineral del lote deben estar confirmados (esta_confirmada = 1).
-     *  - Ningún analisis_mineral del lote puede tener ley nula.
+     * Validar si un lote cumple las condiciones de cierre (todas las celdas confirmadas y ley > 0).
      *
      * @return array{ok: bool, motivo?: string}
      */
     private static function validar_cierre(int $idLote): array
     {
-        $filas = AnalisisMineral::where('id_lote_mineral', $idLote)->get();
+        $filas = CierreLeyesData::get_filas_analisis_por_lote($idLote);
 
         if ($filas->contains(fn ($f) => ! (bool) $f->esta_confirmada)) {
             return [
@@ -282,31 +255,13 @@ class CierreLeyesService
     }
 
     /**
-     * Consolida las leyes del lote a partir de los analisis confirmados.
-     *
-     * Regla de consolidacion (cierre-leyes):
-     *   1. Se agrupan los analisis_mineral confirmados (esta_confirmada = 1) del lote
-     *      por id_grupo_analisis_detalle.
-     *   2. Para cada grupo se calcula el VALOR REPRESENTATIVO del analito, gate
-     *      explicito por analito.es_desplegable:
-     *      a. es_desplegable = true  -> promedio aritmetico de todas las corridas
-     *         confirmadas del analito.
-     *      b. es_desplegable = false -> se toma el valor de la primera fila (el
-     *         frontend solo permite un valor unico replicado en todas las filas
-     *         via `guardar_valor_ley`; no se promedia).
-     *   3. El valor se asigna a lote_mineral.ley_<x> segun la flag
-     *      'para_valorizacion_<x>' del grupo_analisis_detalle (single-select: solo
-     *      una flag activa por detalle).
-     *   4. Si el detalle no tiene flag activa, el valor se descarta pero los
-     *      registros siguen disponibles en analisis_mineral (trazabilidad).
+     * Consolidar las leyes representativas del lote calculando promedios para analitos desplegables o valor único para no desplegables.
      *
      * @return array{ley_oro: float, ley_plata: float, ley_humedad: float, ley_recuperacion: float}
      */
     private static function consolidar_leyes(int $idLote): array
     {
-        $analisisConfirmados = AnalisisMineral::where('id_lote_mineral', $idLote)
-            ->where('esta_confirmada', 1)
-            ->get();
+        $analisisConfirmados = CierreLeyesData::get_analisis_confirmados_por_lote($idLote);
 
         $leyesValores = [
             'ley_oro' => 0.0,
@@ -318,7 +273,7 @@ class CierreLeyesService
         $agrupados = $analisisConfirmados->groupBy('id_grupo_analisis_detalle');
 
         foreach ($agrupados as $idDetalle => $registros) {
-            $detalle = GrupoAnalisisDetalle::with('analito')->find($idDetalle);
+            $detalle = CierreLeyesData::get_detalle_con_analito((int) $idDetalle);
             if (! $detalle) {
                 continue;
             }
@@ -326,7 +281,6 @@ class CierreLeyesService
             $esDesplegable = $detalle->analito ? (bool) $detalle->analito->es_desplegable : false;
 
             if ($esDesplegable) {
-                // Regla: promedio aritmetico entre todas las corridas confirmadas del analito.
                 $sumaLeyes = 0.0;
                 $cant = 0;
                 foreach ($registros as $reg) {
@@ -335,9 +289,6 @@ class CierreLeyesService
                 }
                 $valor = $cant > 0 ? $sumaLeyes / $cant : 0.0;
             } else {
-                // No desplegable: el frontend muestra una sola celda y `guardar_valor_ley`
-                // replica el valor unico en todas las filas del detalle. Se toma el
-                // primer registro sin promediar.
                 $valor = (float) ($registros[0]->ley ?? 0.0);
             }
 
@@ -358,14 +309,17 @@ class CierreLeyesService
         return $leyesValores;
     }
 
+    /**
+     * Confirmar y cerrar el lote de leyes.
+     */
     public static function confirmar_lote_leyes(int $idLote, bool $conValorComercial, int $idEmpleado): array
     {
-        $lote = LoteMineral::find($idLote);
+        $lote = CierreLeyesData::get_lote_by_id($idLote);
         if (! $lote) {
             return ApiResponse::error('Lote no encontrado');
         }
 
-        if ($lote->estado_leyes !== 'En Proceso') {
+        if ($lote->estado_leyes !== EstadoLeyes::EnProceso->value) {
             return ApiResponse::error('El lote no se encuentra en proceso de análisis');
         }
 
@@ -377,17 +331,7 @@ class CierreLeyesService
         DB::beginTransaction();
         try {
             $leyesValores = self::consolidar_leyes($idLote);
-
-            $lote->ley_oro = $leyesValores['ley_oro'];
-            $lote->ley_plata = $leyesValores['ley_plata'];
-            $lote->ley_humedad = $leyesValores['ley_humedad'];
-            $lote->ley_recuperacion = $leyesValores['ley_recuperacion'];
-
-            $lote->estado_leyes = EstadoLeyes::Confirmado->value;
-            $lote->con_valor_comercial = $conValorComercial ? 1 : 0;
-            $lote->id_empleado_confirmacion_analisis = $idEmpleado;
-            $lote->fecha_hora_confirmacion_analisis = Carbon::now();
-            $lote->save();
+            CierreLeyesData::confirmar_y_cerrar_lote($lote, $leyesValores, $conValorComercial, $idEmpleado);
 
             DB::commit();
 
@@ -402,11 +346,12 @@ class CierreLeyesService
         }
     }
 
+    /**
+     * Actualizar el tipo de origen de una corrida de análisis.
+     */
     public static function actualizar_origen_fila(int $idLoteMineral, string $uuidFila, ?string $tipoOrigen): array
     {
-        AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
-            ->where('uuid_fila', $uuidFila)
-            ->update(['tipo_origen' => $tipoOrigen]);
+        CierreLeyesData::actualizar_origen_fila($idLoteMineral, $uuidFila, $tipoOrigen);
 
         $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
         $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;

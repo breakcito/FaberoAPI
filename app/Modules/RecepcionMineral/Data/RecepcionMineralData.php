@@ -40,7 +40,7 @@ class RecepcionMineralData
             ru.estado_salida,
             ru.estado_pesaje,
             ru.validacion_datos,
-            ru.id_surcusal AS id_sucursal
+            ru.id_sucursal AS id_sucursal
         FROM
             recepcion_unidad ru
         INNER JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_registro
@@ -48,7 +48,7 @@ class RecepcionMineralData
         LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte
         LEFT JOIN tipo_vehiculo tv ON tv.id = ru.id_tipo_vehiculo
         LEFT JOIN conductor c ON c.id = ru.id_conductor
-        WHERE ru.id_surcusal = :id_sucursal
+        WHERE ru.id_sucursal = :id_sucursal
           AND ru.estado = "En Planta"
         ';
 
@@ -275,7 +275,7 @@ class RecepcionMineralData
             ru.estado_salida,
             ru.estado_pesaje,
             ru.validacion_datos,
-            ru.id_surcusal AS id_sucursal
+            ru.id_sucursal AS id_sucursal
         FROM
             recepcion_unidad ru
         INNER JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_registro
@@ -374,7 +374,7 @@ class RecepcionMineralData
         LEFT JOIN conductor c ON c.id = COALESCE(lm.id_conductor, ru.id_conductor)
         LEFT JOIN empleado emp_reg ON emp_reg.id = lm.id_empleado_registro
         WHERE
-            ru.id_surcusal = :id_sucursal
+            ru.id_sucursal = :id_sucursal
             AND ru.estado_pesaje = :estado_pesaje
         ';
 
@@ -444,7 +444,7 @@ class RecepcionMineralData
         SELECT DISTINCT lm.id, lm.correlativo
         FROM lote_mineral lm
         INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
-        WHERE ru.id_surcusal = :id_sucursal
+        WHERE ru.id_sucursal = :id_sucursal
         ORDER BY lm.correlativo DESC;
         ';
         $lotes = DB::select($lotesSql, ['id_sucursal' => $idSucursal]);
@@ -455,7 +455,7 @@ class RecepcionMineralData
         FROM lote_mineral lm
         INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
         INNER JOIN vehiculo v ON v.id = COALESCE(lm.id_vehiculo, ru.id_vehiculo)
-        WHERE ru.id_surcusal = :id_sucursal
+        WHERE ru.id_sucursal = :id_sucursal
         ORDER BY v.numero_placa ASC;
         ';
         $vehiculos = DB::select($vehiculosSql, ['id_sucursal' => $idSucursal]);
@@ -464,7 +464,7 @@ class RecepcionMineralData
         $condicionesSql = '
         SELECT DISTINCT ru.tipo_ingreso
         FROM recepcion_unidad ru
-        WHERE ru.id_surcusal = :id_sucursal
+        WHERE ru.id_sucursal = :id_sucursal
           AND ru.tipo_ingreso IS NOT NULL
           AND ru.tipo_ingreso != ""
         ORDER BY ru.tipo_ingreso ASC;

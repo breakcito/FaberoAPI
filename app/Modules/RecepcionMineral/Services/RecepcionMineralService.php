@@ -158,10 +158,17 @@ class RecepcionMineralService
                 break;
         }
 
-        // 2. Marcar la validación de este campo como completada (true)
+        // 2. Marcar la validación de este campo como completada (true) y propagar a los lotes
         $validacionDatos[$field] = true;
         $recepcion->validacion_datos = $validacionDatos;
         $recepcion->save();
+
+        LoteMineral::where('id_recepcion_unidad', $id)->update([
+            'id_vehiculo' => $recepcion->id_vehiculo,
+            'id_empresa_transporte' => $recepcion->id_empresa_transporte,
+            'id_tipo_vehiculo' => $recepcion->id_tipo_vehiculo,
+            'id_conductor' => $recepcion->id_conductor,
+        ]);
 
         $updated = RecepcionMineralData::get_recepcion_by_id_with_lotes($id);
 
@@ -201,6 +208,10 @@ class RecepcionMineralService
             'numero_correlativo' => $correlativoData['numero_correlativo'],
             'estado_leyes' => EstadoLeyes::Pendiente->value,
             'created_at' => now()->toDateTimeString(),
+            'id_vehiculo' => $recepcion->id_vehiculo,
+            'id_empresa_transporte' => $recepcion->id_empresa_transporte,
+            'id_tipo_vehiculo' => $recepcion->id_tipo_vehiculo,
+            'id_conductor' => $recepcion->id_conductor,
         ]);
 
         $loteDetalle = RecepcionMineralData::get_lote_by_id($lote->id);
@@ -424,7 +435,7 @@ class RecepcionMineralService
             'fecha_hora_ingreso' => $fechaHoraIngreso,
             'estado' => 'En Planta',
             'estado_pesaje' => 'Sin Pesar',
-            'id_surcusal' => $data['id_sucursal'],
+            'id_sucursal' => $data['id_sucursal'],
             'validacion_datos' => [
                 'condicion_ingreso' => false,
                 'placa' => false,

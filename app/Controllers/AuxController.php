@@ -403,7 +403,7 @@ class AuxController extends Controller
         $params = ['estado_pesaje' => 'Pesado'];
 
         if ($idSucursal !== null) {
-            $sql .= ' AND ru.id_surcusal = :id_sucursal';
+            $sql .= ' AND ru.id_sucursal = :id_sucursal';
             $params['id_sucursal'] = $idSucursal;
         }
 

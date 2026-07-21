@@ -48,9 +48,9 @@ class CierreLeyesController
     public function guardar_valor_ley(Request $request)
     {
         $request->validate([
-            'id' => 'nullable|integer|exists:analisis_mineral,id',
-            'id_lote_mineral' => 'required|integer|exists:lote_mineral,id',
-            'id_grupo_analisis_detalle' => 'required|integer|exists:grupo_analisis_detalle,id',
+            'id' => 'nullable|integer',
+            'id_lote_mineral' => 'required|integer',
+            'id_grupo_analisis_detalle' => 'required|integer',
             'tipo_origen' => 'nullable|string|in:Proveedor,Interno',
             'uuid_fila' => 'required|string|max:36',
             'ley' => 'required|numeric|min:0',
@@ -58,9 +58,7 @@ class CierreLeyesController
         ]);
 
         $authUser = $request->attributes->get('auth_user');
-        if (! $authUser || empty($authUser->id_empleado)) {
-            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado para registrar la ley.'), 401);
-        }
+        
 
         return response()->json(CierreLeyesService::guardar_valor_ley(
             (int) $request->input('id_lote_mineral'),

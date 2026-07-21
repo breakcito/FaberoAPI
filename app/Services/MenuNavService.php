@@ -54,12 +54,16 @@ class MenuNavService
                 $submenusData[] = [
                     'id_submenu' => $submenu->id_submenu,
                     'nombre' => $submenu->nombre,
-                    'path' => $submenu->path,
+                    'path' => trim((string) $submenu->path),
                     'modulos' => array_map(function ($modulo) use ($menu, $submenu) {
+                        $menuPath = trim((string) $menu->path);
+                        $submenuPath = trim((string) $submenu->path);
+                        $moduloPath = trim((string) $modulo->path);
+
                         return [
                             'id_modulo' => $modulo->id_modulo,
                             'nombre' => $modulo->nombre,
-                            'url' => "/{$menu->path}/{$submenu->path}/{$modulo->path}",
+                            'url' => "/{$menuPath}/{$submenuPath}/{$moduloPath}",
                         ];
                     }, $misModulos),
                 ];
@@ -68,7 +72,7 @@ class MenuNavService
             $estructura[] = [
                 'id_menu' => $menu->id_menu,
                 'nombre' => $menu->nombre,
-                'path' => $menu->path,
+                'path' => trim((string) $menu->path),
                 'submenus' => $submenusData,
             ];
         }
