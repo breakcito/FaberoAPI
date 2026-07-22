@@ -43,6 +43,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/GestionLeyes/GestionLeyesEndpoints.php');
                 require base_path('app/Modules/CierreLeyes/CierreLeyesEndpoints.php');
                 require base_path('app/Modules/CondicionesComercialesProveedor/CondicionesComercialesProveedorEndpoints.php');
+                require base_path('app/Modules/AnticiposProveedor/AnticiposProveedorEndpoints.php');
             });
         },
     )
