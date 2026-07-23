@@ -118,6 +118,7 @@ class CierreLeyesData
                     am.ley,
                     am.esta_confirmada,
                     am.tipo_origen,
+                    am.log_cambios,
                     am.created_at
                 FROM analisis_mineral am
                 INNER JOIN grupo_analisis_detalle gad ON am.id_grupo_analisis_detalle = gad.id
@@ -132,6 +133,7 @@ class CierreLeyesData
                 $a->id_analito = (int) $a->id_analito;
                 $a->ley = (float) $a->ley;
                 $a->esta_confirmada = (bool) $a->esta_confirmada;
+                $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
             }
 
             $lote->id = (int) $lote->id;
@@ -160,6 +162,26 @@ class CierreLeyesData
             ->join('grupo_analisis as ga', 'gad.id_grupo_analisis', '=', 'ga.id')
             ->where('ga.estado', 'Activo')
             ->select('gad.id as detalle_id', 'ga.indicar_origen')
+            ->get()
+            ->toArray();
+    }
+
+    /**
+     * Obtener los detalles de grupos de análisis activos que están marcados para valorización.
+     */
+    public static function get_detalles_para_valorizacion(): array
+    {
+        return DB::table('grupo_analisis_detalle as gad')
+            ->join('grupo_analisis as ga', 'gad.id_grupo_analisis', '=', 'ga.id')
+            ->join('analito as an', 'gad.id_analito', '=', 'an.id')
+            ->where('ga.estado', 'Activo')
+            ->where(function ($query) {
+                $query->where('gad.para_valorizacion_oro', 1)
+                    ->orWhere('gad.para_valorizacion_plata', 1)
+                    ->orWhere('gad.para_valorizacion_humedad', 1)
+                    ->orWhere('gad.para_valorizacion_recuperacion', 1);
+            })
+            ->select('gad.id as detalle_id', 'an.nombre as analito_nombre')
             ->get()
             ->toArray();
     }
@@ -204,6 +226,61 @@ class CierreLeyesData
     }
 
     /**
+     * Generar un log de cambio para una entidad AnalisisMineral.
+     */
+    public static function generar_log_cambio(
+        AnalisisMineral $registro,
+        ?float $nuevaLey,
+        ?bool $nuevaEstaConfirmada,
+        ?string $nuevoTipoOrigen,
+        int $idEmpleado
+    ): void {
+        $cambios = [];
+
+        if ($nuevaLey !== null && (float) $registro->ley !== (float) $nuevaLey) {
+            $cambios[] = [
+                'campo_bd' => 'ley',
+                'campo' => 'Ley',
+                'valor_anterior' => (float) $registro->ley,
+                'valor_nuevo' => (float) $nuevaLey,
+            ];
+        }
+
+        if ($nuevaEstaConfirmada !== null && (bool) $registro->esta_confirmada !== (bool) $nuevaEstaConfirmada) {
+            $cambios[] = [
+                'campo_bd' => 'esta_confirmada',
+                'campo' => 'Estado Confirmado',
+                'valor_anterior' => (bool) $registro->esta_confirmada,
+                'valor_nuevo' => (bool) $nuevaEstaConfirmada,
+            ];
+        }
+
+        if ($nuevoTipoOrigen !== null && $registro->tipo_origen !== $nuevoTipoOrigen) {
+            $cambios[] = [
+                'campo_bd' => 'tipo_origen',
+                'campo' => 'Tipo de origen',
+                'valor_anterior' => $registro->tipo_origen ?? '—',
+                'valor_nuevo' => $nuevoTipoOrigen ?? '—',
+            ];
+        }
+
+        if (! empty($cambios)) {
+            $logActual = $registro->log_cambios ?? [];
+            if (! is_array($logActual)) {
+                $logActual = json_decode($logActual, true) ?? [];
+            }
+            $nuevoEntry = [
+                'id_empleado' => $idEmpleado,
+                'motivo' => null,
+                'update_at' => Carbon::now()->toDateTimeString(),
+                'cambios' => $cambios,
+            ];
+            array_unshift($logActual, $nuevoEntry);
+            $registro->log_cambios = $logActual;
+        }
+    }
+
+    /**
      * Actualizar todas las filas de un grupo de análisis no desplegable en un lote.
      */
     public static function actualizar_leyes_no_desplegables(
@@ -213,13 +290,23 @@ class CierreLeyesData
         bool $estaConfirmada,
         int $idEmpleadoRegistro
     ): int {
-        return AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
+        $registros = AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
             ->where('id_grupo_analisis_detalle', $idGrupoAnalisisDetalle)
-            ->update([
-                'ley' => $ley,
-                'esta_confirmada' => $estaConfirmada ? 1 : 0,
-                'id_empleado_registro' => $idEmpleadoRegistro,
-            ]);
+            ->get();
+
+        if ($registros->isEmpty()) {
+            return 0;
+        }
+
+        foreach ($registros as $registro) {
+            self::generar_log_cambio($registro, $ley, $estaConfirmada, null, $idEmpleadoRegistro);
+            $registro->ley = $ley;
+            $registro->esta_confirmada = $estaConfirmada ? 1 : 0;
+            $registro->id_empleado_registro = $idEmpleadoRegistro;
+            $registro->save();
+        }
+
+        return $registros->count();
     }
 
     /**
@@ -229,6 +316,51 @@ class CierreLeyesData
      */
     public static function crear_analisis_mineral(array $datos): AnalisisMineral
     {
+        $ley = isset($datos['ley']) ? (float) $datos['ley'] : 0.0;
+        $estaConfirmada = isset($datos['esta_confirmada']) ? (bool) $datos['esta_confirmada'] : false;
+        $tipoOrigen = $datos['tipo_origen'] ?? null;
+        $idEmpleado = $datos['id_empleado_registro'] ?? 1;
+
+        $cambios = [];
+
+        if ($ley > 0) {
+            $cambios[] = [
+                'campo_bd' => 'ley',
+                'campo' => 'Ley',
+                'valor_anterior' => 0.0,
+                'valor_nuevo' => $ley,
+            ];
+        }
+
+        if ($estaConfirmada) {
+            $cambios[] = [
+                'campo_bd' => 'esta_confirmada',
+                'campo' => 'Estado Confirmado',
+                'valor_anterior' => false,
+                'valor_nuevo' => true,
+            ];
+        }
+
+        if ($tipoOrigen !== null) {
+            $cambios[] = [
+                'campo_bd' => 'tipo_origen',
+                'campo' => 'Tipo de origen',
+                'valor_anterior' => '—',
+                'valor_nuevo' => $tipoOrigen,
+            ];
+        }
+
+        if (! empty($cambios)) {
+            $datos['log_cambios'] = [
+                [
+                    'id_empleado' => $idEmpleado,
+                    'motivo' => null,
+                    'update_at' => Carbon::now()->toDateTimeString(),
+                    'cambios' => $cambios,
+                ],
+            ];
+        }
+
         return AnalisisMineral::create($datos);
     }
 
@@ -249,11 +381,11 @@ class CierreLeyesData
         bool $estaConfirmada,
         int $idEmpleadoRegistro
     ): void {
-        $registro->update([
-            'ley' => $ley,
-            'esta_confirmada' => $estaConfirmada ? 1 : 0,
-            'id_empleado_registro' => $idEmpleadoRegistro,
-        ]);
+        self::generar_log_cambio($registro, $ley, $estaConfirmada, null, $idEmpleadoRegistro);
+        $registro->ley = $ley;
+        $registro->esta_confirmada = $estaConfirmada ? 1 : 0;
+        $registro->id_empleado_registro = $idEmpleadoRegistro;
+        $registro->save();
     }
 
     /**
@@ -277,11 +409,17 @@ class CierreLeyesData
     /**
      * Actualizar el tipo de origen para todas las celdas de una corrida de análisis.
      */
-    public static function actualizar_origen_fila(int $idLoteMineral, string $uuidFila, ?string $tipoOrigen): void
+    public static function actualizar_origen_fila(int $idLoteMineral, string $uuidFila, ?string $tipoOrigen, int $idEmpleado = 1): void
     {
-        AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
+        $registros = AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
             ->where('uuid_fila', $uuidFila)
-            ->update(['tipo_origen' => $tipoOrigen]);
+            ->get();
+
+        foreach ($registros as $registro) {
+            self::generar_log_cambio($registro, null, null, $tipoOrigen, $idEmpleado);
+            $registro->tipo_origen = $tipoOrigen;
+            $registro->save();
+        }
     }
 
     /**

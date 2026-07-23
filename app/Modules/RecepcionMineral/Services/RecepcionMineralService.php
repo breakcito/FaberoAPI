@@ -200,12 +200,20 @@ class RecepcionMineralService
             reseteo: Periodo::Anual
         );
 
+        // Crear automáticamente el registro en ticket_balanza al generar el lote
+        $ticketId = DB::table('ticket_balanza')->insertGetId([
+            'numero' => null,
+            'created_at' => now(),
+        ]);
+        DB::table('ticket_balanza')->where('id', $ticketId)->update(['numero' => $ticketId]);
+
         $lote = LoteMineral::create([
             'id_recepcion_unidad' => $id,
             'id_empleado_registro' => $idEmpleadoRegistro,
             'condicion_ingreso' => $condicionIngreso,
             'correlativo' => $correlativoData['correlativo'],
             'numero_correlativo' => $correlativoData['numero_correlativo'],
+            'id_ticket_balanza' => $ticketId,
             'estado_leyes' => EstadoLeyes::Pendiente->value,
             'created_at' => now()->toDateTimeString(),
             'id_vehiculo' => $recepcion->id_vehiculo,
@@ -227,6 +235,10 @@ class RecepcionMineralService
         $lote = LoteMineral::find($loteId);
         if (! $lote) {
             return ApiResponse::error('No se encontró el registro de lote.');
+        }
+
+        if ($lote->id_ticket_balanza) {
+            DB::table('ticket_balanza')->where('id', $lote->id_ticket_balanza)->delete();
         }
 
         $lote->delete();
@@ -271,11 +283,34 @@ class RecepcionMineralService
             $lote->id_conductor = $recepcion->id_conductor;
         }
 
+        // Al registrar el peso inicial desde balanza, crear registro en ticket_balanza si no tiene uno
+        if (! $lote->id_ticket_balanza) {
+            $ticketId = DB::table('ticket_balanza')->insertGetId([
+                'numero' => null,
+                'created_at' => now(),
+            ]);
+            DB::table('ticket_balanza')->where('id', $ticketId)->update(['numero' => $ticketId]);
+            $lote->id_ticket_balanza = $ticketId;
+        }
+
         $lote->save();
 
         $updatedLote = RecepcionMineralData::get_lote_by_id($loteId);
 
         return ApiResponse::success($updatedLote, 'Peso inicial registrado correctamente.');
+    }
+
+    /**
+     * Obtener los datos completos del ticket de balanza
+     */
+    public static function get_ticket_balanza(int $loteId): array
+    {
+        $data = RecepcionMineralData::get_ticket_balanza_info($loteId);
+        if (! $data) {
+            return ApiResponse::error('No se encontró la información del ticket para el lote especificado.');
+        }
+
+        return ApiResponse::success($data, 'Ticket de balanza obtenido correctamente.');
     }
 
     /**
@@ -335,17 +370,17 @@ class RecepcionMineralService
         if (array_key_exists('observacion_peso_inicial', $data)) {
             $lote->observacion_peso_inicial = $data['observacion_peso_inicial'];
         }
-        if (array_key_exists('id_vehiculo', $data)) {
-            $lote->id_vehiculo = $data['id_vehiculo'] ? (int) $data['id_vehiculo'] : null;
+        if (array_key_exists('id_vehiculo', $data) && ! empty($data['id_vehiculo'])) {
+            $lote->id_vehiculo = (int) $data['id_vehiculo'];
         }
-        if (array_key_exists('id_empresa_transporte', $data)) {
-            $lote->id_empresa_transporte = $data['id_empresa_transporte'] ? (int) $data['id_empresa_transporte'] : null;
+        if (array_key_exists('id_empresa_transporte', $data) && ! empty($data['id_empresa_transporte'])) {
+            $lote->id_empresa_transporte = (int) $data['id_empresa_transporte'];
         }
-        if (array_key_exists('id_tipo_vehiculo', $data)) {
-            $lote->id_tipo_vehiculo = $data['id_tipo_vehiculo'] ? (int) $data['id_tipo_vehiculo'] : null;
+        if (array_key_exists('id_tipo_vehiculo', $data) && ! empty($data['id_tipo_vehiculo'])) {
+            $lote->id_tipo_vehiculo = (int) $data['id_tipo_vehiculo'];
         }
-        if (array_key_exists('id_conductor', $data)) {
-            $lote->id_conductor = $data['id_conductor'] ? (int) $data['id_conductor'] : null;
+        if (array_key_exists('id_conductor', $data) && ! empty($data['id_conductor'])) {
+            $lote->id_conductor = (int) $data['id_conductor'];
         }
 
         $pesoFinal = (float) $data['peso_final'];

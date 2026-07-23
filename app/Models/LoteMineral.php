@@ -39,6 +39,7 @@ class LoteMineral extends Model
         'created_at',
         'id_empleado_inicio_analisis',
         'id_empleado_confirmacion_analisis',
+        'id_ticket_balanza',
         'ley_oro',
         'ley_plata',
         'ley_humedad',

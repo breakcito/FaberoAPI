@@ -107,10 +107,14 @@ class CierreLeyesController
             'tipo_origen' => 'nullable|string|in:Proveedor,Interno',
         ]);
 
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = ($authUser && ! empty($authUser->id_empleado)) ? (int) $authUser->id_empleado : 1;
+
         return response()->json(CierreLeyesService::actualizar_origen_fila(
             $idLoteMineral,
             $uuidFila,
-            $request->input('tipo_origen')
+            $request->input('tipo_origen'),
+            $idEmpleado
         ));
     }
 

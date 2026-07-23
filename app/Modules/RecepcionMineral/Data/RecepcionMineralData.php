@@ -477,4 +477,113 @@ class RecepcionMineralData
             'condiciones_ingreso' => array_column($condiciones, 'tipo_ingreso'),
         ];
     }
+
+    /**
+     * Obtener la información completa para el Ticket de Balanza en formato PDF
+     */
+    public static function get_ticket_balanza_info(int $loteId)
+    {
+        $sql = "
+        SELECT
+            lot.id AS id_lote,
+            lot.correlativo AS correlativo,
+            tb.numero AS ticket_numero,
+            tb.created_at AS fecha_impresion,
+            
+            CONCAT(COALESCE(vh.serie_placa, ''), IF(vh.serie_placa IS NOT NULL AND vh.serie_placa != '', '-', ''), COALESCE(vh.numero_placa, '')) AS placa,
+            
+            lot.tipo_producto,
+            lot.tipo_carga,
+            lot.tipo_mineral,
+            
+            CONCAT(COALESCE(gui.serie_guia_remitente, ''), IF(gui.serie_guia_remitente IS NOT NULL AND gui.serie_guia_remitente != '', '-', ''), COALESCE(gui.numero_guia_remitente, '')) AS guia_remision,
+            
+            pr.ruc AS ruc_proveedor,
+            pr.razon_social AS proveedor,
+            
+            CONCAT(COALESCE(cnd.apellido, ''), ' ', COALESCE(cnd.nombre, '')) AS conductor,
+            cnd.numero_licencia AS licencia_conductor,
+            
+            emp.razon_social AS empresa_transporte,
+            
+            CONCAT(COALESCE(gui.serie_guia_transportista, ''), IF(gui.serie_guia_transportista IS NOT NULL AND gui.serie_guia_transportista != '', '-', ''), COALESCE(gui.numero_guia_transportista, '')) AS guia_transporte,
+            
+            -- sucursal (Destino)
+            sc.nombre AS nombre_sucursal,
+            sc.direccion AS direccion_sucursal,
+            dep_sc.nombre AS departamento_sucursal,
+            prv_sc.nombre AS provincia_sucursal,
+            dis_sc.nombre AS distrito_sucursal,
+            
+            -- ORIGEN: concesion de la guia; si la guia no trae, usar la del proveedor
+            cns_origen.nombre          AS nombre_concesion,
+            cns_origen.codigo_reinfo   AS codigo_reinfo_concesion,
+            dep_cori.nombre            AS departamento_concesion,
+            prv_cori.nombre            AS provincia_concesion,
+            dis_cori.nombre            AS distrito_concesion,
+            zo.nombre AS zona_origen_nombre,
+            
+            -- observaciones
+            lot.observacion_peso_inicial,
+            lot.observacion_peso_final,
+            
+            -- pesos y sus fechas
+            lot.fecha_hora_peso_inicial,
+            COALESCE(ltg.peso_bruto, lot.peso_inicial) AS peso_bruto,
+            lot.fecha_hora_peso_final,
+            COALESCE(ltg.tara, lot.peso_final) AS peso_tara,
+            COALESCE(ltg.peso_neto, lot.peso_neto) AS peso_neto,
+            
+            -- operador
+            CONCAT(COALESCE(eml.apellido, ''), ' ', COALESCE(eml.nombre, '')) AS operador,
+            eml.dni AS dni_operador,
+            cr.nombre AS cargo_operador
+            
+        FROM lote_mineral lot
+        LEFT JOIN ticket_balanza tb ON tb.id = lot.id_ticket_balanza
+        LEFT JOIN lote_guia ltg ON ltg.id_lote_mineral = lot.id
+        LEFT JOIN guia_primer_tramo gui ON gui.id = ltg.id_guia_primer_tramo
+        LEFT JOIN recepcion_unidad rec ON rec.id = lot.id_recepcion_unidad
+        LEFT JOIN vehiculo vh ON vh.id = COALESCE(gui.id_vehiculo, lot.id_vehiculo, rec.id_vehiculo)
+        LEFT JOIN proveedor pr ON pr.id = COALESCE(gui.id_proveedor, lot.id_proveedor_minero)
+        LEFT JOIN conductor cnd ON cnd.id = COALESCE(gui.id_conductor, lot.id_conductor, rec.id_conductor) 
+        LEFT JOIN empresa_transporte emp ON emp.id = COALESCE(gui.id_empresa_transporte, lot.id_empresa_transporte, rec.id_empresa_transporte) 
+        LEFT JOIN sucursal sc ON sc.id = COALESCE(gui.id_sucursal, rec.id_sucursal)
+        LEFT JOIN departamento dep_sc ON dep_sc.id = sc.id_departamento
+        LEFT JOIN provincia prv_sc ON prv_sc.id = sc.id_provincia
+        LEFT JOIN distrito dis_sc ON dis_sc.id = sc.id_distrito
+            LEFT JOIN concesion_proveedor cp
+                ON cp.id_proveedor = pr.id
+            LEFT JOIN concesion cns_origen
+                ON cns_origen.id = COALESCE(
+                    gui.id_concesion,
+                    (
+                        SELECT cp2.id_concesion
+                        FROM concesion_proveedor cp2
+                        WHERE cp2.id_proveedor = pr.id
+                        ORDER BY cp2.id ASC
+                        LIMIT 1
+                    )
+                )
+            LEFT JOIN departamento dep_cori ON dep_cori.id = cns_origen.id_departamento
+            LEFT JOIN provincia    prv_cori ON prv_cori.id = cns_origen.id_provincia
+            LEFT JOIN distrito     dis_cori ON dis_cori.id = cns_origen.id_distrito
+            LEFT JOIN zona_origen zo ON zo.id = lot.id_zona_origen
+        LEFT JOIN empleado eml ON eml.id = lot.id_empleado_registro
+        LEFT JOIN cargo cr ON cr.id = eml.id_cargo
+        WHERE lot.id = :id_lote
+        LIMIT 1
+        ";
+
+        $item = DB::selectOne($sql, ['id_lote' => $loteId]);
+        if ($item) {
+            $item->peso_bruto = $item->peso_bruto !== null ? (float) $item->peso_bruto : null;
+            $item->peso_tara = $item->peso_tara !== null ? (float) $item->peso_tara : null;
+            $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
+
+            return (array) $item;
+        }
+
+        return null;
+    }
 }

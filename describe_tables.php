@@ -7,7 +7,7 @@ $kernel->handle(Illuminate\Http\Request::capture());
 
 use Illuminate\Support\Facades\DB;
 
-$tables = ['grupo_analisis', 'grupo_analisis_detalle', 'analito'];
+$tables = ['ticket_balanza', 'lote_mineral'];
 
 foreach ($tables as $table) {
     echo "=== TABLE: $table ===\n";

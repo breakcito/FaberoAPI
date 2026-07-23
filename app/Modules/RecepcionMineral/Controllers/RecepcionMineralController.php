@@ -297,4 +297,12 @@ class RecepcionMineralController extends Controller
 
         return response()->json(RecepcionMineralService::get_resumen_filtros($idSucursal));
     }
+
+    /**
+     * Obtener datos para la impresión del Ticket de Balanza PDF
+     */
+    public function get_ticket_balanza(int $loteId): JsonResponse
+    {
+        return response()->json(RecepcionMineralService::get_ticket_balanza($loteId));
+    }
 }

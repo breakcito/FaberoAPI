@@ -16,6 +16,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::post('/lotes/{loteId}/peso-inicial', 'registrar_peso_inicial');
         Route::post('/lotes/{loteId}/peso-final', 'registrar_peso_final');
         Route::post('/lotes/{loteId}/actualizar', 'actualizar_lote');
+        Route::get('/lotes/{loteId}/ticket-balanza', 'get_ticket_balanza');
         Route::put('/{id}/cerrar', 'cerrar_proceso');
     });
 });

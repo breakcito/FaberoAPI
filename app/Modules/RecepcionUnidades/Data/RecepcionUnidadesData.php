@@ -243,11 +243,19 @@ class RecepcionUnidadesData
             reseteo: Periodo::Anual,
         );
 
+        // Crear automáticamente el registro en ticket_balanza al generar el lote
+        $ticketId = DB::table('ticket_balanza')->insertGetId([
+            'numero' => null,
+            'created_at' => now(),
+        ]);
+        DB::table('ticket_balanza')->where('id', $ticketId)->update(['numero' => $ticketId]);
+
         $lote = LoteMineral::create([
             'id_recepcion_unidad' => $idRecepcionUnidad,
             'id_empleado_registro' => $idEmpleadoRegistro,
             'correlativo' => $correlativoData['correlativo'],
             'numero_correlativo' => $correlativoData['numero_correlativo'],
+            'id_ticket_balanza' => $ticketId,
             'created_at' => now()->toDateTimeString(),
             'id_vehiculo' => $recepcion->id_vehiculo,
             'id_empresa_transporte' => $recepcion->id_empresa_transporte,
@@ -266,6 +274,10 @@ class RecepcionUnidadesData
         $lote = LoteMineral::find($loteId);
         if (! $lote) {
             return false;
+        }
+
+        if ($lote->id_ticket_balanza) {
+            DB::table('ticket_balanza')->where('id', $lote->id_ticket_balanza)->delete();
         }
 
         $lote->delete();

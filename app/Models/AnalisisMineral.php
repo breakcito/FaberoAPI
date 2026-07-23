@@ -20,11 +20,13 @@ class AnalisisMineral extends Model
         'esta_confirmada',
         'tipo_origen',
         'created_at',
+        'log_cambios',
     ];
 
     protected $casts = [
         'ley' => 'float',
         'esta_confirmada' => 'boolean',
+        'log_cambios' => 'array',
     ];
 
     public function grupo_analisis_detalle(): BelongsTo

@@ -229,26 +229,35 @@ class CierreLeyesService
     }
 
     /**
-     * Validar si un lote cumple las condiciones de cierre (todas las celdas confirmadas y ley > 0).
+     * Validar si un lote cumple las condiciones de cierre.
+     * Cada analito activo marcado para valorización debe tener al menos un análisis confirmado y con ley > 0.
      *
      * @return array{ok: bool, motivo?: string}
      */
     private static function validar_cierre(int $idLote): array
     {
-        $filas = CierreLeyesData::get_filas_analisis_por_lote($idLote);
+        $detallesValorizar = CierreLeyesData::get_detalles_para_valorizacion();
 
-        if ($filas->contains(fn ($f) => ! (bool) $f->esta_confirmada)) {
-            return [
-                'ok' => false,
-                'motivo' => 'Hay análisis sin confirmar. Marca todas las casillas antes de cerrar el lote.',
-            ];
+        if (empty($detallesValorizar)) {
+            return ['ok' => true];
         }
 
-        if ($filas->contains(fn ($f) => $f->ley === null || (float) $f->ley <= 0)) {
-            return [
-                'ok' => false,
-                'motivo' => 'Hay análisis con valor nulo o igual a cero. Completa todos los valores antes de cerrar el lote.',
-            ];
+        $analisisLote = CierreLeyesData::get_filas_analisis_por_lote($idLote);
+
+        foreach ($detallesValorizar as $detalle) {
+            $tieneConfirmadoValido = $analisisLote->contains(function ($reg) use ($detalle) {
+                return (int) $reg->id_grupo_analisis_detalle === (int) $detalle->detalle_id
+                    && (bool) $reg->esta_confirmada
+                    && $reg->ley !== null
+                    && (float) $reg->ley > 0;
+            });
+
+            if (! $tieneConfirmadoValido) {
+                return [
+                    'ok' => false,
+                    'motivo' => "El analito '{$detalle->analito_nombre}' requiere al menos un análisis confirmado con un valor mayor a cero.",
+                ];
+            }
         }
 
         return ['ok' => true];
@@ -349,9 +358,9 @@ class CierreLeyesService
     /**
      * Actualizar el tipo de origen de una corrida de análisis.
      */
-    public static function actualizar_origen_fila(int $idLoteMineral, string $uuidFila, ?string $tipoOrigen): array
+    public static function actualizar_origen_fila(int $idLoteMineral, string $uuidFila, ?string $tipoOrigen, int $idEmpleado = 1): array
     {
-        CierreLeyesData::actualizar_origen_fila($idLoteMineral, $uuidFila, $tipoOrigen);
+        CierreLeyesData::actualizar_origen_fila($idLoteMineral, $uuidFila, $tipoOrigen, $idEmpleado);
 
         $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
         $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
