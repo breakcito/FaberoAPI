@@ -78,4 +78,24 @@ class AnticiposProveedorController
 
         return response()->json($response);
     }
+
+    /**
+     * Obtener transacciones asociadas a un anticipo.
+     */
+    public function get_transacciones(int $id): JsonResponse
+    {
+        $response = AnticiposProveedorService::get_transacciones($id);
+
+        return response()->json($response);
+    }
+
+    /**
+     * Obtener el historial de cambios unificado (cabecera + transacciones).
+     */
+    public function get_historial_cambios(int $id): JsonResponse
+    {
+        $response = AnticiposProveedorService::get_historial_combinado($id);
+
+        return response()->json($response);
+    }
 }

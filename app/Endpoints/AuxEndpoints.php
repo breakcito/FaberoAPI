@@ -60,5 +60,12 @@ Route::middleware('auth.jwt.custom')->group(function () {
 
         // lotes de mineral disponibles para guías
         Route::get('/lotes-mineral-disponibles', [AuxController::class, 'get_lotes_mineral_disponibles']);
+
+        // valorizacion compra auxiliares
+        Route::get('/proveedores-valorizacion', [AuxController::class, 'get_proveedores_valorizacion']);
+        Route::get('/concesiones-proveedor', [AuxController::class, 'get_concesiones_proveedor']);
+        Route::get('/cuentas-bancarias-proveedor', [AuxController::class, 'get_cuentas_bancarias_proveedor']);
+        Route::get('/anticipos-proveedor', [AuxController::class, 'get_anticipos_proveedor']);
+        Route::get('/lotes-disponibles-valorizacion', [AuxController::class, 'get_lotes_disponibles_valorizacion']);
     });
 });

@@ -13,6 +13,7 @@ use App\Services\ProveedoresService;
 use App\Services\SucursalService;
 use App\Services\TiposVehiculoService;
 use App\Services\UbigeoService;
+use App\Services\ValorizacionCompraAuxService;
 use App\Services\VehiculosService;
 use App\Services\VisitanteService;
 use App\Services\ZonasOrigenService;
@@ -428,5 +429,67 @@ class AuxController extends Controller
             'message' => 'Lotes de mineral disponibles obtenidos correctamente',
             'data' => $rows,
         ]);
+    }
+
+    /**
+     * Obtener listado de proveedores con lotes comercializables sin valorizar
+     */
+    public function get_proveedores_valorizacion(): JsonResponse
+    {
+        return response()->json(ValorizacionCompraAuxService::get_proveedores_con_lotes());
+    }
+
+    /**
+     * Obtener concesiones de un proveedor
+     */
+    public function get_concesiones_proveedor(Request $request): JsonResponse
+    {
+        $idProveedor = (int) $request->query('id_proveedor');
+        if (! $idProveedor) {
+            return response()->json([]);
+        }
+
+        return response()->json(ValorizacionCompraAuxService::get_concesiones_proveedor($idProveedor));
+    }
+
+    /**
+     * Obtener cuentas bancarias de un proveedor
+     */
+    public function get_cuentas_bancarias_proveedor(Request $request): JsonResponse
+    {
+        $idProveedor = (int) $request->query('id_proveedor');
+        if (! $idProveedor) {
+            return response()->json([]);
+        }
+
+        return response()->json(ValorizacionCompraAuxService::get_cuentas_bancarias_proveedor($idProveedor));
+    }
+
+    /**
+     * Obtener anticipos aprobados con saldo positivo de un proveedor
+     */
+    public function get_anticipos_proveedor(Request $request): JsonResponse
+    {
+        $idProveedor = (int) $request->query('id_proveedor');
+        if (! $idProveedor) {
+            return response()->json([]);
+        }
+
+        return response()->json(ValorizacionCompraAuxService::get_anticipos_proveedor($idProveedor));
+    }
+
+    /**
+     * Obtener lotes de mineral comercializables disponibles para valorización
+     */
+    public function get_lotes_disponibles_valorizacion(Request $request): JsonResponse
+    {
+        $idProveedor = (int) $request->query('id_proveedor');
+        if (! $idProveedor) {
+            return response()->json([]);
+        }
+
+        $idValorizacion = $request->query('id_valorizacion') ? (int) $request->query('id_valorizacion') : null;
+
+        return response()->json(ValorizacionCompraAuxService::get_lotes_disponibles_valorizacion($idProveedor, $idValorizacion));
     }
 }

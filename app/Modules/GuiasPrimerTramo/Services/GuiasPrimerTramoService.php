@@ -232,7 +232,7 @@ class GuiasPrimerTramoService
                         if (! $id) {
                             return null;
                         }
-                        $c = DB::table('concesion_minera')->where('id', $id)->first();
+                        $c = DB::table('concesion')->where('id', $id)->first();
 
                         return $c ? $c->nombre : "ID #$id";
                     },
@@ -398,30 +398,47 @@ class GuiasPrimerTramoService
                 ];
             }
 
-            $lotesCambios = [];
+            // Comparar cambios en lotes asociados
             foreach ($oldLotesData as $idLote => $oldInfo) {
                 if (isset($newLotesData[$idLote])) {
                     $newInfo = $newLotesData[$idLote];
-                    if ($oldInfo['peso_bruto'] !== $newInfo['peso_bruto'] || $oldInfo['tara'] !== $newInfo['tara']) {
-                        $lotesCambios[] = "Pesos modif. en {$oldInfo['correlativo']}: P. Bruto {$oldInfo['peso_bruto']}kg a {$newInfo['peso_bruto']}kg, Tara {$oldInfo['tara']}kg a {$newInfo['tara']}kg";
+                    $correlativo = $oldInfo['correlativo'];
+
+                    if ($oldInfo['peso_bruto'] !== $newInfo['peso_bruto']) {
+                        $cambios[] = [
+                            'campo_bd' => 'peso_bruto_lote',
+                            'campo' => "Peso Bruto - {$correlativo}",
+                            'valor_anterior' => "{$oldInfo['peso_bruto']} kg",
+                            'valor_nuevo' => "{$newInfo['peso_bruto']} kg",
+                        ];
+                    }
+
+                    if ($oldInfo['tara'] !== $newInfo['tara']) {
+                        $cambios[] = [
+                            'campo_bd' => 'tara_lote',
+                            'campo' => "Tara - {$correlativo}",
+                            'valor_anterior' => "{$oldInfo['tara']} kg",
+                            'valor_nuevo' => "{$newInfo['tara']} kg",
+                        ];
                     }
                 }
             }
 
             foreach (array_diff_key($newLotesData, $oldLotesData) as $idLote => $info) {
-                $lotesCambios[] = "Asociado: {$info['correlativo']} (P. Bruto {$info['peso_bruto']}kg, Tara {$info['tara']}kg)";
+                $cambios[] = [
+                    'campo_bd' => 'lote_asociado',
+                    'campo' => 'Lote asociado',
+                    'valor_anterior' => '—',
+                    'valor_nuevo' => "{$info['correlativo']} (P. Bruto {$info['peso_bruto']}kg, Tara {$info['tara']}kg)",
+                ];
             }
 
             foreach (array_diff_key($oldLotesData, $newLotesData) as $idLote => $info) {
-                $lotesCambios[] = "Desasociado: {$info['correlativo']}";
-            }
-
-            if (! empty($lotesCambios)) {
                 $cambios[] = [
-                    'campo_bd' => 'lotes',
-                    'campo' => 'Lotes asociados',
-                    'valor_anterior' => ! empty($oldLotesData) ? implode(', ', array_map(fn ($l) => "{$l['correlativo']} ({$l['peso_bruto']}kg)", $oldLotesData)) : 'Ninguno',
-                    'valor_nuevo' => implode(' | ', $lotesCambios),
+                    'campo_bd' => 'lote_desasociado',
+                    'campo' => 'Lote desasociado',
+                    'valor_anterior' => "{$info['correlativo']} (P. Bruto {$info['peso_bruto']}kg, Tara {$info['tara']}kg)",
+                    'valor_nuevo' => '—',
                 ];
             }
 

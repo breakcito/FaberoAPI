@@ -44,6 +44,37 @@ class AnticiposProveedorService
 
         DB::beginTransaction();
         try {
+            $saldoInicialFmt = '$ '.number_format((float) $data['saldo_inicial'], 2);
+            $logInicial = [
+                [
+                    'id_empleado' => (int) $data['id_empleado_registro'],
+                    'fecha_hora' => now()->toDateTimeString(),
+                    'update_at' => now()->toIso8601String(),
+                    'accion' => 'Registro de Anticipo',
+                    'motivo' => 'Registro inicial de anticipo a proveedor',
+                    'cambios' => [
+                        [
+                            'campo_bd' => 'saldo_inicial',
+                            'campo' => 'Monto Inicial',
+                            'valor_anterior' => '—',
+                            'valor_nuevo' => $saldoInicialFmt,
+                        ],
+                        [
+                            'campo_bd' => 'saldo_actual',
+                            'campo' => 'Saldo Actual',
+                            'valor_anterior' => '—',
+                            'valor_nuevo' => $saldoInicialFmt,
+                        ],
+                        [
+                            'campo_bd' => 'estado',
+                            'campo' => 'Estado',
+                            'valor_anterior' => '—',
+                            'valor_nuevo' => EstadoAnticipoProveedor::ConSaldo->value,
+                        ],
+                    ],
+                ],
+            ];
+
             $anticipo = AnticipoProveedor::create([
                 'id_proveedor_minero' => $data['id_proveedor_minero'],
                 'id_empleado_registro' => $data['id_empleado_registro'],
@@ -52,7 +83,7 @@ class AnticiposProveedorService
                 'saldo_inicial' => (float) $data['saldo_inicial'],
                 'saldo_actual' => (float) $data['saldo_inicial'],
                 'evidencias' => $evidenciasGuardadas,
-                'log_cambios' => [],
+                'log_cambios' => $logInicial,
                 'estado' => EstadoAnticipoProveedor::ConSaldo->value,
                 'created_at' => now()->toDateTimeString(),
             ]);
@@ -96,8 +127,10 @@ class AnticiposProveedorService
 
             $nuevoLog = [
                 'id_empleado' => $idEmpleado,
-                'motivo' => $motivo,
+                'fecha_hora' => now()->toDateTimeString(),
                 'update_at' => now()->toDateTimeString(),
+                'accion' => 'Anulación de Anticipo',
+                'motivo' => $motivo,
                 'cambios' => [
                     [
                         'campo_bd' => 'estado',
@@ -108,7 +141,7 @@ class AnticiposProveedorService
                 ],
             ];
 
-            array_unshift($logActual, $nuevoLog);
+            $logActual[] = $nuevoLog;
             $anticipo->log_cambios = $logActual;
             $anticipo->save();
 
@@ -122,5 +155,25 @@ class AnticiposProveedorService
 
             return ApiResponse::error('Error al anular el anticipo: '.$e->getMessage());
         }
+    }
+
+    /**
+     * Obtener transacciones asociadas a un anticipo.
+     */
+    public static function get_transacciones(int $id): array
+    {
+        $data = AnticiposProveedorData::get_transacciones_by_anticipo($id);
+
+        return ApiResponse::success($data, 'Transacciones obtenidas correctamente.');
+    }
+
+    /**
+     * Obtener historial de cambios unificado (cabecera + transacciones).
+     */
+    public static function get_historial_combinado(int $id): array
+    {
+        $data = AnticiposProveedorData::get_historial_cambios_combinado($id);
+
+        return ApiResponse::success($data, 'Historial de cambios obtenido correctamente.');
     }
 }
