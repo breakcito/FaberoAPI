@@ -26,6 +26,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/Proveedores/ProveedoresEndpoints.php');
                 require base_path('app/Modules/Bancos/BancosEndpoints.php');
                 require base_path('app/Modules/CuentasBancariasProveedor/CuentasBancariasProveedorEndpoints.php');
+                require base_path('app/Modules/CuentasBancariasEmpresa/CuentasBancariasEmpresaEndpoints.php');
                 require base_path('app/Modules/ModoAuditoria/ModoAuditoriaEndpoints.php');
                 require base_path('app/Modules/Sucursales/SucursalesEndpoints.php');
                 require base_path('app/Modules/PlantasDestino/PlantasDestinoEndpoints.php');
