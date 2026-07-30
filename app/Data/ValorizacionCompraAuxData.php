@@ -281,4 +281,68 @@ class ValorizacionCompraAuxData
 
         return $lotes;
     }
+
+    /**
+     * Obtener valorizaciones aprobadas de un proveedor (sin comprobante de compra aún)
+     * para usarlas en el formulario de registro de comprobantes.
+     *
+     * NOTA: Cada placeholder aparece una sola vez con nombre único para evitar
+     * el error HY093 de PDO cuando un named param se reutiliza en subqueries.
+     *
+     * @return array<int,object>
+     */
+    public static function get_valorizaciones_aprobadas_por_proveedor(int $idProveedor): array
+    {
+        $estadoAprobado = EstadoValorizacionCompra::Aprobado->value;
+        $estadoAnulado = EstadoValorizacionCompra::Anulado->value;
+
+        $sql = '
+            SELECT
+                vc.id,
+                vc.id_proveedor_minero,
+                vc.numero_correlativo,
+                vc.tipo_pago,
+                vc.fecha_hora_aprobacion,
+                vc.estado,
+                vc.created_at,
+                p.razon_social AS proveedor_nombre,
+                c.nombre AS concesion_nombre,
+                COALESCE((SELECT SUM(vcd.subtotal) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS total_dolares,
+                COALESCE((SELECT SUM(tap.monto_retirado) FROM transaccion_anticipo_proveedor tap WHERE tap.id_valorizacion_compra = vc.id AND tap.estado = :tap_estado_aprobado), 0) AS monto_anticipos
+            FROM valorizacion_compra vc
+            INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
+            INNER JOIN concesion c ON c.id = vc.id_concesion
+            WHERE vc.id_proveedor_minero = :id_proveedor
+              AND vc.estado = :vc_estado_aprobado
+              AND vc.id NOT IN (
+                  SELECT cc.id_valorizacion_compra
+                  FROM comprobante_compra cc
+                  WHERE cc.estado != :cc_estado_anulado
+              )
+            ORDER BY vc.fecha_hora_aprobacion DESC, vc.id DESC
+        ';
+
+        return self::cast_valorizaciones_aprobadas(DB::select($sql, [
+            'id_proveedor' => $idProveedor,
+            'tap_estado_aprobado' => $estadoAprobado,
+            'vc_estado_aprobado' => $estadoAprobado,
+            'cc_estado_anulado' => $estadoAnulado,
+        ]));
+    }
+
+    /**
+     * @param  array<int,object>  $rows
+     * @return array<int,object>
+     */
+    private static function cast_valorizaciones_aprobadas(array $rows): array
+    {
+        foreach ($rows as $r) {
+            $r->id = (int) $r->id;
+            $r->id_proveedor_minero = (int) $r->id_proveedor_minero;
+            $r->total_dolares = (float) $r->total_dolares;
+            $r->monto_anticipos = (float) $r->monto_anticipos;
+        }
+
+        return $rows;
+    }
 }

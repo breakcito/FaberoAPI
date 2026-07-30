@@ -105,4 +105,46 @@ class CuentasBancariasEmpresaData
     {
         return CuentaBancariaEmpresa::where('id', $id)->update(['estado' => $estado]) >= 0;
     }
+
+    /**
+     * Obtener cuentas bancarias activas filtradas por moneda. Si es_para_detraccion=true
+     * restringe a Soles y Banco de la Nación (id_banco del banco con abreviatura 'BN').
+     *
+     * @return array<int,object>
+     */
+    public static function get_cuentas_bancarias_por_moneda(string $moneda, bool $esParaDetraccion = false): array
+    {
+        $sql = '
+        SELECT
+            cn.id AS id_cuenta_bancaria,
+            bc.nombre AS banco,
+            bc.abreviatura AS banco_abv,
+            cn.id_banco,
+            cn.moneda,
+            cn.numero_cuenta,
+            cn.cci,
+            cn.es_para_detraccion,
+            cn.estado,
+            e.razon_social AS empresa_nombre,
+            e.id AS id_empresa
+        FROM cuenta_bancaria_empresa cn
+        INNER JOIN banco bc ON bc.id = cn.id_banco
+        LEFT JOIN empresa e ON e.id = cn.id_empresa
+        WHERE cn.estado = :estado
+          AND cn.moneda = :moneda
+        ';
+
+        $params = [
+            'estado' => 'Activo',
+            'moneda' => $moneda,
+        ];
+
+        if ($esParaDetraccion) {
+            $sql .= " AND cn.es_para_detraccion = 1 AND bc.abreviatura = 'BN'";
+        }
+
+        $sql .= ' ORDER BY cn.es_para_detraccion DESC, bc.nombre, cn.numero_cuenta';
+
+        return DB::select($sql, $params);
+    }
 }

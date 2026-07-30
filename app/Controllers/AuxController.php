@@ -11,6 +11,7 @@ use App\Services\MarcasService;
 use App\Services\MotivoIngresoService;
 use App\Services\ProveedoresService;
 use App\Services\SucursalService;
+use App\Services\TipoCambioService;
 use App\Services\TiposVehiculoService;
 use App\Services\UbigeoService;
 use App\Services\ValorizacionCompraAuxService;
@@ -18,6 +19,7 @@ use App\Services\VehiculosService;
 use App\Services\VisitanteService;
 use App\Services\ZonasOrigenService;
 use App\Shared\Enums\_Generic\EstadoBase;
+use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -491,5 +493,81 @@ class AuxController extends Controller
         $idValorizacion = $request->query('id_valorizacion') ? (int) $request->query('id_valorizacion') : null;
 
         return response()->json(ValorizacionCompraAuxService::get_lotes_disponibles_valorizacion($idProveedor, $idValorizacion));
+    }
+
+    /**
+     * Listar tipos de cambio. Filtros opcionales: fecha (YYYY-MM-DD) y estado.
+     */
+    public function get_tipos_cambio(Request $request): JsonResponse
+    {
+        $fecha = $request->query('fecha');
+        $estadoVal = $request->query('estado');
+        $estado = $estadoVal ? EstadoBase::from($estadoVal) : null;
+
+        return response()->json(TipoCambioService::get_tipos_cambio($fecha, $estado));
+    }
+
+    /**
+     * Obtener el tipo de cambio activo de una fecha exacta.
+     */
+    public function get_tipo_cambio_por_fecha(Request $request): JsonResponse
+    {
+        $fecha = (string) $request->query('fecha');
+        if (! $fecha) {
+            return response()->json(ApiResponse::error('Debe especificar el parámetro fecha.'));
+        }
+
+        return response()->json(TipoCambioService::get_tipo_cambio_por_fecha($fecha));
+    }
+
+    /**
+     * Registrar un nuevo tipo de cambio (regla: 1 por fecha).
+     */
+    public function crear_tipo_cambio(Request $request): JsonResponse
+    {
+        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+            'valor_compra' => 'required|numeric|min:0.001',
+            'valor_venta' => 'required|numeric|min:0.001',
+            'fecha' => 'required|date_format:Y-m-d',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()));
+        }
+
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = $authUser ? ($authUser->id_empleado ?? $authUser->id_usuario) : 1;
+
+        return response()->json(TipoCambioService::crear_tipo_cambio(
+            (int) $idEmpleado,
+            (float) $request->input('valor_compra'),
+            (float) $request->input('valor_venta'),
+            (string) $request->input('fecha')
+        ));
+    }
+
+    /**
+     * Listar valorizaciones aprobadas de un proveedor (para registrar comprobantes).
+     */
+    public function get_valorizaciones_aprobadas_por_proveedor(Request $request): JsonResponse
+    {
+        $idProveedor = (int) $request->query('id_proveedor');
+        if (! $idProveedor) {
+            return response()->json(ApiResponse::success([], 'Debe especificar id_proveedor.'));
+        }
+
+        return response()->json(ValorizacionCompraAuxService::get_valorizaciones_aprobadas_por_proveedor($idProveedor));
+    }
+
+    /**
+     * Listar cuentas bancarias de la empresa filtradas por moneda y opcionalmente por detracción.
+     * Si es_para_detraccion=true solo trae cuentas en Soles del Banco de la Nación.
+     */
+    public function get_cuentas_bancarias_empresa_por_moneda(Request $request): JsonResponse
+    {
+        $moneda = (string) $request->query('moneda');
+        $esParaDetraccion = filter_var($request->query('es_para_detraccion', false), FILTER_VALIDATE_BOOLEAN);
+
+        return response()->json(\App\Modules\CuentasBancariasEmpresa\Services\CuentasBancariasEmpresaService::get_cuentas_bancarias_por_moneda($moneda, $esParaDetraccion));
     }
 }

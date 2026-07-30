@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Data\ValorizacionCompraAuxData;
+use App\Shared\Responses\ApiResponse;
 
 class ValorizacionCompraAuxService
 {
@@ -44,5 +45,16 @@ class ValorizacionCompraAuxService
     public static function get_lotes_disponibles_valorizacion(int $idProveedor, ?int $idValorizacionEdicion = null): array
     {
         return ValorizacionCompraAuxData::get_lotes_disponibles_valorizacion($idProveedor, $idValorizacionEdicion);
+    }
+
+    /**
+     * Obtener valorizaciones aprobadas de un proveedor (las que aún no tienen comprobante)
+     * para usarlas en el formulario de registro de comprobantes.
+     */
+    public static function get_valorizaciones_aprobadas_por_proveedor(int $idProveedor): array
+    {
+        $data = ValorizacionCompraAuxData::get_valorizaciones_aprobadas_por_proveedor($idProveedor);
+
+        return ApiResponse::success($data, 'Valorizaciones aprobadas obtenidas correctamente.');
     }
 }

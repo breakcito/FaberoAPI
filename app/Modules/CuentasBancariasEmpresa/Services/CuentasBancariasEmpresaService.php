@@ -74,4 +74,15 @@ class CuentasBancariasEmpresaService
 
         return ApiResponse::success($updated, 'Estado de la cuenta bancaria cambiado correctamente');
     }
+
+    /**
+     * Obtener cuentas bancarias activas filtradas por moneda. Si es_para_detraccion=true
+     * restringe a Soles y Banco de la Nación.
+     */
+    public static function get_cuentas_bancarias_por_moneda(string $moneda, bool $esParaDetraccion = false): array
+    {
+        $data = CuentasBancariasEmpresaData::get_cuentas_bancarias_por_moneda($moneda, $esParaDetraccion);
+
+        return ApiResponse::success($data, 'Cuentas bancarias obtenidas correctamente');
+    }
 }
