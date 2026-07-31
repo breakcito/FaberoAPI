@@ -1,0 +1,98 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: fabero-api-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          printf '%s' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+
+          if ! head -n1 "$HOME/.ssh/deploy_key" | grep -qE '^-----BEGIN'; then
+            body="$(< "$HOME/.ssh/deploy_key")"
+            {
+              printf '%s\n' '-----BEGIN OPENSSH PRIVATE KEY-----'
+              printf '%s\n' "$body"
+              printf '%s\n' '-----END OPENSSH PRIVATE KEY-----'
+            } > "$HOME/.ssh/deploy_key.new"
+            mv "$HOME/.ssh/deploy_key.new" "$HOME/.ssh/deploy_key"
+            chmod 600 "$HOME/.ssh/deploy_key"
+          fi
+
+          if ! ssh-keygen -y -f "$HOME/.ssh/deploy_key" >/dev/null 2>&1; then
+            echo 'DEPLOY_SSH_KEY no es una llave privada válida'
+            exit 1
+          fi
+
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      - name: Build artifact
+        run: |
+          mkdir -p artifact
+          git archive \
+            --format=tar.gz \
+            --output="artifact/api-${GITHUB_SHA}.tar.gz" \
+            "$GITHUB_SHA"
+          (cd artifact && sha256sum "api-${GITHUB_SHA}.tar.gz" > "api-${GITHUB_SHA}.tar.gz.sha256")
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_NAME" = "main" ]; then
+            target="api"
+            env_arg="prod"
+          else
+            target="api-dev"
+            env_arg="dev"
+          fi
+
+          scp \
+            -i "$HOME/.ssh/deploy_key" \
+            -P "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes \
+            -o PubkeyAcceptedAlgorithms=+ssh-ed25519 \
+            "artifact/api-${GITHUB_SHA}.tar.gz" \
+            "artifact/api-${GITHUB_SHA}.tar.gz.sha256" \
+            "$DEPLOY_USER@$DEPLOY_HOST:/srv/fabero/incoming/${target}/"
+          ssh \
+            -i "$HOME/.ssh/deploy_key" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes \
+            -o PubkeyAcceptedAlgorithms=+ssh-ed25519 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo /usr/local/sbin/fabero-deploy api '$env_arg' '$GITHUB_SHA'"
