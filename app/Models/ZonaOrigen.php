@@ -12,6 +12,6 @@ class ZonaOrigen extends Model
 
     protected $fillable = [
         'nombre',
-        'created_at'
+        'created_at',
     ];
 }

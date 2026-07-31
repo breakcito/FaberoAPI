@@ -31,6 +31,7 @@ class ConductoresService
         if ($response['success']) {
             $id = $response['data'];
             $nuevoConductor = ConductoresData::get_conductor_by_id($id);
+
             return ApiResponse::success($nuevoConductor, 'Conductor creado correctamente');
         } else {
             return $response;
@@ -53,6 +54,7 @@ class ConductoresService
     public static function cambiar_estado_conductor(int $id, string $estado): array
     {
         $updated = ConductoresData::cambiar_estado_conductor($id, $estado);
+
         return ApiResponse::success($updated, 'Estado del conductor cambiado correctamente');
     }
 }

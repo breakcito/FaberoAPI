@@ -2,11 +2,10 @@
 
 namespace App\Modules\Empresas;
 
+use App\Modules\Empresas\Data\EmpresasData;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
-use App\Modules\Empresas\Data\EmpresasData;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Request as FacadesRequest;
 
 class EmpresasService
 {
@@ -19,8 +18,8 @@ class EmpresasService
 
         // Convertir path_logo a URL completa (compatible con registros viejos y nuevos)
         foreach ($empresas as $empresa) {
-            if ($empresa->path_logo && !str_starts_with($empresa->path_logo, 'http')) {
-                $empresa->path_logo = asset('storage/' . $empresa->path_logo);
+            if ($empresa->path_logo && ! str_starts_with($empresa->path_logo, 'http')) {
+                $empresa->path_logo = asset('storage/'.$empresa->path_logo);
             }
         }
 
@@ -39,9 +38,9 @@ class EmpresasService
         $path_logo = null;
         if ($logo && $logo->isValid()) {
             $archivos = ArchivoHelper::guardarArchivos('logos-empresas', [$logo]);
-            if (!empty($archivos)) {
+            if (! empty($archivos)) {
                 // Guardar URL completa en BD (no solo el path relativo)
-                $path_logo = asset('storage/' . $archivos[0]['path_relativo']);
+                $path_logo = asset('storage/'.$archivos[0]['path_relativo']);
             }
         }
 
@@ -56,7 +55,7 @@ class EmpresasService
      */
     public static function actualizar_logo(int $id_empresa, ?UploadedFile $file)
     {
-        if (!$file || !$file->isValid()) {
+        if (! $file || ! $file->isValid()) {
             return ApiResponse::error('Archivo no válido.');
         }
 
@@ -66,7 +65,7 @@ class EmpresasService
         }
 
         // Guardar URL completa en BD (no solo el path relativo)
-        $path_logo = asset('storage/' . $archivos[0]['path_relativo']);
+        $path_logo = asset('storage/'.$archivos[0]['path_relativo']);
         EmpresasData::actualizar_logo($id_empresa, $path_logo);
 
         $empresa = EmpresasData::get_empresa_by_id($id_empresa);

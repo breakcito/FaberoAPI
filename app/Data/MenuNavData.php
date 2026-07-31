@@ -35,7 +35,9 @@ class MenuNavData
      */
     public static function get_submenus_by_rol_and_menus(int $id_rol, array $ids_menu): array
     {
-        if (empty($ids_menu)) return [];
+        if (empty($ids_menu)) {
+            return [];
+        }
         $placeholders = implode(',', array_fill(0, count($ids_menu), '?'));
 
         $sql = "
@@ -64,7 +66,9 @@ class MenuNavData
      */
     public static function get_modulos_by_rol_and_submenus(int $id_rol, array $ids_submenu): array
     {
-        if (empty($ids_submenu)) return [];
+        if (empty($ids_submenu)) {
+            return [];
+        }
         $placeholders = implode(',', array_fill(0, count($ids_submenu), '?'));
 
         $sql = "

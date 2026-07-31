@@ -14,6 +14,6 @@ class Provincia extends Model
         'id_departamento',
         //
         'nombre',
-        'codigo'
+        'codigo',
     ];
 }

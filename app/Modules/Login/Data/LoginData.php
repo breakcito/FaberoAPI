@@ -3,7 +3,6 @@
 namespace App\Modules\Login\Data;
 
 use App\Models\Usuario;
-use App\Shared\Enums\_Generic\EstadoBase;
 
 class LoginData
 {

@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Data\MarcasData;
@@ -23,7 +24,7 @@ class MarcasService
     public static function crear_marca(
         ?string $nombre = null
     ) {
-        if (!$nombre) {
+        if (! $nombre) {
             return ApiResponse::error('El nombre de la marca es obligatorio');
         }
 

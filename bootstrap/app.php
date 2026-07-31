@@ -26,6 +26,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/Proveedores/ProveedoresEndpoints.php');
                 require base_path('app/Modules/Bancos/BancosEndpoints.php');
                 require base_path('app/Modules/CuentasBancariasProveedor/CuentasBancariasProveedorEndpoints.php');
+                require base_path('app/Modules/CuentasBancariasEmpresa/CuentasBancariasEmpresaEndpoints.php');
                 require base_path('app/Modules/ModoAuditoria/ModoAuditoriaEndpoints.php');
                 require base_path('app/Modules/Sucursales/SucursalesEndpoints.php');
                 require base_path('app/Modules/PlantasDestino/PlantasDestinoEndpoints.php');
@@ -41,6 +42,11 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/RecepcionMineral/RecepcionMineralEndpoints.php');
                 require base_path('app/Modules/GuiasPrimerTramo/GuiasPrimerTramoEndpoints.php');
                 require base_path('app/Modules/GestionLeyes/GestionLeyesEndpoints.php');
+                require base_path('app/Modules/CierreLeyes/CierreLeyesEndpoints.php');
+                require base_path('app/Modules/CondicionesComercialesProveedor/CondicionesComercialesProveedorEndpoints.php');
+                require base_path('app/Modules/AnticiposProveedor/AnticiposProveedorEndpoints.php');
+                require base_path('app/Modules/ValorizacionCompra/Endpoints/ValorizacionCompraEndpoints.php');
+                require base_path('app/Modules/ContabilidadCompra/ContabilidadCompraEndpoints.php');
             });
         },
     )

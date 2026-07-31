@@ -8,7 +8,6 @@ use Illuminate\Support\Facades\DB;
 
 class ProveedoresData
 {
-
     /**
      * Listado proveedores
      */
@@ -33,6 +32,7 @@ class ProveedoresData
         if ($id_proveedor !== null) {
             $sql .= 'AND p.id = :id_proveedor';
             $params['id_proveedor'] = $id_proveedor;
+
             return DB::selectOne($sql, $params);
         }
 

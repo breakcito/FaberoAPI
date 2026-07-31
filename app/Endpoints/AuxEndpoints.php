@@ -60,5 +60,21 @@ Route::middleware('auth.jwt.custom')->group(function () {
 
         // lotes de mineral disponibles para guías
         Route::get('/lotes-mineral-disponibles', [AuxController::class, 'get_lotes_mineral_disponibles']);
+
+        // valorizacion compra auxiliares
+        Route::get('/proveedores-valorizacion', [AuxController::class, 'get_proveedores_valorizacion']);
+        Route::get('/concesiones-proveedor', [AuxController::class, 'get_concesiones_proveedor']);
+        Route::get('/cuentas-bancarias-proveedor', [AuxController::class, 'get_cuentas_bancarias_proveedor']);
+        Route::get('/anticipos-proveedor', [AuxController::class, 'get_anticipos_proveedor']);
+        Route::get('/lotes-disponibles-valorizacion', [AuxController::class, 'get_lotes_disponibles_valorizacion']);
+        Route::get('/valorizaciones-aprobadas-proveedor', [AuxController::class, 'get_valorizaciones_aprobadas_por_proveedor']);
+
+        // tipo de cambio
+        Route::get('/tipos-cambio', [AuxController::class, 'get_tipos_cambio']);
+        Route::get('/tipo-cambio', [AuxController::class, 'get_tipo_cambio_por_fecha']);
+        Route::post('/tipo-cambio', [AuxController::class, 'crear_tipo_cambio']);
+
+        // cuentas bancarias empresa filtradas por moneda (para módulo contabilidad-compra)
+        Route::get('/cuentas-bancarias-empresa-moneda', [AuxController::class, 'get_cuentas_bancarias_empresa_por_moneda']);
     });
 });

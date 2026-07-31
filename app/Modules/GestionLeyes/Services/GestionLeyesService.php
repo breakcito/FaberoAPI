@@ -2,8 +2,8 @@
 
 namespace App\Modules\GestionLeyes\Services;
 
-use App\Models\GrupoAnalisis;
 use App\Models\Analito;
+use App\Models\GrupoAnalisis;
 use App\Modules\GestionLeyes\Data\GestionLeyesData;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Support\Facades\DB;
@@ -13,6 +13,7 @@ class GestionLeyesService
     public static function get_grupos(): array
     {
         $data = GestionLeyesData::get_grupos();
+
         return ApiResponse::success($data, 'Grupos de análisis obtenidos correctamente');
     }
 
@@ -39,12 +40,14 @@ class GestionLeyesService
             }
 
             DB::commit();
-            
+
             $nuevoGrupo = GestionLeyesData::get_grupo_by_id($id);
+
             return ApiResponse::success($nuevoGrupo, 'Grupo de análisis creado correctamente');
         } catch (\Exception $e) {
             DB::rollBack();
-            return ApiResponse::error('Error al crear el grupo de análisis: ' . $e->getMessage());
+
+            return ApiResponse::error('Error al crear el grupo de análisis: '.$e->getMessage());
         }
     }
 
@@ -74,10 +77,12 @@ class GestionLeyesService
             DB::commit();
 
             $updated = GestionLeyesData::get_grupo_by_id($id);
+
             return ApiResponse::success($updated, 'Grupo de análisis editado correctamente');
         } catch (\Exception $e) {
             DB::rollBack();
-            return ApiResponse::error('Error al editar el grupo de análisis: ' . $e->getMessage());
+
+            return ApiResponse::error('Error al editar el grupo de análisis: '.$e->getMessage());
         }
     }
 
@@ -85,6 +90,7 @@ class GestionLeyesService
     {
         GestionLeyesData::cambiar_estado_grupo($id, $estado);
         $updated = GestionLeyesData::get_grupo_by_id($id);
+
         return ApiResponse::success($updated, 'Estado del grupo de análisis cambiado correctamente');
     }
 
@@ -92,6 +98,7 @@ class GestionLeyesService
     public static function get_analitos(): array
     {
         $data = GestionLeyesData::get_analitos();
+
         return ApiResponse::success($data, 'Analitos obtenidos correctamente');
     }
 
@@ -112,6 +119,7 @@ class GestionLeyesService
     {
         GestionLeyesData::cambiar_estado_analito($id, $estado);
         $updated = GestionLeyesData::get_analito_by_id($id);
+
         return ApiResponse::success($updated, 'Estado del analito cambiado correctamente');
     }
 

@@ -15,9 +15,6 @@ class ModoAuditoriaController extends Controller
 {
     /**
      * Alterna el estado del modo auditoría y notifica a los clientes vía Websocket.
-     *
-     * @param Request $request
-     * @return JsonResponse
      */
     public function toggle(Request $request): JsonResponse
     {
@@ -35,8 +32,9 @@ class ModoAuditoriaController extends Controller
 
         $result = ApiResponse::success([
             'en_modo_auditable' => $activo,
-            'message' => $activo ? 'Modo auditoría activado' : 'Modo auditoría desactivado'
+            'message' => $activo ? 'Modo auditoría activado' : 'Modo auditoría desactivado',
         ]);
+
         return response()->json($result);
     }
 }

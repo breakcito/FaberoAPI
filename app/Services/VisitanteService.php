@@ -10,9 +10,10 @@ class VisitanteService
     public static function buscar_por_dni(string $dni): array
     {
         $visitante = VisitanteData::buscar_por_dni($dni);
-        if (!$visitante) {
+        if (! $visitante) {
             return ApiResponse::error('Visitante no encontrado');
         }
+
         return ApiResponse::success($visitante, 'Visitante encontrado correctamente');
     }
 

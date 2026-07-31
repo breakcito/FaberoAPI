@@ -29,7 +29,7 @@ class RecepcionUnidad extends Model
         'estado_salida',
         'fecha_hora_salida',
         'observacion_salida',
-        'id_surcusal',
+        'id_sucursal',
         'fecha_hora_inicio_pesaje',
         'fecha_hora_final_pesaje',
         'validacion_datos',

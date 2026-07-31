@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\TipoVehiculo;
 use App\Data\TiposVehiculoData;
+use App\Models\TipoVehiculo;
 use App\Shared\Responses\ApiResponse;
 
 class TiposVehiculoService

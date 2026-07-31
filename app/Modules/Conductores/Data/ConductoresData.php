@@ -3,7 +3,6 @@
 namespace App\Modules\Conductores\Data;
 
 use App\Models\Conductor;
-use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Support\Facades\DB;
 
 class ConductoresData

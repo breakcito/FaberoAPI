@@ -134,7 +134,7 @@ class RecepcionUnidadesData
             ru.estado_salida,
             ru.fecha_hora_salida,
             ru.observacion_salida,
-            ru.id_surcusal AS id_sucursal,
+            ru.id_sucursal AS id_sucursal,
             ru.fecha_hora_inicio_pesaje,
             ru.fecha_hora_final_pesaje,
             ru.validacion_datos,
@@ -181,7 +181,7 @@ class RecepcionUnidadesData
             'evidencias' => $data['evidencias'] ?? [],
             'observacion' => $data['observacion'] ?? null,
             'estado' => 'En Planta',
-            'id_surcusal' => $data['id_surcusal'],
+            'id_sucursal' => $data['id_sucursal'],
             'estado_pesaje' => 'Sin Pesar',
         ]);
 
@@ -243,12 +243,24 @@ class RecepcionUnidadesData
             reseteo: Periodo::Anual,
         );
 
+        // Crear automáticamente el registro en ticket_balanza al generar el lote
+        $ticketId = DB::table('ticket_balanza')->insertGetId([
+            'numero' => null,
+            'created_at' => now(),
+        ]);
+        DB::table('ticket_balanza')->where('id', $ticketId)->update(['numero' => $ticketId]);
+
         $lote = LoteMineral::create([
             'id_recepcion_unidad' => $idRecepcionUnidad,
             'id_empleado_registro' => $idEmpleadoRegistro,
             'correlativo' => $correlativoData['correlativo'],
             'numero_correlativo' => $correlativoData['numero_correlativo'],
+            'id_ticket_balanza' => $ticketId,
             'created_at' => now()->toDateTimeString(),
+            'id_vehiculo' => $recepcion->id_vehiculo,
+            'id_empresa_transporte' => $recepcion->id_empresa_transporte,
+            'id_tipo_vehiculo' => $recepcion->id_tipo_vehiculo,
+            'id_conductor' => $recepcion->id_conductor,
         ]);
 
         return $lote;
@@ -262,6 +274,10 @@ class RecepcionUnidadesData
         $lote = LoteMineral::find($loteId);
         if (! $lote) {
             return false;
+        }
+
+        if ($lote->id_ticket_balanza) {
+            DB::table('ticket_balanza')->where('id', $lote->id_ticket_balanza)->delete();
         }
 
         $lote->delete();

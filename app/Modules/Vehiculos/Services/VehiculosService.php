@@ -30,9 +30,10 @@ class VehiculosService
         $existenteId = VehiculosData::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
         if ($existenteId !== null) {
             $vehiculo = VehiculosData::get_vehiculo_by_id($existenteId);
-            if (!empty($vehiculo)) {
+            if (! empty($vehiculo)) {
                 $vehiculo['ya_existia'] = true;
             }
+
             return ApiResponse::success($vehiculo, 'El vehículo ya se encontraba registrado.');
         }
 
@@ -50,7 +51,7 @@ class VehiculosService
             $alto
         );
         $nuevoVehiculo = VehiculosData::get_vehiculo_by_id($id);
-        if (!empty($nuevoVehiculo)) {
+        if (! empty($nuevoVehiculo)) {
             $nuevoVehiculo['ya_existia'] = false;
         }
 

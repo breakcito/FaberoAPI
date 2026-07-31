@@ -3,19 +3,18 @@
 namespace App\Modules\Cuentas;
 
 use App\Modules\Cuentas\Data\CuentasData;
-use App\Shared\Responses\ApiResponse;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\DB;
-
 use App\Shared\Helpers\ArchivoHelper;
+use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class CuentasService
 {
     public static function get_cuentas(): array|object
     {
         $cuentas = CuentasData::get_cuentas();
-        
+
         $asociaciones = DB::table('sucursal_usuario')
             ->select('id_usuario', 'id_sucursal')
             ->get()
@@ -23,8 +22,8 @@ class CuentasService
 
         foreach ($cuentas as $cuenta) {
             $id_usuario = $cuenta->id_usuario;
-            $cuenta->sucursales = isset($asociaciones[$id_usuario]) 
-                ? $asociaciones[$id_usuario]->pluck('id_sucursal')->toArray() 
+            $cuenta->sucursales = isset($asociaciones[$id_usuario])
+                ? $asociaciones[$id_usuario]->pluck('id_sucursal')->toArray()
                 : [];
         }
 
@@ -59,12 +58,12 @@ class CuentasService
                 Hash::make($password)
             );
 
-            if (!empty($sucursales)) {
+            if (! empty($sucursales)) {
                 $insertData = [];
                 foreach ($sucursales as $id_sucursal) {
                     $insertData[] = [
                         'id_usuario' => $id_usuario,
-                        'id_sucursal' => $id_sucursal
+                        'id_sucursal' => $id_sucursal,
                     ];
                 }
                 DB::table('sucursal_usuario')->insert($insertData);
@@ -93,14 +92,14 @@ class CuentasService
         return DB::transaction(function () use ($id_usuario, $id_rol, $username, $password, $estado, $sucursales) {
             $updateData = [
                 'id_rol' => $id_rol,
-                'username' => $username
+                'username' => $username,
             ];
 
-            if (!empty($password)) {
+            if (! empty($password)) {
                 $updateData['password'] = Hash::make($password);
             }
 
-            if (!empty($estado)) {
+            if (! empty($estado)) {
                 $updateData['estado'] = $estado;
             }
 
@@ -109,12 +108,12 @@ class CuentasService
             if ($sucursales !== null) {
                 DB::table('sucursal_usuario')->where('id_usuario', $id_usuario)->delete();
 
-                if (!empty($sucursales)) {
+                if (! empty($sucursales)) {
                     $insertData = [];
                     foreach ($sucursales as $id_sucursal) {
                         $insertData[] = [
                             'id_usuario' => $id_usuario,
-                            'id_sucursal' => $id_sucursal
+                            'id_sucursal' => $id_sucursal,
                         ];
                     }
                     DB::table('sucursal_usuario')->insert($insertData);
@@ -142,10 +141,10 @@ class CuentasService
         // 2. Actualizar en la base de datos (tabla empleado)
         DB::table('empleado')
             ->where('id', $id_empleado)
-            ->update(['path_foto' => asset('storage/' . $pathRelativo)]);
+            ->update(['path_foto' => asset('storage/'.$pathRelativo)]);
 
         return ApiResponse::success(
-            ['url' => asset('storage/' . $pathRelativo)],
+            ['url' => asset('storage/'.$pathRelativo)],
             'Foto actualizada correctamente.'
         );
     }

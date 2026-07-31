@@ -34,7 +34,20 @@ class LoteMineral extends Model
         'id_empresa_transporte',
         'id_tipo_vehiculo',
         'id_conductor',
+        'condicion_ingreso',
+        'log_cambios',
         'created_at',
+        'id_empleado_inicio_analisis',
+        'id_empleado_confirmacion_analisis',
+        'id_ticket_balanza',
+        'ley_oro',
+        'ley_plata',
+        'ley_humedad',
+        'ley_recuperacion',
+        'estado_leyes',
+        'con_valor_comercial',
+        'fecha_hora_inicio_analisis',
+        'fecha_hora_confirmacion_analisis',
     ];
 
     protected $casts = [
@@ -42,5 +55,11 @@ class LoteMineral extends Model
         'peso_inicial' => 'float',
         'peso_final' => 'float',
         'peso_neto' => 'float',
+        'log_cambios' => 'array',
+        'ley_oro' => 'float',
+        'ley_plata' => 'float',
+        'ley_humedad' => 'float',
+        'ley_recuperacion' => 'float',
+        'con_valor_comercial' => 'boolean',
     ];
 }

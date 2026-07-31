@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\ZonaOrigen;
 use App\Data\ZonasOrigenData;
+use App\Models\ZonaOrigen;
 use App\Shared\Responses\ApiResponse;
 
 class ZonasOrigenService
@@ -14,6 +14,7 @@ class ZonasOrigenService
     public static function get_zonas_origen(): array
     {
         $data = ZonasOrigenData::get_zonas_origen();
+
         return ApiResponse::success($data, 'Zonas de origen obtenidas correctamente');
     }
 

@@ -30,6 +30,7 @@ class RolesData
     public static function crear_rol(array $data): int
     {
         $rol = Rol::create($data);
+
         return $rol->id;
     }
 }

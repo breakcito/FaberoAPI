@@ -9,7 +9,6 @@ use Illuminate\Routing\Controller;
 
 class MenuNavController extends Controller
 {
-
     public function get_menu_navegacion(Request $request): JsonResponse
     {
         $authUser = $request->attributes->get('auth_user');

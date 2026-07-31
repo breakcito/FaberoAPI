@@ -13,6 +13,7 @@ class EmpresasTransporteService
     public static function get_empresas_transporte(?int $id = null): array
     {
         $data = EmpresasTransporteData::get_empresas_transporte($id);
+
         return ApiResponse::success($data);
     }
 }

@@ -2,10 +2,8 @@
 
 namespace App\Modules\RecepcionVisitas\Services;
 
-use App\Modules\RecepcionVisitas\Data\RecepcionVisitasData;
-use App\Models\RecepcionVisita;
 use App\Models\Visitante;
-use App\Shared\Enums\_Generic\EstadoVisita;
+use App\Modules\RecepcionVisitas\Data\RecepcionVisitasData;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +16,7 @@ class RecepcionVisitasService
     public static function get_recepciones(array $filters): array
     {
         $data = RecepcionVisitasData::get_recepciones($filters);
+
         return ApiResponse::success($data, 'Recepciones de visitas obtenidas correctamente');
     }
 
@@ -36,7 +35,7 @@ class RecepcionVisitasService
             foreach ($visitantes as $index => $v) {
                 // 1. Obtener o crear al visitante y actualizar sus datos
                 $idVisitante = null;
-                if (!empty($v['id_visitante'])) {
+                if (! empty($v['id_visitante'])) {
                     $idVisitante = (int) $v['id_visitante'];
                     Visitante::whereKey($idVisitante)->update([
                         'nombre' => $v['nombre'],
@@ -67,7 +66,7 @@ class RecepcionVisitasService
                 $urlFoto = null;
                 if (isset($archivos[$index])) {
                     $uploaded = ArchivoHelper::guardarArchivos('visitas', $archivos[$index]);
-                    if (!empty($uploaded)) {
+                    if (! empty($uploaded)) {
                         $urls = array_map(function ($file) {
                             return $file['url'];
                         }, $uploaded);
@@ -87,11 +86,13 @@ class RecepcionVisitasService
             DB::commit();
 
             $nuevaRecepcion = RecepcionVisitasData::get_recepcion_by_id($id);
+
             return ApiResponse::success($nuevaRecepcion, 'Recepción de visita registrada correctamente');
 
         } catch (\Exception $e) {
             DB::rollBack();
-            return ApiResponse::error('Error al registrar la recepción de visita: ' . $e->getMessage());
+
+            return ApiResponse::error('Error al registrar la recepción de visita: '.$e->getMessage());
         }
     }
 
@@ -101,7 +102,7 @@ class RecepcionVisitasService
     public static function registrar_salida(int $idDetalle, ?string $observacionSalida): array
     {
         $detalle = \App\Models\RecepcionVisitaDetalle::find($idDetalle);
-        if (!$detalle) {
+        if (! $detalle) {
             return ApiResponse::error('No se encontró el detalle de la recepción de visita.');
         }
 

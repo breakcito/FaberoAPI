@@ -20,7 +20,16 @@ class EmpresasData
             emp.ruc,
             emp.razon_social,
             emp.nombre_comercial,
-            emp.path_logo
+            emp.path_logo,
+            (
+                SELECT
+                    COUNT(*)
+                FROM
+                    cuenta_bancaria_empresa cb
+                WHERE
+                    cb.id_empresa = emp.id AND
+                    cb.estado = "Activo"
+            ) as cantidad_cuentas_bancarias
         FROM
             empresa emp
         WHERE 1=1
@@ -31,6 +40,7 @@ class EmpresasData
         if ($id_empresa !== null) {
             $sql .= ' AND emp.id = :id_empresa';
             $params['id_empresa'] = $id_empresa;
+
             return DB::selectOne($sql, $params);
         }
 

@@ -96,9 +96,9 @@ class VehiculosData
         if ($seriePlaca !== null && $seriePlaca !== '') {
             $query->where('serie_placa', $seriePlaca);
         } else {
-            $query->where(function($q) {
+            $query->where(function ($q) {
                 $q->whereNull('serie_placa')
-                  ->orWhere('serie_placa', '');
+                    ->orWhere('serie_placa', '');
             });
         }
 

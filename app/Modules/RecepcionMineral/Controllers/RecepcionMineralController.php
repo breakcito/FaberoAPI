@@ -3,10 +3,12 @@
 namespace App\Modules\RecepcionMineral\Controllers;
 
 use App\Modules\RecepcionMineral\Services\RecepcionMineralService;
+use App\Shared\Enums\_Generic\CondicionIngreso;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Validation\Rule;
 
 class RecepcionMineralController extends Controller
 {
@@ -57,7 +59,13 @@ class RecepcionMineralController extends Controller
             return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
         }
 
-        return response()->json(RecepcionMineralService::crear_lote($id, (int) $authUser->id_empleado));
+        $request->validate([
+            'condicion_ingreso' => ['required', Rule::enum(CondicionIngreso::class)],
+        ]);
+
+        $condicionIngreso = $request->input('condicion_ingreso');
+
+        return response()->json(RecepcionMineralService::crear_lote($id, (int) $authUser->id_empleado, $condicionIngreso));
     }
 
     /**
@@ -221,6 +229,9 @@ class RecepcionMineralController extends Controller
      */
     public function actualizar_lote(Request $request, int $loteId): JsonResponse
     {
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = $authUser ? (int) $authUser->id_empleado : null;
+
         $request->validate([
             'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
             'id_encargado_muestra' => 'nullable|integer|exists:encargado_muestra,id',
@@ -239,6 +250,8 @@ class RecepcionMineralController extends Controller
             'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
             'id_empresa_transporte' => 'nullable|integer|exists:empresa_transporte,id',
             'id_conductor' => 'nullable|integer|exists:conductor,id',
+            'condicion_ingreso' => ['required', Rule::enum(CondicionIngreso::class)],
+            'motivo' => 'nullable|string',
         ]);
 
         $data = [
@@ -257,6 +270,8 @@ class RecepcionMineralController extends Controller
             'id_vehiculo' => $request->input('id_vehiculo'),
             'id_empresa_transporte' => $request->input('id_empresa_transporte'),
             'id_conductor' => $request->input('id_conductor'),
+            'condicion_ingreso' => $request->input('condicion_ingreso'),
+            'motivo' => $request->input('motivo'),
         ];
 
         $archivos = [];
@@ -267,7 +282,7 @@ class RecepcionMineralController extends Controller
             }
         }
 
-        return response()->json(RecepcionMineralService::actualizar_lote($loteId, $data, $archivos));
+        return response()->json(RecepcionMineralService::actualizar_lote($loteId, $data, $archivos, $idEmpleado));
     }
 
     /**
@@ -281,5 +296,13 @@ class RecepcionMineralController extends Controller
         }
 
         return response()->json(RecepcionMineralService::get_resumen_filtros($idSucursal));
+    }
+
+    /**
+     * Obtener datos para la impresión del Ticket de Balanza PDF
+     */
+    public function get_ticket_balanza(int $loteId): JsonResponse
+    {
+        return response()->json(RecepcionMineralService::get_ticket_balanza($loteId));
     }
 }

@@ -14,6 +14,6 @@ class Distrito extends Model
         'id_provincia',
         //
         'nombre',
-        'codigo'
+        'codigo',
     ];
 }

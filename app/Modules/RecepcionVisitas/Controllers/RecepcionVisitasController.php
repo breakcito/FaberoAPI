@@ -44,7 +44,7 @@ class RecepcionVisitasController extends Controller
         ]);
 
         $authUser = $request->attributes->get('auth_user');
-        if (!$authUser || empty($authUser->id_empleado)) {
+        if (! $authUser || empty($authUser->id_empleado)) {
             return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado para registrar el ingreso.'), 401);
         }
 

@@ -11,8 +11,11 @@ use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
 class Usuario extends Model implements AuthenticatableContract, JWTSubject
 {
     use Authenticatable;
+
     protected $table = 'usuario';
+
     public $timestamps = false;
+
     protected $fillable = [
         'id_rol',
         'id_empleado',

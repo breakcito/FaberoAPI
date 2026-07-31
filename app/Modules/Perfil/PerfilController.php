@@ -2,8 +2,8 @@
 
 namespace App\Modules\Perfil;
 
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class PerfilController
 {

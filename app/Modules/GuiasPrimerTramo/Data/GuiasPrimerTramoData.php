@@ -47,6 +47,8 @@ class GuiasPrimerTramoData
             gpt.serie_guia_transportista,
             gpt.numero_guia_transportista,
             gpt.sin_guia_transportista,
+            gpt.id_empleado_registro,
+            gpt.log_cambios,
             gpt.estado,
             gpt.created_at
         FROM guia_primer_tramo gpt
@@ -91,7 +93,9 @@ class GuiasPrimerTramoData
 
         foreach ($rows as $row) {
             $row->evidencias = isset($row->evidencias) ? json_decode($row->evidencias, true) ?? [] : [];
+            $row->log_cambios = isset($row->log_cambios) ? json_decode($row->log_cambios, true) ?? [] : [];
             $row->sin_guia_transportista = (bool) $row->sin_guia_transportista;
+            $row->id_empleado_registro = $row->id_empleado_registro !== null ? (int) $row->id_empleado_registro : null;
             $row->lotes = self::get_lotes_guia((int) $row->id);
         }
 
@@ -139,7 +143,9 @@ class GuiasPrimerTramoData
         }
 
         $row->evidencias = isset($row->evidencias) ? json_decode($row->evidencias, true) ?? [] : [];
+        $row->log_cambios = isset($row->log_cambios) ? json_decode($row->log_cambios, true) ?? [] : [];
         $row->sin_guia_transportista = (bool) $row->sin_guia_transportista;
+        $row->id_empleado_registro = $row->id_empleado_registro !== null ? (int) $row->id_empleado_registro : null;
         $row->lotes = self::get_lotes_guia($id);
 
         return (array) $row;
@@ -155,18 +161,17 @@ class GuiasPrimerTramoData
             lg.id,
             lg.id_guia_primer_tramo,
             lg.id_lote_mineral,
-            lg.correlativo,
-            lg.numero_correlativo,
             lg.peso_bruto,
             lg.tara,
             lg.peso_neto,
+            lg.log_cambios,
             lm.correlativo AS lote_correlativo,
             lm.tipo_producto,
             lm.tipo_mineral
         FROM lote_guia lg
         INNER JOIN lote_mineral lm ON lm.id = lg.id_lote_mineral
         WHERE lg.id_guia_primer_tramo = :id_guia
-        ORDER BY lg.numero_correlativo ASC
+        ORDER BY lg.id ASC
         ';
 
         $rows = DB::select($sql, ['id_guia' => $idGuia]);
@@ -175,6 +180,7 @@ class GuiasPrimerTramoData
             $row->peso_bruto = $row->peso_bruto !== null ? (float) $row->peso_bruto : null;
             $row->tara = $row->tara !== null ? (float) $row->tara : null;
             $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
+            $row->log_cambios = isset($row->log_cambios) ? json_decode($row->log_cambios, true) ?? [] : [];
         }
 
         return $rows;
