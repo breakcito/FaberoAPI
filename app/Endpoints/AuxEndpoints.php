@@ -1,7 +1,11 @@
 <?php
 
 use App\Controllers\AuxController;
+use App\Controllers\HealthCheckController;
 use Illuminate\Support\Facades\Route;
+
+// Mantiene los contenedores despiertos y valida que la base de datos responde.
+Route::get('/health', [HealthCheckController::class, 'check']);
 
 Route::middleware('auth.jwt.custom')->group(function () {
     Route::prefix('aux')->group(function () {

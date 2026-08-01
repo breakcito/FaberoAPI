@@ -16,12 +16,13 @@ class ApiResponse
         ];
     }
 
-    public static function error($message = null)
+    public static function error($message = null, $errors = null)
     {
         return [
             'success' => false,
             'data' => null,
             'message' => $message,
+            'errors' => $errors,
         ];
     }
 }
