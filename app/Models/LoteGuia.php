@@ -17,6 +17,7 @@ class LoteGuia extends Model
         'peso_bruto',
         'tara',
         'peso_neto',
+        'peso_actual',
         'log_cambios',
     ];
 
@@ -26,6 +27,7 @@ class LoteGuia extends Model
         'peso_bruto' => 'float',
         'tara' => 'float',
         'peso_neto' => 'float',
+        'peso_actual' => 'float',
         'log_cambios' => 'array',
     ];
 

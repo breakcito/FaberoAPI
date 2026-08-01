@@ -94,6 +94,16 @@ El sistema hace un uso intensivo de _Backed Enums_ de PHP para evitar "magic str
     *   **PROHIBIDO** documentar parámetros individuales simples (como `int`, `string`, `float`, `bool`, etc.). No utilices `@param` para tipos primitivos.
     *   **SOLO es obligatorio** documentar con `@param` los parámetros que sean de tipo **array**, detallando exactamente qué claves y tipos contiene dicho array para evitar adivinanzas.
     *   Si eres una IA, aunque el usuario no lo solicite, es **obligatorio** estructurar la documentación de esta manera.
+7.  **Estándar Obligatorio de Trazabilidad (`RES_CambiosLog`)**:
+    *   Todo historial de auditoría o log de cambios (`log_cambios`) almacenado en la base de datos **DEBE** seguir estrictamente la estructura normalizada mediante la clase auxiliar `App\Shared\Responses\_Generic\RES_CambiosLog::crear($idEmpleado, $motivo, $cambios)`:
+        - `id_empleado`: ID del empleado/usuario que realiza la acción (`int`).
+        - `motivo`: Descripción o acción realizada (`string | null`).
+        - `update_at`: Fecha y hora en formato YYYY-MM-DD HH:mm:ss (`string`).
+        - `cambios`: Arreglo de objetos `{ campo_bd, campo, valor_anterior, valor_nuevo }`.
+8.  **Gestión Estándar de Archivos (`ArchivoHelper`)**:
+    *   Todo procesamiento y guardado seguro de archivos en el backend **DEBE** canalizarse a través de `App\Shared\Helpers\ArchivoHelper::guardarArchivos('carpeta_destino', $archivos)`.
+    *   Guarda los archivos en el disco público dentro de `storage/app/public/{carpeta_destino}/dd-mm-yy/`.
+    *   Retorna un arreglo normalizado con los metadatos: `{ url, path_relativo, nombre_original, extension }`.
 
 
 ## ⚙️ Ejecución
