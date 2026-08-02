@@ -1,5 +1,0 @@
-.git
-vendor
-docker-compose.yml
-.dockerignore
-/bruno
