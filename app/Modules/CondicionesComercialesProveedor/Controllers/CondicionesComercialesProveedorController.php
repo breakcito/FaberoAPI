@@ -32,8 +32,9 @@ class CondicionesComercialesProveedorController
         $request->validate([
             'id_proveedor_minero' => 'required_without:id_proveedor|nullable|integer|exists:proveedor,id',
             'id_proveedor' => 'required_without:id_proveedor_minero|nullable|integer|exists:proveedor,id',
-            'ley_auoz_inicio' => 'required|numeric|min:0',
-            'ley_auoz_fin' => 'required|numeric|gte:ley_auoz_inicio',
+            'elemento_quimico' => 'required|string|in:Oro,Plata',
+            'ley_inicio' => 'required|numeric|min:0',
+            'ley_fin' => 'required|numeric|gte:ley_inicio',
             'maquila' => 'required|numeric|min:0',
             'recuperacion' => 'required|numeric|min:0|max:100',
             'consumo' => 'required|numeric|min:0',
@@ -44,8 +45,9 @@ class CondicionesComercialesProveedorController
 
         return response()->json(CondicionesComercialesProveedorService::crear_condicion(
             (int) $idProveedor,
-            (float) $request->input('ley_auoz_inicio'),
-            (float) $request->input('ley_auoz_fin'),
+            (string) $request->input('elemento_quimico'),
+            (float) $request->input('ley_inicio'),
+            (float) $request->input('ley_fin'),
             (float) $request->input('maquila'),
             (float) $request->input('recuperacion'),
             (float) $request->input('consumo'),
@@ -59,8 +61,9 @@ class CondicionesComercialesProveedorController
     public function editar_condicion(Request $request, int $id): JsonResponse
     {
         $request->validate([
-            'ley_auoz_inicio' => 'required|numeric|min:0',
-            'ley_auoz_fin' => 'required|numeric|gte:ley_auoz_inicio',
+            'elemento_quimico' => 'required|string|in:Oro,Plata',
+            'ley_inicio' => 'required|numeric|min:0',
+            'ley_fin' => 'required|numeric|gte:ley_inicio',
             'maquila' => 'required|numeric|min:0',
             'recuperacion' => 'required|numeric|min:0|max:100',
             'consumo' => 'required|numeric|min:0',
@@ -69,8 +72,9 @@ class CondicionesComercialesProveedorController
 
         return response()->json(CondicionesComercialesProveedorService::editar_condicion(
             $id,
-            (float) $request->input('ley_auoz_inicio'),
-            (float) $request->input('ley_auoz_fin'),
+            (string) $request->input('elemento_quimico'),
+            (float) $request->input('ley_inicio'),
+            (float) $request->input('ley_fin'),
             (float) $request->input('maquila'),
             (float) $request->input('recuperacion'),
             (float) $request->input('consumo'),

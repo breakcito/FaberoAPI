@@ -3,6 +3,7 @@
 namespace App\Data;
 
 use App\Models\CondicionComercialProveedor;
+use App\Shared\Enums\_Generic\ElementoQuimicoValorizacion;
 use App\Shared\Enums\_Generic\EstadoAnticipoProveedor;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\ValorizacionCompra\EstadoValorizacionCompra;
@@ -245,10 +246,10 @@ class ValorizacionCompraAuxData
             'id_val_edicion_8' => $idValorizacionEdicion,
         ]);
 
-        // Cargar condiciones comerciales del proveedor (únicamente para Oro)
+        // Cargar condiciones comerciales del proveedor (Oro y Plata)
         $condiciones = CondicionComercialProveedor::query()
             ->where('id_proveedor_minero', $idProveedor)
-            ->whereIn('estado', ['Activo', 'ACTIVO', 'activo'])
+            ->where('estado', EstadoBase::Activo->value)
             ->get();
 
         foreach ($lotes as $lote) {
@@ -262,8 +263,11 @@ class ValorizacionCompraAuxData
 
             // Buscar condición comercial para Oro
             $condOro = $condiciones->first(function ($c) use ($lote) {
-                $inicio = (float) $c->ley_auoz_inicio;
-                $fin = (float) $c->ley_auoz_fin;
+                if ($c->elemento_quimico !== ElementoQuimicoValorizacion::Oro) {
+                    return false;
+                }
+                $inicio = (float) $c->ley_inicio;
+                $fin = (float) $c->ley_fin;
 
                 return $lote->ley_oro >= $inicio && $lote->ley_oro <= $fin;
             });
@@ -275,8 +279,23 @@ class ValorizacionCompraAuxData
                 'consumo' => (float) $condOro->consumo,
             ] : null;
 
-            // Las condiciones comerciales aplican únicamente para Oro (Au)
-            $lote->condicion_plata = null;
+            // Buscar condición comercial para Plata
+            $condPlata = $condiciones->first(function ($c) use ($lote) {
+                if ($c->elemento_quimico !== ElementoQuimicoValorizacion::Plata) {
+                    return false;
+                }
+                $inicio = (float) $c->ley_inicio;
+                $fin = (float) $c->ley_fin;
+
+                return $lote->ley_plata >= $inicio && $lote->ley_plata <= $fin;
+            });
+
+            $lote->condicion_plata = $condPlata ? [
+                'id_condicion_comercial' => $condPlata->id,
+                'recuperacion' => (float) $condPlata->recuperacion,
+                'maquila' => (float) $condPlata->maquila,
+                'consumo' => (float) $condPlata->consumo,
+            ] : null;
         }
 
         return $lotes;

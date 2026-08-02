@@ -21,8 +21,9 @@ class CondicionesComercialesProveedorData
         $results = $query->select([
             'ccp.id',
             'ccp.id_proveedor_minero',
-            'ccp.ley_auoz_inicio',
-            'ccp.ley_auoz_fin',
+            'ccp.elemento_quimico',
+            'ccp.ley_inicio',
+            'ccp.ley_fin',
             'ccp.maquila',
             'ccp.recuperacion',
             'ccp.consumo',
@@ -30,15 +31,15 @@ class CondicionesComercialesProveedorData
             'ccp.estado',
             'ccp.created_at',
         ])
-        ->orderBy('ccp.id', 'DESC')
-        ->get()
-        ->toArray();
+            ->orderBy('ccp.id', 'DESC')
+            ->get()
+            ->toArray();
 
         foreach ($results as $row) {
             $row->id = (int) $row->id;
             $row->id_proveedor_minero = (int) $row->id_proveedor_minero;
-            $row->ley_auoz_inicio = (float) $row->ley_auoz_inicio;
-            $row->ley_auoz_fin = (float) $row->ley_auoz_fin;
+            $row->ley_inicio = (float) $row->ley_inicio;
+            $row->ley_fin = (float) $row->ley_fin;
             $row->maquila = (float) $row->maquila;
             $row->recuperacion = (float) $row->recuperacion;
             $row->consumo = (float) $row->consumo;
@@ -63,8 +64,8 @@ class CondicionesComercialesProveedorData
 
         $row->id = (int) $row->id;
         $row->id_proveedor_minero = (int) $row->id_proveedor_minero;
-        $row->ley_auoz_inicio = (float) $row->ley_auoz_inicio;
-        $row->ley_auoz_fin = (float) $row->ley_auoz_fin;
+        $row->ley_inicio = (float) $row->ley_inicio;
+        $row->ley_fin = (float) $row->ley_fin;
         $row->maquila = (float) $row->maquila;
         $row->recuperacion = (float) $row->recuperacion;
         $row->consumo = (float) $row->consumo;

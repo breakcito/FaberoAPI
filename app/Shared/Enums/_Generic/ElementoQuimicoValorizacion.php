@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Shared\Enums\ValorizacionCompra;
+namespace App\Shared\Enums\_Generic;
 
 enum ElementoQuimicoValorizacion: string
 {

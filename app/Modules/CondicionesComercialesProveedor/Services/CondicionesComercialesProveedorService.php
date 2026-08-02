@@ -5,6 +5,7 @@ namespace App\Modules\CondicionesComercialesProveedor\Services;
 use App\Models\CondicionComercialProveedor;
 use App\Models\Proveedor;
 use App\Modules\CondicionesComercialesProveedor\Data\CondicionesComercialesProveedorData;
+use App\Shared\Enums\_Generic\ElementoQuimicoValorizacion;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Responses\ApiResponse;
 use Carbon\Carbon;
@@ -32,8 +33,9 @@ class CondicionesComercialesProveedorService
      */
     public static function crear_condicion(
         int $idProveedor,
-        float $leyAuozInicio,
-        float $leyAuozFin,
+        string $elementoQuimico,
+        float $leyInicio,
+        float $leyFinal,
         float $maquila,
         float $recuperacion,
         float $consumo,
@@ -44,7 +46,12 @@ class CondicionesComercialesProveedorService
             return ApiResponse::error('El proveedor especificado no existe.');
         }
 
-        if ($leyAuozInicio > $leyAuozFin) {
+        $elementoEnum = ElementoQuimicoValorizacion::tryFrom($elementoQuimico);
+        if (! $elementoEnum) {
+            return ApiResponse::error('El elemento químico especificado no es válido.');
+        }
+
+        if ($leyInicio > $leyFinal) {
             return ApiResponse::error('La ley de inicio no puede ser mayor que la ley de fin.');
         }
 
@@ -52,8 +59,9 @@ class CondicionesComercialesProveedorService
         try {
             $condicion = CondicionComercialProveedor::create([
                 'id_proveedor_minero' => $idProveedor,
-                'ley_auoz_inicio' => $leyAuozInicio,
-                'ley_auoz_fin' => $leyAuozFin,
+                'elemento_quimico' => $elementoEnum->value,
+                'ley_inicio' => $leyInicio,
+                'ley_fin' => $leyFinal,
                 'maquila' => $maquila,
                 'recuperacion' => $recuperacion,
                 'consumo' => $consumo,
@@ -79,8 +87,9 @@ class CondicionesComercialesProveedorService
      */
     public static function editar_condicion(
         int $id,
-        float $leyAuozInicio,
-        float $leyAuozFin,
+        string $elementoQuimico,
+        float $leyInicio,
+        float $leyFinal,
         float $maquila,
         float $recuperacion,
         float $consumo,
@@ -91,14 +100,20 @@ class CondicionesComercialesProveedorService
             return ApiResponse::error('La condición comercial no existe.');
         }
 
-        if ($leyAuozInicio > $leyAuozFin) {
+        $elementoEnum = ElementoQuimicoValorizacion::tryFrom($elementoQuimico);
+        if (! $elementoEnum) {
+            return ApiResponse::error('El elemento químico especificado no es válido.');
+        }
+
+        if ($leyInicio > $leyFinal) {
             return ApiResponse::error('La ley de inicio no puede ser mayor que la ley de fin.');
         }
 
         DB::beginTransaction();
         try {
-            $condicion->ley_auoz_inicio = $leyAuozInicio;
-            $condicion->ley_auoz_fin = $leyAuozFin;
+            $condicion->elemento_quimico = $elementoEnum->value;
+            $condicion->ley_inicio = $leyInicio;
+            $condicion->ley_fin = $leyFinal;
             $condicion->maquila = $maquila;
             $condicion->recuperacion = $recuperacion;
             $condicion->consumo = $consumo;

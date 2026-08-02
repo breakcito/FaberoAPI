@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Shared\Enums\_Generic\ElementoQuimicoValorizacion;
 use Illuminate\Database\Eloquent\Model;
 
 class CondicionComercialProveedor extends Model
@@ -12,8 +13,9 @@ class CondicionComercialProveedor extends Model
 
     protected $fillable = [
         'id_proveedor_minero',
-        'ley_auoz_inicio',
-        'ley_auoz_fin',
+        'elemento_quimico',
+        'ley_inicio',
+        'ley_fin',
         'maquila',
         'recuperacion',
         'consumo',
@@ -21,4 +23,11 @@ class CondicionComercialProveedor extends Model
         'estado',
         'created_at',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'elemento_quimico' => ElementoQuimicoValorizacion::class,
+        ];
+    }
 }

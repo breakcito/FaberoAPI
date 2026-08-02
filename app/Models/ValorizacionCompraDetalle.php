@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Shared\Enums\ValorizacionCompra\ElementoQuimicoValorizacion;
+use App\Shared\Enums\_Generic\ElementoQuimicoValorizacion;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
