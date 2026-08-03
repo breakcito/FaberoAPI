@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 // como por ejemplo, tener un acceso para poder ver todos los
 // almacenes en la vista de Lotes, en vez de solo visualizar aquellos donde
 // el empleado es responsable
+
 class Acceso extends Model
 {
     protected $table = 'acceso';
