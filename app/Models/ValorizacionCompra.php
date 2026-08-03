@@ -21,9 +21,14 @@ class ValorizacionCompra extends Model
         'id_cuenta_detraccion',
         'id_empleado_registro',
         'id_empleado_aprobacion',
+        'id_empleado_anulacion',
         'numero_correlativo',
+        'correlativo',
         'tipo_pago',
         'evidencias',
+        'evidencias_anulacion',
+        'motivo_anulacion',
+        'fecha_hora_anulacion',
         'log_cambios',
         'fecha_hora_aprobacion',
         'created_at',
@@ -37,9 +42,12 @@ class ValorizacionCompra extends Model
         'id_cuenta_detraccion' => 'integer',
         'id_empleado_registro' => 'integer',
         'id_empleado_aprobacion' => 'integer',
+        'id_empleado_anulacion' => 'integer',
         'evidencias' => 'array',
+        'evidencias_anulacion' => 'array',
         'log_cambios' => 'array',
         'fecha_hora_aprobacion' => 'datetime',
+        'fecha_hora_anulacion' => 'datetime',
         'created_at' => 'datetime',
         'tipo_pago' => TipoPagoValorizacionCompra::class,
         'estado' => EstadoValorizacionCompra::class,
@@ -73,6 +81,11 @@ class ValorizacionCompra extends Model
     public function empleadoAprobacion(): BelongsTo
     {
         return $this->belongsTo(Empleado::class, 'id_empleado_aprobacion');
+    }
+
+    public function empleadoAnulacion(): BelongsTo
+    {
+        return $this->belongsTo(Empleado::class, 'id_empleado_anulacion');
     }
 
     public function detalles(): HasMany

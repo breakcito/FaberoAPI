@@ -186,14 +186,38 @@ class ValorizacionCompraController extends Controller
     }
 
     /**
-     * Anular una valorización
+     * Anular o eliminar una valorización
      */
     public function anular_valorizacion(Request $request, int $id): JsonResponse
     {
+        $request->validate([
+            'motivo_anulacion' => 'required|string|min:3',
+            'tipo_eliminacion' => 'required|string|in:logica,fisica',
+            'evidencias_anulacion' => 'nullable|array',
+            'evidencias_anulacion.*' => 'file',
+        ]);
+
         $authUser = $request->attributes->get('auth_user');
         $idEmpleado = $authUser ? ($authUser->id_empleado ?? $authUser->id_usuario) : 1;
 
-        $res = ValorizacionCompraService::anular_valorizacion($id, (int) $idEmpleado);
+        $motivoAnulacion = (string) $request->input('motivo_anulacion');
+        $tipoEliminacion = (string) $request->input('tipo_eliminacion', 'logica');
+
+        $archivos = [];
+        if ($request->hasFile('evidencias_anulacion')) {
+            $archivos = $request->file('evidencias_anulacion');
+            if (! is_array($archivos)) {
+                $archivos = [$archivos];
+            }
+        }
+
+        $res = ValorizacionCompraService::anular_valorizacion(
+            $id,
+            (int) $idEmpleado,
+            $motivoAnulacion,
+            $tipoEliminacion,
+            $archivos
+        );
         $status = ($res['success'] ?? false) ? 200 : 400;
 
         return response()->json($res, $status);

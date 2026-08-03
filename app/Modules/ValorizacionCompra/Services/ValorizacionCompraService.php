@@ -2,7 +2,6 @@
 
 namespace App\Modules\ValorizacionCompra\Services;
 
-use App\Models\AnticipoProveedor;
 use App\Models\LoteGuia;
 use App\Models\TransaccionAnticipoProveedor;
 use App\Models\ValorizacionCompra;
@@ -59,14 +58,14 @@ class ValorizacionCompraService
                 prefijo: 'VAL',
                 filtros: [],
                 longitudCeros: 5,
-                reseteo: Periodo::Ninguno
+                reseteo: Periodo::Anual
             );
 
+            $correlativoStr = (string) $correlativoRes['correlativo'];
             $numeroCorrelativo = (string) $correlativoRes['numero_correlativo'];
 
             // Obtener nombre de concesion para auditoria inicial
-            $concesionObj = DB::table('concesion')->where('id', $data['id_concesion'])->first();
-            $concesionNombre = $concesionObj ? $concesionObj->nombre : "ID #{$data['id_concesion']}";
+            $concesionNombre = ValorizacionCompraData::get_nombre_concesion((int) $data['id_concesion']);
 
             $tipoPagoEnum = TipoPagoValorizacionCompra::tryFrom($data['tipo_pago']) ?? TipoPagoValorizacionCompra::Transferencia;
 
@@ -82,6 +81,7 @@ class ValorizacionCompraService
                 'id_empleado_registro' => $data['id_empleado_registro'],
                 'id_empleado_aprobacion' => null,
                 'numero_correlativo' => $numeroCorrelativo,
+                'correlativo' => $correlativoStr,
                 'tipo_pago' => $tipoPagoEnum->value,
                 'evidencias' => ! empty($evidenciasGuardadas) ? json_encode(array_values($evidenciasGuardadas)) : null,
                 'log_cambios' => [],
@@ -92,7 +92,7 @@ class ValorizacionCompraService
 
             // Guardar Detalles de lotes
             foreach ($data['detalles'] as $det) {
-                $loteGuia = LoteGuia::with('loteMineral')->find($det['id_lote_guia']);
+                $loteGuia = ValorizacionCompraData::find_lote_guia_con_mineral((int) $det['id_lote_guia']);
                 if (! $loteGuia || ! $loteGuia->loteMineral) {
                     throw new Exception("El lote guía ID {$det['id_lote_guia']} no fue encontrado.");
                 }
@@ -138,7 +138,7 @@ class ValorizacionCompraService
             // Guardar Transacciones de Anticipo (si aplica tipo_pago anticipo o mixto)
             if (in_array($tipoPagoEnum->value, [TipoPagoValorizacionCompra::Anticipo->value, TipoPagoValorizacionCompra::Mixto->value]) && ! empty($data['anticipos'])) {
                 foreach ($data['anticipos'] as $antItem) {
-                    $anticipo = AnticipoProveedor::find($antItem['id_anticipo_proveedor']);
+                    $anticipo = ValorizacionCompraData::find_anticipo_proveedor((int) $antItem['id_anticipo_proveedor']);
                     if (! $anticipo) {
                         throw new Exception("Anticipo ID {$antItem['id_anticipo_proveedor']} no encontrado.");
                     }
@@ -210,7 +210,7 @@ class ValorizacionCompraService
     {
         DB::beginTransaction();
         try {
-            $valorizacion = ValorizacionCompra::find($id);
+            $valorizacion = ValorizacionCompraData::find_model($id);
             if (! $valorizacion) {
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
@@ -225,39 +225,20 @@ class ValorizacionCompraService
 
             // 1. Auditoría de cambios en cabecera
             if ($valorizacion->id_concesion != $data['id_concesion']) {
-                $cAnt = DB::table('concesion')->where('id', $valorizacion->id_concesion)->first();
-                $cNue = DB::table('concesion')->where('id', $data['id_concesion'])->first();
                 $cambios[] = [
                     'campo_bd' => 'id_concesion',
                     'campo' => 'Concesión',
-                    'valor_anterior' => $cAnt ? $cAnt->nombre : "ID #{$valorizacion->id_concesion}",
-                    'valor_nuevo' => $cNue ? $cNue->nombre : "ID #{$data['id_concesion']}",
+                    'valor_anterior' => ValorizacionCompraData::get_nombre_concesion((int) $valorizacion->id_concesion),
+                    'valor_nuevo' => ValorizacionCompraData::get_nombre_concesion((int) $data['id_concesion']),
                 ];
             }
-
-            $getCuentaLabel = function ($idCuenta) {
-                if (! $idCuenta) {
-                    return '—';
-                }
-                $c = DB::table('cuenta_bancaria_proveedor as cb')
-                    ->leftJoin('banco as b', 'b.id', '=', 'cb.id_banco')
-                    ->where('cb.id', $idCuenta)
-                    ->select('cb.numero_cuenta', 'b.nombre as banco_nombre', 'b.abreviatura as banco_abrev')
-                    ->first();
-                if (! $c) {
-                    return "ID #{$idCuenta}";
-                }
-                $bancoStr = $c->banco_abrev ?: ($c->banco_nombre ?: '');
-
-                return ! empty($bancoStr) ? "{$bancoStr} - {$c->numero_cuenta}" : $c->numero_cuenta;
-            };
 
             if ($valorizacion->id_cuenta_bancaria != ($data['id_cuenta_bancaria'] ?? null)) {
                 $cambios[] = [
                     'campo_bd' => 'id_cuenta_bancaria',
                     'campo' => 'Cuenta Bancaria',
-                    'valor_anterior' => $getCuentaLabel($valorizacion->id_cuenta_bancaria),
-                    'valor_nuevo' => $getCuentaLabel($data['id_cuenta_bancaria'] ?? null),
+                    'valor_anterior' => ValorizacionCompraData::get_etiqueta_cuenta($valorizacion->id_cuenta_bancaria),
+                    'valor_nuevo' => ValorizacionCompraData::get_etiqueta_cuenta($data['id_cuenta_bancaria'] ?? null),
                 ];
             }
 
@@ -265,8 +246,8 @@ class ValorizacionCompraService
                 $cambios[] = [
                     'campo_bd' => 'id_cuenta_detraccion',
                     'campo' => 'Cuenta Detracción',
-                    'valor_anterior' => $getCuentaLabel($valorizacion->id_cuenta_detraccion),
-                    'valor_nuevo' => $getCuentaLabel($data['id_cuenta_detraccion'] ?? null),
+                    'valor_anterior' => ValorizacionCompraData::get_etiqueta_cuenta($valorizacion->id_cuenta_detraccion),
+                    'valor_nuevo' => ValorizacionCompraData::get_etiqueta_cuenta($data['id_cuenta_detraccion'] ?? null),
                 ];
             }
 
@@ -280,88 +261,10 @@ class ValorizacionCompraService
             }
 
             // 2. Auditoría de cambios en detalles (lotes de mineral)
-            $oldDetalles = ValorizacionCompraDetalle::where('id_valorizacion_compra', $id)->get();
-            $oldDetMap = [];
-            foreach ($oldDetalles as $od) {
-                $lg = LoteGuia::with('loteMineral')->find($od->id_lote_guia);
-                $corr = $lg && $lg->loteMineral ? ($lg->loteMineral->correlativo ?? $lg->loteMineral->numero_correlativo) : "Lote #{$od->id_lote_guia}";
-                $key = "{$od->id_lote_guia}_{$od->elemento_quimico->value}";
-                $oldDetMap[$key] = [
-                    'correlativo' => $corr,
-                    'elemento' => $od->elemento_quimico->value,
-                    'inter' => (float) $od->inter,
-                    'des_inter' => (float) $od->des_inter,
-                    'recuperacion' => (float) $od->recuperacion,
-                    'maquila' => (float) $od->maquila,
-                    'consumo' => (float) $od->consumo,
-                    'factor' => (float) $od->factor,
-                    'precio_por_tonelada' => (float) $od->precio_por_tonelada,
-                    'subtotal' => (float) $od->subtotal,
-                    'log_cambios' => $od->log_cambios ?? [],
-                ];
-            }
-
-            $newDetMap = [];
-            $newTotalSubtotal = 0;
-            foreach ($data['detalles'] as $det) {
-                $lg = LoteGuia::with('loteMineral')->find($det['id_lote_guia']);
-                $corr = $lg && $lg->loteMineral ? ($lg->loteMineral->correlativo ?? $lg->loteMineral->numero_correlativo) : "Lote #{$det['id_lote_guia']}";
-                $elem = $det['elemento_quimico'];
-                $key = "{$det['id_lote_guia']}_{$elem}";
-                $newDetMap[$key] = [
-                    'correlativo' => $corr,
-                    'elemento' => $elem,
-                    'inter' => (float) ($det['inter'] ?? 0),
-                    'des_inter' => (float) ($det['des_inter'] ?? 0),
-                    'recuperacion' => (float) ($det['recuperacion'] ?? 0),
-                    'maquila' => (float) ($det['maquila'] ?? 0),
-                    'consumo' => (float) ($det['consumo'] ?? 0),
-                    'factor' => (float) ($det['factor'] ?? 1.0),
-                ];
-
-                // Cálculo rápido del subtotal proyectado del lote
-                if ($lg && $lg->loteMineral) {
-                    $lote = $lg->loteMineral;
-                    $pesoNeto = $lg->peso_neto !== null ? (float) $lg->peso_neto : (float) $lote->peso_neto;
-                    $pesoSeco = $pesoNeto * (1 - ((float) $lote->ley_humedad / 100));
-                    $elementoEnumTmp = ElementoQuimicoValorizacion::tryFrom($elem) ?? ElementoQuimicoValorizacion::Oro;
-                    $leyTmp = $elementoEnumTmp === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
-                    $ptnTmp = (((float) ($det['inter'] ?? 0) - (float) ($det['des_inter'] ?? 0)) * $leyTmp * ((float) ($det['recuperacion'] ?? 0) / 100) - (float) ($det['maquila'] ?? 0) - (float) ($det['consumo'] ?? 0)) * (float) ($det['factor'] ?? 1.0);
-                    $subtotalTmp = ($ptnTmp * $pesoSeco) / 1000;
-                    $newTotalSubtotal += round($subtotalTmp, 2);
-                }
-            }
-
-            $oldTotalSubtotal = round((float) $oldDetalles->sum('subtotal'), 2);
-            if (abs($oldTotalSubtotal - $newTotalSubtotal) > 0.01) {
-                $cambios[] = [
-                    'campo_bd' => 'total_subtotal',
-                    'campo' => 'Total Valorización',
-                    'valor_anterior' => '$ '.number_format($oldTotalSubtotal, 2),
-                    'valor_nuevo' => '$ '.number_format($newTotalSubtotal, 2),
-                ];
-            }
-
-            // Cambios estructurales de lotes para la cabecera (lote agregado / removido)
-            foreach ($oldDetMap as $key => $oldInfo) {
-                if (! isset($newDetMap[$key])) {
-                    $cambios[] = [
-                        'campo_bd' => 'lote_removido',
-                        'campo' => 'Lote en valorización removido',
-                        'valor_anterior' => "{$oldInfo['correlativo']} ({$oldInfo['elemento']})",
-                        'valor_nuevo' => '—',
-                    ];
-                }
-            }
-
-            foreach (array_diff_key($newDetMap, $oldDetMap) as $key => $newInfo) {
-                $cambios[] = [
-                    'campo_bd' => 'lote_agregado',
-                    'campo' => 'Lote en valorización agregado',
-                    'valor_anterior' => '—',
-                    'valor_nuevo' => "{$newInfo['correlativo']} ({$newInfo['elemento']})",
-                ];
-            }
+            $resDetallesAud = self::procesarAuditoriaDetallesEdicion($id, $data['detalles'] ?? []);
+            $cambios = array_merge($cambios, $resDetallesAud['cambios']);
+            $newTotalSubtotal = $resDetallesAud['new_total_subtotal'];
+            $oldDetMap = $resDetallesAud['old_det_map'];
 
             // 3. Auditoría y procesamiento de evidencias (existentes conservadas + nuevas subidas)
             $rawEvidencias = $valorizacion->evidencias;
@@ -369,37 +272,16 @@ class ValorizacionCompraService
                 ? $rawEvidencias
                 : (is_string($rawEvidencias) ? (json_decode($rawEvidencias, true) ?? []) : []);
 
-            $vAntEvidencias = [];
-            foreach ($vAntEvidenciasRaw as $e) {
-                if (is_array($e)) {
-                    $vAntEvidencias[] = $e['path_relativo'] ?? $e['path'] ?? $e['nombre_original'] ?? '';
-                } elseif (is_string($e)) {
-                    $vAntEvidencias[] = $e;
-                }
-            }
-            $vAntEvidencias = array_values(array_filter($vAntEvidencias));
-
             $rawExistentes = $data['evidencias_existentes'] ?? null;
             $evidenciasExistentesRaw = is_array($rawExistentes)
                 ? $rawExistentes
                 : (is_string($rawExistentes) ? (json_decode($rawExistentes, true) ?? []) : []);
 
-            $evidenciasExistentesPaths = [];
-            foreach ($evidenciasExistentesRaw as $e) {
-                if (is_array($e)) {
-                    $evidenciasExistentesPaths[] = $e['path_relativo'] ?? $e['path'] ?? '';
-                } elseif (is_string($e)) {
-                    $evidenciasExistentesPaths[] = $e;
-                }
-            }
-            $evidenciasExistentesPaths = array_values(array_filter($evidenciasExistentesPaths));
+            $evidenciasNuevas = ! empty($archivos)
+                ? ArchivoHelper::guardarArchivos('valorizaciones', $archivos)
+                : [];
 
-            $evidenciasNuevasPaths = [];
-            if (! empty($archivos)) {
-                $evidenciasNuevasPaths = ArchivoHelper::guardarArchivos('valorizaciones', $archivos);
-            }
-
-            $vNueEvidencias = array_values(array_unique(array_merge($evidenciasExistentesPaths, $evidenciasNuevasPaths)));
+            $vNueEvidencias = array_values(array_merge($evidenciasExistentesRaw, $evidenciasNuevas));
 
             $getNombreLimpio = function ($item) {
                 if (is_array($item)) {
@@ -419,15 +301,15 @@ class ValorizacionCompraService
                 return '—';
             };
 
-            $oldCopy = $vAntEvidencias;
-            $newCopy = $vNueEvidencias;
+            $nombresAnt = array_values(array_filter(array_map($getNombreLimpio, $vAntEvidenciasRaw)));
+            $nombresNue = array_values(array_filter(array_map($getNombreLimpio, $vNueEvidencias)));
+
+            $oldCopy = $nombresAnt;
+            $newCopy = $nombresNue;
             sort($oldCopy);
             sort($newCopy);
 
             if ($oldCopy !== $newCopy) {
-                $nombresAnt = array_values(array_filter(array_map($getNombreLimpio, $vAntEvidencias)));
-                $nombresNue = array_values(array_filter(array_map($getNombreLimpio, $vNueEvidencias)));
-
                 $cambios[] = [
                     'campo_bd' => 'evidencias',
                     'campo' => 'Evidencias',
@@ -454,15 +336,16 @@ class ValorizacionCompraService
                 'id_cuenta_bancaria' => $data['id_cuenta_bancaria'] ?? null,
                 'id_cuenta_detraccion' => $data['id_cuenta_detraccion'] ?? null,
                 'tipo_pago' => $tipoPagoEnum->value,
-                'evidencias' => ! empty($vNueEvidencias) ? json_encode(array_values($vNueEvidencias)) : null,
+                'evidencias' => ! empty($vNueEvidencias) ? array_values($vNueEvidencias) : null,
                 'log_cambios' => $logCambios,
+                'total_subtotal' => $newTotalSubtotal,
             ]);
 
             // Re-sincronizar detalles
-            ValorizacionCompraDetalle::where('id_valorizacion_compra', $id)->delete();
+            ValorizacionCompraData::delete_detalles_by_valorizacion($id);
 
             foreach ($data['detalles'] as $det) {
-                $loteGuia = LoteGuia::with('loteMineral')->find($det['id_lote_guia']);
+                $loteGuia = ValorizacionCompraData::find_lote_guia_con_mineral((int) $det['id_lote_guia']);
                 if (! $loteGuia || ! $loteGuia->loteMineral) {
                     throw new Exception("El lote guía ID {$det['id_lote_guia']} no fue encontrado.");
                 }
@@ -492,78 +375,96 @@ class ValorizacionCompraService
                     $oldInfo = $oldDetMap[$keyDet];
                     $cambiosDet = [];
 
-                    if (abs($oldInfo['inter'] - $inter) > 0.0001) {
+                    $oldInterRound = round((float) ($oldInfo['inter'] ?? 0), 4);
+                    $newInterRound = round((float) $inter, 4);
+                    if (abs($oldInterRound - $newInterRound) > 0.0001) {
                         $cambiosDet[] = [
                             'campo_bd' => 'inter',
-                            'campo' => 'Precio Internacional',
-                            'valor_anterior' => "\${$oldInfo['inter']}",
-                            'valor_nuevo' => "\${$inter}",
+                            'campo' => 'Internacional ($/Oz)',
+                            'valor_anterior' => '$ '.number_format($oldInterRound, 2),
+                            'valor_nuevo' => '$ '.number_format($newInterRound, 2),
                         ];
                     }
-                    if (abs($oldInfo['des_inter'] - $desInter) > 0.0001) {
+
+                    $oldDesInterRound = round((float) ($oldInfo['des_inter'] ?? 0), 4);
+                    $newDesInterRound = round((float) $desInter, 4);
+                    if (abs($oldDesInterRound - $newDesInterRound) > 0.0001) {
                         $cambiosDet[] = [
                             'campo_bd' => 'des_inter',
-                            'campo' => 'Descuento Internacional',
-                            'valor_anterior' => "\${$oldInfo['des_inter']}",
-                            'valor_nuevo' => "\${$desInter}",
+                            'campo' => 'Descuento Internacional ($/Oz)',
+                            'valor_anterior' => '$ '.number_format($oldDesInterRound, 2),
+                            'valor_nuevo' => '$ '.number_format($newDesInterRound, 2),
                         ];
                     }
-                    if (abs($oldInfo['recuperacion'] - $recuperacion) > 0.0001) {
+
+                    $oldRecRound = round((float) ($oldInfo['recuperacion'] ?? 0), 4);
+                    $newRecRound = round((float) $recuperacion, 4);
+                    if (abs($oldRecRound - $newRecRound) > 0.0001) {
                         $cambiosDet[] = [
                             'campo_bd' => 'recuperacion',
-                            'campo' => 'Recuperación',
-                            'valor_anterior' => "{$oldInfo['recuperacion']}%",
-                            'valor_nuevo' => "{$recuperacion}%",
+                            'campo' => 'Recuperación (%)',
+                            'valor_anterior' => number_format($oldRecRound, 2).' %',
+                            'valor_nuevo' => number_format($newRecRound, 2).' %',
                         ];
                     }
-                    if (abs($oldInfo['maquila'] - $maquila) > 0.0001) {
+
+                    $oldMaqRound = round((float) ($oldInfo['maquila'] ?? 0), 4);
+                    $newMaqRound = round((float) $maquila, 4);
+                    if (abs($oldMaqRound - $newMaqRound) > 0.0001) {
                         $cambiosDet[] = [
                             'campo_bd' => 'maquila',
-                            'campo' => 'Maquila',
-                            'valor_anterior' => "\${$oldInfo['maquila']}",
-                            'valor_nuevo' => "\${$maquila}",
+                            'campo' => 'Maquila ($/TMS)',
+                            'valor_anterior' => '$ '.number_format($oldMaqRound, 2),
+                            'valor_nuevo' => '$ '.number_format($newMaqRound, 2),
                         ];
                     }
-                    if (abs($oldInfo['consumo'] - $consumo) > 0.0001) {
+
+                    $oldConsRound = round((float) ($oldInfo['consumo'] ?? 0), 4);
+                    $newConsRound = round((float) $consumo, 4);
+                    if (abs($oldConsRound - $newConsRound) > 0.0001) {
                         $cambiosDet[] = [
                             'campo_bd' => 'consumo',
-                            'campo' => 'Consumo',
-                            'valor_anterior' => "\${$oldInfo['consumo']}",
-                            'valor_nuevo' => "\${$consumo}",
+                            'campo' => 'Consumo ($/TMS)',
+                            'valor_anterior' => '$ '.number_format($oldConsRound, 2),
+                            'valor_nuevo' => '$ '.number_format($newConsRound, 2),
                         ];
                     }
-                    if (abs($oldInfo['factor'] - $factor) > 0.0001) {
+
+                    $oldFactRound = round((float) ($oldInfo['factor'] ?? 1.0), 4);
+                    $newFactRound = round((float) $factor, 4);
+                    if (abs($oldFactRound - $newFactRound) > 0.0001) {
                         $cambiosDet[] = [
                             'campo_bd' => 'factor',
-                            'campo' => 'Factor',
-                            'valor_anterior' => "{$oldInfo['factor']}",
-                            'valor_nuevo' => "{$factor}",
+                            'campo' => 'Factor de Conversión',
+                            'valor_anterior' => number_format($oldFactRound, 2),
+                            'valor_nuevo' => number_format($newFactRound, 2),
                         ];
                     }
+
+                    $oldPtnRound = round((float) ($oldInfo['precio_por_tonelada'] ?? 0), 2);
+                    $newPtnRound = round((float) $ptn, 2);
+                    if (abs($oldPtnRound - $newPtnRound) > 0.01) {
+                        $cambiosDet[] = [
+                            'campo_bd' => 'precio_por_tonelada',
+                            'campo' => 'Precio por Tonelada (PTN)',
+                            'valor_anterior' => '$ '.number_format($oldPtnRound, 2),
+                            'valor_nuevo' => '$ '.number_format($newPtnRound, 2),
+                        ];
+                    }
+
+                    $oldSubRound = round((float) ($oldInfo['subtotal'] ?? 0), 2);
+                    $newSubRound = round((float) $subtotal, 2);
+                    if (abs($oldSubRound - $newSubRound) > 0.01) {
+                        $cambiosDet[] = [
+                            'campo_bd' => 'subtotal',
+                            'campo' => 'Subtotal de Lote',
+                            'valor_anterior' => '$ '.number_format($oldSubRound, 2),
+                            'valor_nuevo' => '$ '.number_format($newSubRound, 2),
+                        ];
+                    }
+
                     $logCambiosDetalle = $oldInfo['log_cambios'] ?? [];
                     if (! empty($cambiosDet)) {
-                        $oldPtnRound = round((float) ($oldInfo['precio_por_tonelada'] ?? 0), 2);
-                        $newPtnRound = round((float) $ptn, 2);
-                        if (abs($oldPtnRound - $newPtnRound) > 0.01) {
-                            $cambiosDet[] = [
-                                'campo_bd' => 'precio_por_tonelada',
-                                'campo' => 'Precio por Tonelada (PTN)',
-                                'valor_anterior' => '$ '.number_format($oldPtnRound, 2),
-                                'valor_nuevo' => '$ '.number_format($newPtnRound, 2),
-                            ];
-                        }
-
-                        $oldSubRound = round((float) ($oldInfo['subtotal'] ?? 0), 2);
-                        $newSubRound = round((float) $subtotal, 2);
-                        if (abs($oldSubRound - $newSubRound) > 0.01) {
-                            $cambiosDet[] = [
-                                'campo_bd' => 'subtotal',
-                                'campo' => 'Subtotal de Lote',
-                                'valor_anterior' => '$ '.number_format($oldSubRound, 2),
-                                'valor_nuevo' => '$ '.number_format($newSubRound, 2),
-                            ];
-                        }
-
                         $logCambiosDetalle[] = [
                             'fecha_hora' => now()->toDateTimeString(),
                             'update_at' => now()->toIso8601String(),
@@ -593,7 +494,7 @@ class ValorizacionCompraService
             }
 
             // Re-sincronizar transacciones de anticipo (UPDATE en sitio preservando historial de auditoria)
-            $transaccionesExistentes = TransaccionAnticipoProveedor::where('id_valorizacion_compra', $id)->get();
+            $transaccionesExistentes = ValorizacionCompraData::get_transacciones_by_valorizacion($id);
             $transaccionesPorIdAnticipo = [];
             foreach ($transaccionesExistentes as $t) {
                 $transaccionesPorIdAnticipo[$t->id_anticipo_proveedor] = $t;
@@ -605,7 +506,7 @@ class ValorizacionCompraService
             if ($usaAnticipos) {
                 $idsAnticiposRecibidos = [];
                 foreach ($data['anticipos'] as $antItem) {
-                    $anticipo = AnticipoProveedor::find($antItem['id_anticipo_proveedor']);
+                    $anticipo = ValorizacionCompraData::find_anticipo_proveedor((int) $antItem['id_anticipo_proveedor']);
                     if (! $anticipo) {
                         throw new Exception("Anticipo ID {$antItem['id_anticipo_proveedor']} no encontrado.");
                     }
@@ -645,7 +546,7 @@ class ValorizacionCompraService
 
                 // 2. Procesar transacciones conservadas y nuevas
                 foreach ($idsAnticiposRecibidos as $idAnticipoRecibido => $montoRetiradoNuevo) {
-                    $anticipo = AnticipoProveedor::find($idAnticipoRecibido);
+                    $anticipo = ValorizacionCompraData::find_anticipo_proveedor((int) $idAnticipoRecibido);
                     $transaccionPrevia = $transaccionesPorIdAnticipo[$idAnticipoRecibido] ?? null;
 
                     if ($transaccionPrevia) {
@@ -785,7 +686,7 @@ class ValorizacionCompraService
     {
         DB::beginTransaction();
         try {
-            $valorizacion = ValorizacionCompra::with('transaccionesAnticipo')->find($id);
+            $valorizacion = ValorizacionCompraData::find_model($id);
             if (! $valorizacion) {
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
@@ -796,7 +697,7 @@ class ValorizacionCompraService
 
             // Procesar cada transacción de anticipo
             foreach ($valorizacion->transaccionesAnticipo as $transaccion) {
-                $anticipo = AnticipoProveedor::lockForUpdate()->find($transaccion->id_anticipo_proveedor);
+                $anticipo = ValorizacionCompraData::find_anticipo_proveedor((int) $transaccion->id_anticipo_proveedor);
                 if (! $anticipo) {
                     throw new Exception("El anticipo ID {$transaccion->id_anticipo_proveedor} no existe.");
                 }
@@ -921,26 +822,30 @@ class ValorizacionCompraService
     }
 
     /**
-     * Anular una valorización (y restituir saldos de anticipos si estaba Aprobada)
+     * Anular o eliminar una valorización (y restituir saldos de anticipos si estaba Aprobada)
+     *
+     * @param  array<int,\Illuminate\Http\UploadedFile>|\Illuminate\Http\UploadedFile[]  $archivosEvidencia
      */
-    public static function anular_valorizacion(int $id, int $idEmpleadoAnulacion): array
-    {
+    public static function anular_valorizacion(
+        int $id,
+        int $idEmpleadoAnulacion,
+        string $motivoAnulacion,
+        string $tipoEliminacion = 'logica',
+        array $archivosEvidencia = []
+    ): array {
         DB::beginTransaction();
         try {
-            $valorizacion = ValorizacionCompra::with('transaccionesAnticipo')->find($id);
+            $valorizacion = ValorizacionCompraData::find_model($id);
             if (! $valorizacion) {
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
-            if ($valorizacion->estado->value === EstadoValorizacionCompra::Anulado->value) {
-                return ApiResponse::error('La valorización ya se encuentra en estado Anulado.');
-            }
+            $codigoDisplay = $valorizacion->correlativo ?? $valorizacion->numero_correlativo;
 
-            $estabaAprobado = $valorizacion->estado->value === EstadoValorizacionCompra::Aprobado->value;
-
+            // Restituir anticipos si alguna transacción de la valorización estaba Aprobada
             foreach ($valorizacion->transaccionesAnticipo as $transaccion) {
                 if ($transaccion->estado->value === EstadoTransaccionAnticipo::Aprobado->value) {
-                    $anticipo = AnticipoProveedor::lockForUpdate()->find($transaccion->id_anticipo_proveedor);
+                    $anticipo = ValorizacionCompraData::find_anticipo_proveedor((int) $transaccion->id_anticipo_proveedor);
                     if ($anticipo) {
                         $montoRestituir = (float) $transaccion->monto_retirado;
                         $saldoAnterior = (float) $anticipo->saldo_actual;
@@ -974,8 +879,8 @@ class ValorizacionCompraService
                             'id_empleado' => $idEmpleadoAnulacion,
                             'fecha_hora' => now()->toDateTimeString(),
                             'update_at' => now()->toIso8601String(),
-                            'accion' => 'Restitución de Saldo por Anulación',
-                            'motivo' => "Restitución de saldo por anulación de Valorización {$valorizacion->numero_correlativo} - Monto Restituido: \$ ".number_format($montoRestituir, 2),
+                            'accion' => 'Restitución de Saldo por Anulación/Eliminación',
+                            'motivo' => "Restitución de saldo por anulación/eliminación de Valorización {$codigoDisplay} - Monto Restituido: \$ ".number_format($montoRestituir, 2),
                             'cambios' => $cambiosHeader,
                         ];
 
@@ -987,40 +892,40 @@ class ValorizacionCompraService
                     }
                 }
 
-                $estadoAnteriorTrans = $transaccion->estado->value ?? '—';
-                $logTrans = $transaccion->log_cambios ?? [];
-                if (! is_array($logTrans)) {
-                    $logTrans = json_decode((string) $logTrans, true) ?? [];
+                if ($tipoEliminacion === 'logica') {
+                    ValorizacionCompraData::anular_transaccion_anticipo($transaccion, $idEmpleadoAnulacion, (string) $codigoDisplay);
                 }
-                $logTrans[] = [
-                    'id_empleado' => $idEmpleadoAnulacion,
-                    'fecha_hora' => now()->toDateTimeString(),
-                    'update_at' => now()->toIso8601String(),
-                    'accion' => 'Anulación de Transacción de Anticipo',
-                    'motivo' => "Transacción anulada por anulación de Valorización {$valorizacion->numero_correlativo}",
-                    'cambios' => [
-                        [
-                            'campo_bd' => 'estado',
-                            'campo' => 'Estado Transacción',
-                            'valor_anterior' => $estadoAnteriorTrans,
-                            'valor_nuevo' => EstadoTransaccionAnticipo::Anulado->value,
-                        ],
-                    ],
-                ];
-
-                $transaccion->update([
-                    'estado' => EstadoTransaccionAnticipo::Anulado->value,
-                    'log_cambios' => $logTrans,
-                ]);
             }
 
+            if ($tipoEliminacion === 'fisica') {
+                ValorizacionCompraData::delete_transacciones_by_valorizacion($id);
+                ValorizacionCompraData::delete_detalles_by_valorizacion($id);
+                ValorizacionCompraData::delete_model($valorizacion);
+
+                DB::commit();
+
+                return ApiResponse::success(null, 'Valorización eliminada físicamente de forma permanente.');
+            }
+
+            // Eliminación Lógica
+            if ($valorizacion->estado->value === EstadoValorizacionCompra::Anulado->value) {
+                return ApiResponse::error('La valorización ya se encuentra en estado Anulado.');
+            }
+
+            $evidenciasAnulacionGuardadas = ! empty($archivosEvidencia)
+                ? ArchivoHelper::guardarArchivos('valorizaciones_anuladas', $archivosEvidencia)
+                : [];
+
             $logCambios = $valorizacion->log_cambios ?? [];
+            if (! is_array($logCambios)) {
+                $logCambios = json_decode((string) $logCambios, true) ?? [];
+            }
             $logCambios[] = [
                 'fecha_hora' => now()->toDateTimeString(),
                 'update_at' => now()->toIso8601String(),
                 'id_empleado' => $idEmpleadoAnulacion,
-                'accion' => 'Anulación de Valorización',
-                'motivo' => 'Anulación de la valorización de compra',
+                'accion' => 'Anulación Lógica de Valorización',
+                'motivo' => $motivoAnulacion,
                 'cambios' => [
                     [
                         'campo_bd' => 'estado',
@@ -1028,11 +933,21 @@ class ValorizacionCompraService
                         'valor_anterior' => $valorizacion->estado->value,
                         'valor_nuevo' => EstadoValorizacionCompra::Anulado->value,
                     ],
+                    [
+                        'campo_bd' => 'motivo_anulacion',
+                        'campo' => 'Motivo de Anulación',
+                        'valor_anterior' => null,
+                        'valor_nuevo' => $motivoAnulacion,
+                    ],
                 ],
             ];
 
             $valorizacion->update([
                 'estado' => EstadoValorizacionCompra::Anulado->value,
+                'id_empleado_anulacion' => $idEmpleadoAnulacion,
+                'fecha_hora_anulacion' => now(),
+                'motivo_anulacion' => $motivoAnulacion,
+                'evidencias_anulacion' => ! empty($evidenciasAnulacionGuardadas) ? json_encode(array_values($evidenciasAnulacionGuardadas)) : null,
                 'log_cambios' => $logCambios,
             ]);
 
@@ -1040,11 +955,120 @@ class ValorizacionCompraService
 
             $valDetalle = ValorizacionCompraData::get_valorizacion_by_id($id);
 
-            return ApiResponse::success($valDetalle, 'Valorización anulada correctamente'.($estabaAprobado ? ' y saldos restituidos.' : '.'));
+            return ApiResponse::success($valDetalle, 'Valorización anulada lógicamente correctamente.');
         } catch (Exception $e) {
             DB::rollBack();
 
             return ApiResponse::error('Error al anular valorización: '.$e->getMessage());
         }
+    }
+
+    private static function obtenerEtiquetaCuenta(?int $idCuenta): string
+    {
+        if (! $idCuenta) {
+            return '—';
+        }
+        $c = DB::table('cuenta_bancaria_proveedor as cb')
+            ->leftJoin('banco as b', 'b.id', '=', 'cb.id_banco')
+            ->where('cb.id', $idCuenta)
+            ->select('cb.numero_cuenta', 'b.nombre as banco_nombre', 'b.abreviatura as banco_abrev')
+            ->first();
+        if (! $c) {
+            return "ID #{$idCuenta}";
+        }
+        $bancoStr = $c->banco_abrev ?: ($c->banco_nombre ?: '');
+
+        return ! empty($bancoStr) ? "{$bancoStr} - {$c->numero_cuenta}" : $c->numero_cuenta;
+    }
+
+    private static function procesarAuditoriaDetallesEdicion(int $idValorizacion, array $detalles): array
+    {
+        $oldDetalles = ValorizacionCompraDetalle::where('id_valorizacion_compra', $idValorizacion)->get();
+        $oldDetMap = [];
+        foreach ($oldDetalles as $od) {
+            $lg = LoteGuia::with('loteMineral')->find($od->id_lote_guia);
+            $corr = $lg && $lg->loteMineral ? ($lg->loteMineral->correlativo ?? $lg->loteMineral->numero_correlativo) : "Lote #{$od->id_lote_guia}";
+            $key = "{$od->id_lote_guia}_{$od->elemento_quimico->value}";
+            $oldDetMap[$key] = [
+                'correlativo' => $corr,
+                'elemento' => $od->elemento_quimico->value,
+                'inter' => (float) $od->inter,
+                'des_inter' => (float) $od->des_inter,
+                'recuperacion' => (float) $od->recuperacion,
+                'maquila' => (float) $od->maquila,
+                'consumo' => (float) $od->consumo,
+                'factor' => (float) $od->factor,
+                'precio_por_tonelada' => (float) $od->precio_por_tonelada,
+                'subtotal' => (float) $od->subtotal,
+                'log_cambios' => $od->log_cambios ?? [],
+            ];
+        }
+
+        $newDetMap = [];
+        $newTotalSubtotal = 0;
+        foreach ($detalles as $det) {
+            $lg = LoteGuia::with('loteMineral')->find($det['id_lote_guia']);
+            $corr = $lg && $lg->loteMineral ? ($lg->loteMineral->correlativo ?? $lg->loteMineral->numero_correlativo) : "Lote #{$det['id_lote_guia']}";
+            $elem = $det['elemento_quimico'];
+            $key = "{$det['id_lote_guia']}_{$elem}";
+            $newDetMap[$key] = [
+                'correlativo' => $corr,
+                'elemento' => $elem,
+                'inter' => (float) ($det['inter'] ?? 0),
+                'des_inter' => (float) ($det['des_inter'] ?? 0),
+                'recuperacion' => (float) ($det['recuperacion'] ?? 0),
+                'maquila' => (float) ($det['maquila'] ?? 0),
+                'consumo' => (float) ($det['consumo'] ?? 0),
+                'factor' => (float) ($det['factor'] ?? 1.0),
+            ];
+
+            if ($lg && $lg->loteMineral) {
+                $lote = $lg->loteMineral;
+                $pesoNeto = $lg->peso_neto !== null ? (float) $lg->peso_neto : (float) $lote->peso_neto;
+                $pesoSeco = $pesoNeto * (1 - ((float) $lote->ley_humedad / 100));
+                $elementoEnumTmp = ElementoQuimicoValorizacion::tryFrom($elem) ?? ElementoQuimicoValorizacion::Oro;
+                $leyTmp = $elementoEnumTmp === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
+                $ptnTmp = (((float) ($det['inter'] ?? 0) - (float) ($det['des_inter'] ?? 0)) * $leyTmp * ((float) ($det['recuperacion'] ?? 0) / 100) - (float) ($det['maquila'] ?? 0) - (float) ($det['consumo'] ?? 0)) * (float) ($det['factor'] ?? 1.0);
+                $subtotalTmp = ($ptnTmp * $pesoSeco) / 1000;
+                $newTotalSubtotal += round($subtotalTmp, 2);
+            }
+        }
+
+        $cambios = [];
+        $oldTotalSubtotal = round((float) $oldDetalles->sum('subtotal'), 2);
+        if (abs($oldTotalSubtotal - $newTotalSubtotal) > 0.01) {
+            $cambios[] = [
+                'campo_bd' => 'total_subtotal',
+                'campo' => 'Total Valorización',
+                'valor_anterior' => '$ '.number_format($oldTotalSubtotal, 2),
+                'valor_nuevo' => '$ '.number_format($newTotalSubtotal, 2),
+            ];
+        }
+
+        foreach ($oldDetMap as $key => $oldInfo) {
+            if (! isset($newDetMap[$key])) {
+                $cambios[] = [
+                    'campo_bd' => 'lote_removido',
+                    'campo' => 'Lote en valorización removido',
+                    'valor_anterior' => "{$oldInfo['correlativo']} ({$oldInfo['elemento']})",
+                    'valor_nuevo' => '—',
+                ];
+            }
+        }
+
+        foreach (array_diff_key($newDetMap, $oldDetMap) as $key => $newInfo) {
+            $cambios[] = [
+                'campo_bd' => 'lote_agregado',
+                'campo' => 'Lote en valorización agregado',
+                'valor_anterior' => '—',
+                'valor_nuevo' => "{$newInfo['correlativo']} ({$newInfo['elemento']})",
+            ];
+        }
+
+        return [
+            'cambios' => $cambios,
+            'new_total_subtotal' => $newTotalSubtotal,
+            'old_det_map' => $oldDetMap,
+        ];
     }
 }
