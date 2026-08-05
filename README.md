@@ -1,126 +1,174 @@
-# Contexto de Negocio y Procesos Operativos
+# Fabero — API
 
-Este sistema es un ERP diseñado específicamente para resolver los desafíos de compra y venta de mineral de una planta de beneficio.
+API del ERP para una planta de beneficio de mineral de oro y plata. Digitaliza el ciclo completo: compra de mineral a proveedores, recepción, análisis de leyes, blending, valorización, contabilidad y despacho a plantas de destino.
 
-A continuación, se detalla **qué hace el sistema por los usuarios** y la lógica de negocio que resuelve.
+## Módulos
 
----
+- **Configuración y accesos**: Empresas, Sucursales, Bancos, Marcas, Organigrama, Empleados, Roles, Cuentas, Perfil, Login, Modo Auditoría
+- **Maestros de mineral**: Proveedores, Concesiones mineras, Condiciones Comerciales Proveedor, Cuentas Bancarias (Proveedor / Empresa / Planta Destino), Empresas Transporte, Vehículos, Conductores, Encargados de Muestra, Zonas de Origen, Motivos de Ingreso, Plantas Destino
+- **Recepción**: Recepción Visitas, Guías Primer Tramo, Recepción Mineral, Recepción Unidades (TicketBalanza)
+- **Análisis y procesamiento**: Gestión de Leyes, Cierre de Leyes, Blending
+- **Compra y contabilidad**: Anticipos Proveedor, Valorización Compra, Contabilidad Compra (Comprobantes + Pagos)
+- **Catálogos globales**: Tipo de Cambio, Ubigeo (departamentos / provincias / distritos)
 
-## 1. Estructura Organizativa y Operativa
+## Stack
 
-El sistema necesita mapear quién opera, dónde está el inventario y dónde se consumen los recursos:
+- PHP 8.2 / Laravel 12
+- JWT: `php-open-source-saver/jwt-auth`
+- WebSockets: Laravel Reverb (eventos en tiempo real)
+- Dev local: Laravel Octane + FrankenPHP
+- DB: MySQL con SQL crudo (`DB::select`, `DB::insertGetId`) + Eloquent con métodos estáticos
+- Análisis estático: PHPStan (Larastan)
 
-- **Empresas y Empleados**: Gestiona las entidades corporativas. El personal administrativo y logístico que usa el software (usuarios con cuentas de acceso y roles) se vincula a una **Empresa** matriz.
+## Arquitectura: Hybrid Modular
 
----
+No usa la estructura estándar de Laravel. Cada proceso de negocio es un módulo en `app/Modules/<Dominio>/`. Las entidades compartidas viven en una capa global en `app/Controllers/`, `app/Endpoints/`, `app/Data/`, `app/Services/`.
 
-## 📦 Módulos del Sistema
+### Capas
 
-### Configuración
+| Capa | Ruta | Qué hace |
+|---|---|---|
+| Endpoints | `app/Modules/<D>/XEndpoints.php` o `app/Endpoints/XEndpoints.php` | Define rutas. |
+| Controllers | `app/Modules/<D>/Controller/` o `app/Controllers/` | Valida request y orquesta. Sin SQL. |
+| Services | `app/Modules/<D>/Service/` o `app/Services/` | Lógica de negocio. Sin SQL directo. |
+| Data | `app/Modules/<D>/Data/` o `app/Data/` | Único lugar con SQL. |
+| Models | `app/Models/` | Métodos estáticos para insert/update/select. |
 
-- `empresas`
-- `proveedores-mineros`
+### Capa global
 
-### Personal y Accesos
+Para catálogos recurrentes (empleados, proveedores, marcas, ubigeo, tipos de vehículo, motivos de ingreso, sucursales, tipos de cambio, lotes disponibles, cuentas bancarias filtradas por moneda, etc.) usar `AuxController` + `AuxEndpoints` (`/api/aux/...`). Prohibido duplicar endpoints genéricos dentro de los módulos.
 
-- `organigrama`
-- `personal`
-- `roles`
-- `cuentas`
-- `login`
-- `perfil`
+`ArchivoController` / `ArchivoEndpoints` gestionan adjuntos. `MenuNavController` / `MenuNavEndpoints` construyen la navegación por rol. `ConcesionesController` / `ConcesionesEndpoints` también son globales (catálogo de concesiones mineras).
 
----
+### Enums
 
-## 🏗 Arquitectura de la API: "Hybrid Modular Architecture"
+En `app/Shared/Enums/`. **Cada proceso físico tiene su Enum dedicado** dentro de su subcarpeta. Ejemplo: `ValorizacionCompra/EstadoValorizacionCompra` y `ContabilidadCompra/EstadoComprobanteCompra` NO se reciclan.
 
-El proyecto no sigue la estructura monolítica estándar de Laravel. Implementa un patrón de **Módulos Independientes** que conviven con una **Capa Global de Datos y Servicios** para evitar duplicidad de código.
+Enums genéricos en `_Generic/`: `TipoMineral`, `TipoProducto`, `Moneda`, `MetodoPago`, `Periodo`, `EstadoBase`, `TipoEntidad`, `TipoCarga`, `TipoComprobante`, `TipoOrigen`, `MotivoTraslado`, `CondicionIngreso`, `ElementoQuimicoValorizacion`, `EstadoAnticipoProveedor`, `EstadoLeyes`, `EstadoPesaje`, `EstadoVisita`.
 
-### 1. `app/Modules/` - El Núcleo de Dominio
+### Respuestas
 
-Cada carpeta dentro de `Modules` representa un micro-servicio interno enfocado en un proceso de negocio específico (ej. `Cotizaciones`, `RequerimientosAlmacenAtencion`).
-- **Endpoints (`XEndpoints.php`)**: Definición manual de rutas tipo API.
-- **Controllers**: Validadores de entrada (Requests) y orquestadores del flujo.
-- **Services**: Contenedores de la **lógica de negocio exclusiva del módulo**.
-- **Data (Local)**: Consultas SQL específicas que solo atañen al módulo.
+SIEMPRE `App\Shared\Responses\ApiResponse::success()` o `::error()`. Helper estático, estructura `{success, data, message, errors?}`.
 
----
+## Reglas críticas
 
-### 2. Capa Global: Servicios y Datos Compartidos (`app/Services/` y `app/Data/`)
+1. **Services sin acceso a BD**. Toda consulta va por la capa Data. El Service solo orquesta.
+2. **`DB::transaction()`** en cualquier flujo que toque múltiples tablas.
+3. **Sin reutilización forzada**. Registrar y Actualizar son métodos separados aunque compartan partes. Mejor duplicación clara que un "universal" complejo.
+4. **Arrays como parámetro** solo en cabecera+detalle o registros masivos. Si un método recibe `array`, documentar con `@param array $x` describiendo cada clave.
+5. **DocBlocks** breves, sin `@param` para primitivos (`int`, `string`, etc.). Solo en arrays y objetos.
+6. **Trazabilidad obligatoria (`RES_CambiosLog`)**: todo `log_cambios` debe generarse con `App\Shared\Responses\_Generic\RES_CambiosLog::crear($idEmpleado, $motivo, $cambios)`. Estructura: `{id_empleado, motivo, update_at, cambios[{campo_bd, campo, valor_anterior, valor_nuevo}]}`.
+7. **Archivos (`ArchivoHelper`)**: todo guardado de adjuntos debe canalizarse vía `App\Shared\Helpers\ArchivoHelper::guardarArchivos('carpeta_destino', $archivos)`. Guarda en `storage/app/public/{carpeta}/dd-mm-yy/` y retorna `{url, path_relativo, nombre_original, extension}`.
+8. **Sin `migrations` ni `seeders` de Laravel**. Las tablas y datos iniciales se crean con SQL plano ejecutado directamente sobre el motor. La carpeta `database/` no existe en el proyecto.
+9. **Sin estado global estático**. La API corre con Laravel Octane (FrankenPHP), que mantiene la app en memoria entre requests. Propiedades estáticas mutables, singletons con `Request` o `Container` inyectado en el constructor, o estado guardado en `register()`/`boot()` de providers **causan fugas de memoria y bugs entre requests**. Los Services deben usar métodos estáticos que reciben todo por parámetro y devuelven respuestas. Nada de `$this->cache = []` a nivel de clase.
 
-Existen entidades transversales que son requeridas constantemente por múltiples módulos (ej. consultar un producto, actualizar el stock). Para no repetir código, esta lógica se centraliza globalmente:
+## Reglas de Base de Datos
 
-#### A. Controladores Globales (`app/Controllers/`)
-Capa centralizada para orquestar flujos y utilitarios genéricos de la aplicación.
-*   **`AuxController.php`**: El *Hub* centralizado que despacha catálogos generales, búsquedas concurrentes y poblamiento de dropdowns para evitar redundancia de endpoints en módulos locales.
-*   **`ArchivoController.php`**: Orquesta la carga, validación física y almacenamiento seguro de archivos adjuntos y evidencias multimedia.
-*   **`MenuNavController.php`**: Solicita la estructura jerárquica de la navegación del usuario en base a sus privilegios de cuenta.
+Aplican a **toda tabla nueva o modificada**. Si el código existente las viola, corregirlo.
 
-#### B. Endpoints Globales (`app/Endpoints/`)
-Define el ruteo genérico de consumo transversal del ERP.
-*   **`AuxEndpoints.php`**: Rutas prefijadas con `/api/aux/...` para catálogos y selectores.
-*   **`ArchivoEndpoints.php`**: Rutas dedicadas para subida y descarga de archivos de evidencias.
-*   **`MenuNavEndpoints.php`**: Expone el endpoint que resuelve la navegación dinámica basada en roles.
+1. **No se usan Foreign Keys, solo `INDEX`**. Las relaciones se garantizan por aplicación, no por motor. Esto da flexibilidad y velocidad durante el desarrollo. Toda tabla nueva debe declarar sus índices de búsqueda explícitamente:
+   ```sql
+   CREATE TABLE ejemplo_tabla (
+       id INT PRIMARY KEY AUTO_INCREMENT,
+       id_referencia INT NOT NULL,
+       nombre VARCHAR(128) NOT NULL,
+       INDEX (id_referencia),
+       INDEX (nombre)
+   );
+   ```
+2. **No se usan `migrations` ni `seeders` de Laravel**. Las tablas y datos iniciales se crean con SQL plano ejecutado directamente sobre el motor (`CREATE TABLE`, `INSERT INTO ...`). El control del esquema es directo, sin overhead de sincronización.
+3. **Auditoría obligatoria de tablas nuevas**:
+   - `id INT PRIMARY KEY AUTO_INCREMENT` siempre.
+   - `INDEX` por cada columna usada en `WHERE` / `JOIN`.
+   - `INT` para IDs y FKs. `VARCHAR` con largo definido para textos. `DECIMAL` para montos y factores numéricos. `DATE` / `DATETIME` para fechas.
+   - Si requiere borrado lógico, incluir campo `estado` (char/varchar) en lugar de `DELETE`.
 
-#### C. Acceso a Datos Globales (`app/Data/`)
-Repositorio unificado de consultas SQL crudas y mapeos de datos para entidades compartidas.
-*   **`EmpleadosData.php`, `EmpresasData.php`, `MarcasData.php`, `ProveedoresData.php`, `MenuNavData.php`**: Abstracciones generales de lectura de tablas maestras.
+## Flujo de negocio
 
-#### D. Servicios Globales (`app/Services/`)
-Contenedores de lógica de negocio transaccional transversal y motores de cálculo.
-*   **`MenuNavService.php`**: Construye dinámicamente y de forma recursiva el árbol de menús según permisos del usuario.
+1. **Setup del proveedor**: `Proveedores` + `Concesiones` (concesiones mineras del proveedor) + `CondicionesComercialesProveedor` + `CuentasBancariasProveedor`.
+2. **Anticipo**: `AnticiposProveedor` — adelantos con su `TransaccionAnticipoProveedor`.
+3. **Recepción de mineral** (en orden):
+   - `RecepcionVisitas` — visita del proveedor a la planta.
+   - `GuiasPrimerTramo` — guía del primer tramo del transporte.
+   - `RecepcionMineral` — recepción física con su `LoteMineral`.
+   - `RecepcionUnidades` — registro de unidades (vehículo) y `TicketBalanza` (peso en báscula).
+4. **Análisis de leyes**: `GestionLeyes` (leyes por lote) → `CierreLeyes` (cierre con leyes finales). Modelos relacionados: `AnalisisMineral`, `Analito`, `GrupoAnalisis`, `GrupoAnalisisDetalle`.
+5. **Blending**: `Blending` combina `LoteMineral` para obtener una ley objetivo. Modelos: `Blending`, `BlendingDetalle`.
+6. **Valorización**: `ValorizacionCompra` calcula el monto a pagar al proveedor según leyes, pesos, deducciones y anticipos (consume el saldo del anticipo). Modelos: `ValorizacionCompra`, `ValorizacionCompraDetalle`.
+7. **Contabilidad**: `ContabilidadCompra` registra `ComprobanteCompra` y los `PagoComprobanteCompra` (puede ser total o parcial, multi-moneda, multi-cuenta).
+8. **Despacho**: a `PlantasDestino` (plantas receptoras del mineral procesado). Modelos: `PlantaDestino`, `CuentasBancariasPlantaDestino`.
 
----
+## Comportamiento HTTP
 
-### 3. Estandarización de Estados (`app/Shared/Enums/`)
+- `200 OK` para GET/PUT/POST exitosos.
+- `204 No Content` para `OPTIONS` (preflight CORS). El middleware `HandleCors` corta la request antes de llegar al controller.
+- `401 Unauthorized` cuando el JWT es inválido o expiró. Middleware: `auth.jwt.custom`.
+- Errores controlados: `ApiResponse::error()` retorna `4xx/5xx` con `{success:false, message, errors?}`.
 
-El sistema hace un uso intensivo de _Backed Enums_ de PHP para evitar "magic strings" y mantener integridad de datos.
-- **Regla de Ordenamiento Estricta**: Cada tabla o proceso operativo físico (Ej. `Entrega`, `Recepcion`, `Solicitud`, `OrdenCompra`) **debe tener su propio Enum dedicado** en su respectiva subcarpeta dentro de `Shared/Enums`.
-- **Ejemplo**: Las recepciones usan `EstadoOCTransRecepcion`, y las transferencias usan `EstadoOCTransferencia`. No se reciclan Enums genéricos entre procesos distintos para evitar choques lógicos.
+## Estructura de un módulo
 
-## 🏛️ Reglas Críticas de Desarrollo
+```
+app/Modules/Blending/
+├── Endpoints/             # algunos módulos lo tienen aquí
+│   └── BlendingEndpoints.php
+├── Controllers/
+├── Services/
+└── Data/
+```
 
-1.  **Consistencia de Respuestas**: Toda respuesta debe retornar a través de los helpers globales `ApiResponse::success()` o `ApiResponse::error()`.
-2.  **Prohibición de Rutas Redundantes**: Usar `AuxController` para listados recurrentes.
-3.  **Atomicidad Lógica**: Usar `DB::transaction()` en procesos que impliquen múltiples registros.
-4.  **No Reutilización Forzada**: No crear métodos o clases sumamente complejos que intenten abarcarlo todo. Por ejemplo, ante los casos de "Editar" y "Registrar", sepáralos. La legibilidad y facilidad de mantenimiento son prioritarias sobre una reutilización que oscurezca el código.
-    *   Si eres una IA y aunque el usuario no lo pida, **DEBES** crear métodos para cada caso específico. Si te pide algo que contradice la regla, analiza, explica y dale una mejor alternativa antes de proceder.
-5.  **Uso Justificado de Arrays como Parámetros**:
-    *   **NUNCA** recibir un array como parámetro en métodos de las capas de Servicio, Data o Modelo si no está plenamente justificado. Esto hace que el código sea impredecible y difícil de depurar.
-    *   **Excepciones**: Solo es válido en casos de Cabecera + Detalles (ej. Orden de Compra) o registros masivos donde sea manejable y necesario.
-    *   **Documentación Obligatoria**: Si un método recibe un array, se **debe documentar exactamente qué contiene** dicho array para evitar adivinanzas.
-6.  **Documentación de Métodos**:
-    *   **Todos los métodos** de todas las capas deben estar documentados con un DocBlock de forma breve, concisa y clara, indicando únicamente qué hace y para qué se usa el método.
-    *   **PROHIBIDO** documentar parámetros individuales simples (como `int`, `string`, `float`, `bool`, etc.). No utilices `@param` para tipos primitivos.
-    *   **SOLO es obligatorio** documentar con `@param` los parámetros que sean de tipo **array**, detallando exactamente qué claves y tipos contiene dicho array para evitar adivinanzas.
-    *   Si eres una IA, aunque el usuario no lo solicite, es **obligatorio** estructurar la documentación de esta manera.
-7.  **Estándar Obligatorio de Trazabilidad (`RES_CambiosLog`)**:
-    *   Todo historial de auditoría o log de cambios (`log_cambios`) almacenado en la base de datos **DEBE** seguir estrictamente la estructura normalizada mediante la clase auxiliar `App\Shared\Responses\_Generic\RES_CambiosLog::crear($idEmpleado, $motivo, $cambios)`:
-        - `id_empleado`: ID del empleado/usuario que realiza la acción (`int`).
-        - `motivo`: Descripción o acción realizada (`string | null`).
-        - `update_at`: Fecha y hora en formato YYYY-MM-DD HH:mm:ss (`string`).
-        - `cambios`: Arreglo de objetos `{ campo_bd, campo, valor_anterior, valor_nuevo }`.
-8.  **Gestión Estándar de Archivos (`ArchivoHelper`)**:
-    *   Todo procesamiento y guardado seguro de archivos en el backend **DEBE** canalizarse a través de `App\Shared\Helpers\ArchivoHelper::guardarArchivos('carpeta_destino', $archivos)`.
-    *   Guarda los archivos en el disco público dentro de `storage/app/public/{carpeta_destino}/dd-mm-yy/`.
-    *   Retorna un arreglo normalizado con los metadatos: `{ url, path_relativo, nombre_original, extension }`.
+Módulos más simples (sin subcarpeta `Endpoints/`):
+```
+app/Modules/Sucursales/
+├── SucursalesEndpoints.php
+├── Controller/
+├── Service/
+└── Data/
+```
 
+## Ejecución local
 
-## ⚙️ Ejecución
+NO usar `php artisan serve` (single-threaded, re-boot por request). Usar Octane con **al menos `--workers=N`** igual al número de núcleos para evitar que las requests se encolen.
 
-1. Configurar el archivo `.env`
-2. `composer install`
-3. `php artisan key:generate`
-4. `php artisan storage:link` (Crítico para que los archivos multimedia y adjuntos sean públicos).
-5. `php artisan serve`
-6. `php artisan reverb:start` (En una terminal separada, para que funcionen los eventos en tiempo real)
+Setup inicial (una vez por máquina):
 
----
+```bash
+composer install
+php artisan key:generate
+php artisan storage:link
+php artisan octane:install --server=frankenphp
+```
 
-## 🤖 Comandos Obligatorios para IA
-> [!IMPORTANT]
-> Después de realizar cualquier cambio en el código de la API, es **OBLIGATORIO** ejecutar el siguiente comando de análisis estático:
-> ```bash
-> ./vendor/bin/phpstan
-> ```
-> Esto garantiza que la lógica, los tipos de PHP y las convenciones del sistema se mantengan íntegras.
+Diario (3 terminales):
+
+```bash
+# T1 — API
+php artisan octane:start --workers=10
+
+# T2 — WebSockets
+php artisan reverb:start
+
+# T3 — Frontend
+cd ../fabero-front && npm run dev
+```
+
+Con hot-reload: `php artisan octane:start --workers=10 --watch` (requiere `npm i -D chokidar`).
+
+### Comandos Octane
+
+| Comando | Uso |
+|---|---|
+| `php artisan octane:reload` | Aplica cambios sin reiniciar el server |
+| `php artisan octane:stop` | Detiene el server |
+| `php artisan octane:status` | Estado del server |
+
+## Reglas para IA
+
+1. **Leer este README completo antes de actuar.** Es la fuente de verdad del proyecto. Si el usuario da contexto que contradice esto, avisar antes de cambiar nada.
+2. **Verificar versiones en `composer.json`** antes de usar APIs de librerías. Si hay duda sobre comportamiento actual, **buscar en internet** — el entrenamiento del modelo puede estar desactualizado o diferir con docs vigentes.
+3. **No commitear ni hacer push** sin que el usuario lo pida explícitamente.
+4. **No alterar la base de datos** (tablas, registros, SQL directo). Indicar al usuario qué debe correr o modificar.
+5. **No usar `php artisan serve`**. Usar Octane con `--workers=N`.
+6. Después de cualquier cambio: `./vendor/bin/phpstan`. Si Octane corre, también `php artisan octane:reload`.
+7. **Cuestionar reusos forzados**. Si piden "una función que sirva para X e Y", proponer separar antes de implementar.
+8. Si una idea rompe alguna regla de este documento, plantear la alternativa antes de codear.
+9. **Aplicar las reglas de este README aunque el código existente las viole.** Si encontrás un Service que consulta la BD directo, un Controller con SQL, una tabla sin `INDEX` en columnas de búsqueda, estado guardado en propiedades estáticas, o cualquier otra violación: corregirlo (con autorización del usuario). No perpetuar malas prácticas por seguir el patrón del archivo de al lado. Si la refactorización es grande, proponer un plan antes de hacerla.
