@@ -22,5 +22,6 @@ class Empleado extends Model
         'fecha_nacimiento',
         'path_foto',
         'estado',
+        'autoriza_ingreso_unidades',
     ];
 }

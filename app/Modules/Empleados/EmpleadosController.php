@@ -66,6 +66,7 @@ class EmpleadosController
             'pasaporte' => 'nullable|string|max:20',
             'fecha_nacimiento' => 'nullable|date',
             'path_foto' => 'nullable|image|mimes:jpg,png,jpeg|max:2048',
+            'autoriza_ingreso_unidades' => 'required|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -82,7 +83,8 @@ class EmpleadosController
             carnet_extranjeria: $request->input('carnet_extranjeria'),
             pasaporte: $request->input('pasaporte'),
             fecha_nacimiento: $request->input('fecha_nacimiento'),
-            foto: $request->file('path_foto')
+            foto: $request->file('path_foto'),
+            autoriza_ingreso_unidades: (bool) $request->input('autoriza_ingreso_unidades', false)
         );
 
         return response()->json($result);

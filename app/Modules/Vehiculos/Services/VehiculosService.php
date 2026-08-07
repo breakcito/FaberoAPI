@@ -18,8 +18,7 @@ class VehiculosService
         int $idMarca,
         int $idEmpresaTransporte,
         int $idTipoVehiculo,
-        ?string $seriePlaca,
-        string $numeroPlaca,
+        string $placa,
         ?string $numeroConstanciaMtc,
         float $capacidad,
         float $tara,
@@ -27,7 +26,7 @@ class VehiculosService
         ?float $ancho,
         ?float $alto
     ): array {
-        $existenteId = VehiculosData::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
+        $existenteId = VehiculosData::buscar_vehiculo_existente($placa);
         if ($existenteId !== null) {
             $vehiculo = VehiculosData::get_vehiculo_by_id($existenteId);
             if (! empty($vehiculo)) {
@@ -41,8 +40,7 @@ class VehiculosService
             $idMarca,
             $idEmpresaTransporte,
             $idTipoVehiculo,
-            $seriePlaca,
-            $numeroPlaca,
+            $placa,
             $numeroConstanciaMtc,
             $capacidad,
             $tara,
@@ -63,8 +61,7 @@ class VehiculosService
         int $idMarca,
         int $idEmpresaTransporte,
         int $idTipoVehiculo,
-        ?string $seriePlaca,
-        string $numeroPlaca,
+        string $placa,
         ?string $numeroConstanciaMtc,
         float $capacidad,
         float $tara,
@@ -77,8 +74,7 @@ class VehiculosService
             $idMarca,
             $idEmpresaTransporte,
             $idTipoVehiculo,
-            $seriePlaca,
-            $numeroPlaca,
+            $placa,
             $numeroConstanciaMtc,
             $capacidad,
             $tara,

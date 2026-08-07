@@ -20,8 +20,7 @@ class VehiculosData
             et.ruc AS empresa_transporte_ruc,
             v.id_tipo_vehiculo,
             tv.nombre AS tipo_vehiculo_nombre,
-            v.serie_placa,
-            v.numero_placa,
+            v.placa,
             v.numero_constancia_mtc,
             CAST(v.capacidad AS DECIMAL(10,2)) AS capacidad,
             CAST(v.tara AS DECIMAL(10,2)) AS tara,
@@ -35,7 +34,7 @@ class VehiculosData
         LEFT JOIN empresa_transporte et ON et.id = v.id_empresa_transporte
         LEFT JOIN tipo_vehiculo tv ON tv.id = v.id_tipo_vehiculo
         WHERE 1 = 1
-          AND (v.serie_placa IS NULL OR v.serie_placa <> \'FICT\')
+          AND (v.placa IS NULL OR v.placa <> \'FICT\')
         ';
 
         $params = [];
@@ -46,7 +45,7 @@ class VehiculosData
             return (array) DB::selectOne($sql, $params);
         }
 
-        $sql .= ' ORDER BY v.numero_placa ASC;';
+        $sql .= ' ORDER BY v.placa ASC;';
 
         return DB::select($sql, $params);
     }
@@ -60,8 +59,7 @@ class VehiculosData
         int $idMarca,
         int $idEmpresaTransporte,
         int $idTipoVehiculo,
-        ?string $seriePlaca,
-        string $numeroPlaca,
+        string $placa,
         ?string $numeroConstanciaMtc,
         float $capacidad,
         float $tara,
@@ -69,7 +67,7 @@ class VehiculosData
         ?float $ancho,
         ?float $alto
     ): int {
-        $existenteId = self::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
+        $existenteId = self::buscar_vehiculo_existente($placa);
         if ($existenteId !== null) {
             return $existenteId;
         }
@@ -78,8 +76,7 @@ class VehiculosData
             'id_marca' => $idMarca,
             'id_empresa_transporte' => $idEmpresaTransporte,
             'id_tipo_vehiculo' => $idTipoVehiculo,
-            'serie_placa' => $seriePlaca,
-            'numero_placa' => $numeroPlaca,
+            'placa' => $placa,
             'numero_constancia_mtc' => $numeroConstanciaMtc,
             'capacidad' => $capacidad,
             'tara' => $tara,
@@ -90,19 +87,9 @@ class VehiculosData
         ]);
     }
 
-    public static function buscar_vehiculo_existente(?string $seriePlaca, string $numeroPlaca): ?int
+    public static function buscar_vehiculo_existente(string $placa): ?int
     {
-        $query = DB::table('vehiculo')->where('numero_placa', $numeroPlaca);
-        if ($seriePlaca !== null && $seriePlaca !== '') {
-            $query->where('serie_placa', $seriePlaca);
-        } else {
-            $query->where(function ($q) {
-                $q->whereNull('serie_placa')
-                    ->orWhere('serie_placa', '');
-            });
-        }
-
-        return $query->value('id');
+        return DB::table('vehiculo')->where('placa', $placa)->value('id');
     }
 
     public static function editar_vehiculo(
@@ -110,8 +97,7 @@ class VehiculosData
         int $idMarca,
         int $idEmpresaTransporte,
         int $idTipoVehiculo,
-        ?string $seriePlaca,
-        string $numeroPlaca,
+        string $placa,
         ?string $numeroConstanciaMtc,
         float $capacidad,
         float $tara,
@@ -123,8 +109,7 @@ class VehiculosData
             'id_marca' => $idMarca,
             'id_empresa_transporte' => $idEmpresaTransporte,
             'id_tipo_vehiculo' => $idTipoVehiculo,
-            'serie_placa' => $seriePlaca,
-            'numero_placa' => $numeroPlaca,
+            'placa' => $placa,
             'numero_constancia_mtc' => $numeroConstanciaMtc,
             'capacidad' => $capacidad,
             'tara' => $tara,

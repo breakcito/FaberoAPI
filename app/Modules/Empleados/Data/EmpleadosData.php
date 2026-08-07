@@ -30,7 +30,8 @@ class EmpleadosData
             e.pasaporte,
             e.fecha_nacimiento,
             e.path_foto,
-            e.estado
+            e.estado,
+            e.autoriza_ingreso_unidades
         FROM
             empleado e
         LEFT JOIN empresa emp_asoc ON emp_asoc.id = e.id_empresa
@@ -79,7 +80,8 @@ class EmpleadosData
         ?string $carnet_extranjeria,
         ?string $pasaporte,
         ?string $fecha_nacimiento,
-        ?string $path_foto
+        ?string $path_foto,
+        bool $autoriza_ingreso_unidades = false
     ) {
         return Empleado::insertGetId([
             'id_empresa' => $id_empresa,
@@ -93,6 +95,7 @@ class EmpleadosData
             'fecha_nacimiento' => $fecha_nacimiento,
             'path_foto' => $path_foto,
             'estado' => EstadoBase::Activo->value,
+            'autoriza_ingreso_unidades' => $autoriza_ingreso_unidades,
         ]);
     }
 

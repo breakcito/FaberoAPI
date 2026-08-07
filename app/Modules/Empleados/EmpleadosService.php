@@ -62,7 +62,8 @@ class EmpleadosService
         ?string $carnet_extranjeria = null,
         ?string $pasaporte = null,
         ?string $fecha_nacimiento = null,
-        ?UploadedFile $foto = null
+        ?UploadedFile $foto = null,
+        bool $autoriza_ingreso_unidades = false
     ) {
         if ($dni && EmpleadosData::existe_dni($dni)) {
             return ApiResponse::error('El DNI ingresado ya se encuentra registrado.');
@@ -86,7 +87,8 @@ class EmpleadosService
             $carnet_extranjeria,
             $pasaporte,
             $fecha_nacimiento,
-            $path_foto
+            $path_foto,
+            $autoriza_ingreso_unidades
         );
 
         $nuevoEmpleado = EmpleadosData::get_empleado_by_id($id);
