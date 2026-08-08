@@ -20,5 +20,8 @@ class RecepcionVisitaDetalle extends Model
         'fecha_hora_salida',
         'observacion_salida',
         'estado',
+        'id_visita_vehiculo',
+        'es_conductor',
+        'evidencias_salida',
     ];
 }

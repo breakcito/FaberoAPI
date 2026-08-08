@@ -15,5 +15,6 @@ class MotivoIngreso extends Model
 
     protected $fillable = [
         'nombre',
+        'es_recepcion_unidad',
     ];
 }

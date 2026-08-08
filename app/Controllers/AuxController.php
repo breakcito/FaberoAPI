@@ -242,16 +242,22 @@ class AuxController extends Controller
     {
         $request->validate([
             'serie_placa' => 'nullable|string|max:10',
-            'numero_placa' => 'required|string|max:10',
-            'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
-            'id_tipo_vehiculo' => 'required|integer|exists:tipo_vehiculo,id',
+            'numero_placa' => 'nullable|string|max:20',
+            'placa' => 'nullable|string|max:20',
+            'id_empresa_transporte' => 'nullable|integer',
+            'id_tipo_vehiculo' => 'nullable|integer',
         ]);
+
+        $numeroPlaca = $request->input('placa') ?? $request->input('numero_placa') ?? '';
+
+        $empId = $request->input('id_empresa_transporte') ? (int) $request->input('id_empresa_transporte') : null;
+        $tipoId = $request->input('id_tipo_vehiculo') ? (int) $request->input('id_tipo_vehiculo') : null;
 
         $result = VehiculosService::crear_vehiculo_simplificado(
             $request->input('serie_placa'),
-            $request->input('numero_placa'),
-            (int) $request->input('id_empresa_transporte'),
-            (int) $request->input('id_tipo_vehiculo')
+            $numeroPlaca,
+            $empId,
+            $tipoId
         );
 
         return response()->json($result);
@@ -277,11 +283,15 @@ class AuxController extends Controller
     }
 
     /**
-     * Obtener listado de motivos de ingreso
+     * Obtener listado de motivos de ingreso.
+     * Acepta `?es_recepcion_unidad=1` para filtrar motivos aplicables a recepciones de unidad.
      */
-    public function get_motivos_ingreso(): JsonResponse
+    public function get_motivos_ingreso(Request $request): JsonResponse
     {
-        return response()->json(MotivoIngresoService::get_motivos_ingreso());
+        $filtro = $request->query('es_recepcion_unidad');
+        $esRecepcionUnidad = $filtro === null ? null : filter_var($filtro, FILTER_VALIDATE_BOOLEAN);
+
+        return response()->json(MotivoIngresoService::get_motivos_ingreso($esRecepcionUnidad));
     }
 
     /**

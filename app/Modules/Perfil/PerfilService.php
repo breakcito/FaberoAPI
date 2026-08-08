@@ -26,6 +26,8 @@ class PerfilService
             $info->path_foto = asset('storage/'.$info->path_foto);
         }
 
+        $info->autoriza_ingreso_unidades = (bool) ($info->autoriza_ingreso_unidades ?? false);
+
         return ApiResponse::success($info);
     }
 }

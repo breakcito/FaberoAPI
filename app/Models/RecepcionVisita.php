@@ -15,13 +15,17 @@ class RecepcionVisita extends Model
 
     protected $fillable = [
         'id_empleado_registro',
-        'id_empleado_contacto',
         'id_motivo_ingreso',
         'fecha_hora_ingreso',
         'observacion',
         'con_vehiculo',
-        'serie_placa',
-        'numero_placa',
+        'id_empleado_autoriza',
+        'id_recepcion_unidad',
+        'fecha_hora_salida',
+        'observacion_salida',
+        'evidencias_ingreso',
+        'evidencias_salida',
+        'estado',
     ];
 
     protected $casts = [

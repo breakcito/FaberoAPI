@@ -7,6 +7,7 @@ use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Validator;
 
 class RecepcionUnidadesController extends Controller
 {
@@ -18,8 +19,7 @@ class RecepcionUnidadesController extends Controller
         $filters = [
             'fecha_inicio' => $request->query('fecha_inicio'),
             'fecha_fin' => $request->query('fecha_fin'),
-            'numero_placa' => $request->query('numero_placa'),
-            'serie_placa' => $request->query('serie_placa'),
+            'placa' => $request->query('placa'),
             'id_empresa_transporte' => $request->query('id_empresa_transporte'),
             'tipo_ingreso' => $request->query('tipo_ingreso'),
         ];
@@ -41,17 +41,23 @@ class RecepcionUnidadesController extends Controller
     public function crear_recepcion(Request $request): JsonResponse
     {
         $request->validate([
-            'id_vehiculo' => 'required|integer|exists:vehiculo,id',
+            'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
             'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
             'id_tipo_vehiculo' => 'required|integer|exists:tipo_vehiculo,id',
             'id_conductor' => 'required|integer|exists:conductor,id',
-            'tipo_ingreso' => 'required|string|max:50',
-            'tipo_carga' => 'required|string|max:50',
+            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'tipo_ingreso' => 'nullable|string|max:50',
+            'tipo_carga' => 'nullable|string|max:50',
             'segunda_placa' => 'nullable|string|max:15',
             'observacion' => 'nullable|string',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
             'id_sucursal' => 'required|integer|exists:sucursal,id',
+            'serie_guia_remitente' => 'nullable|string|max:10',
+            'numero_guia_remitente' => 'nullable|string|max:20',
+            'serie_guia_transportista' => 'nullable|string|max:10',
+            'numero_guia_transportista' => 'nullable|string|max:20',
+            'id_motivo_ingreso' => 'nullable|integer|exists:motivo_ingreso,id',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
@@ -61,15 +67,20 @@ class RecepcionUnidadesController extends Controller
 
         $data = [
             'id_empleado_registro' => (int) $authUser->id_empleado,
-            'id_vehiculo' => (int) $request->input('id_vehiculo'),
+            'id_vehiculo' => $request->input('id_vehiculo') ? (int) $request->input('id_vehiculo') : null,
             'id_empresa_transporte' => (int) $request->input('id_empresa_transporte'),
             'id_tipo_vehiculo' => (int) $request->input('id_tipo_vehiculo'),
             'id_conductor' => (int) $request->input('id_conductor'),
-            'tipo_ingreso' => $request->input('tipo_ingreso'),
-            'tipo_carga' => $request->input('tipo_carga'),
+            'id_proveedor_minero' => $request->input('id_proveedor_minero') ? (int) $request->input('id_proveedor_minero') : null,
+            'tipo_ingreso' => $request->input('tipo_ingreso', 'Recepción de Unidad'),
+            'tipo_carga' => $request->input('tipo_carga', 'Granel'),
             'segunda_placa' => $request->input('segunda_placa'),
             'observacion' => $request->input('observacion'),
             'id_sucursal' => (int) $request->input('id_sucursal'),
+            'serie_guia_remitente' => $request->input('serie_guia_remitente'),
+            'numero_guia_remitente' => $request->input('numero_guia_remitente'),
+            'serie_guia_transportista' => $request->input('serie_guia_transportista'),
+            'numero_guia_transportista' => $request->input('numero_guia_transportista'),
         ];
 
         // Obtener archivos subidos
@@ -81,7 +92,38 @@ class RecepcionUnidadesController extends Controller
             }
         }
 
-        return response()->json(RecepcionUnidadesService::crear_recepcion($data, $archivos));
+        // Parsear visitantes y sus fotos
+        $visitantes = $request->input('visitantes', []);
+        $archivosPorIndice = [];
+        foreach ($visitantes as $index => $v) {
+            $fileKey = "visitantes.{$index}.foto_documento";
+            if ($request->hasFile($fileKey)) {
+                $files = $request->file($fileKey);
+                $archivosPorIndice[$index] = is_array($files) ? $files : [$files];
+            }
+        }
+
+        // Parsear vehículos acompañantes y sus fotos
+        $vehiculos = $request->input('vehiculos', []);
+        $archivosVehiculos = [];
+        foreach ($vehiculos as $vIndex => $v) {
+            $fileKey = "vehiculos.{$vIndex}.archivos";
+            if ($request->hasFile($fileKey)) {
+                $files = $request->file($fileKey);
+                $archivosVehiculos[$vIndex] = is_array($files) ? $files : [$files];
+            }
+        }
+
+        $visitaData = [
+            'id_motivo_ingreso' => $request->input('id_motivo_ingreso'),
+            'observacion' => $request->input('observacion'),
+            'visitantes' => $visitantes,
+            'archivosPorIndice' => $archivosPorIndice,
+            'vehiculos' => $vehiculos,
+            'archivosVehiculos' => $archivosVehiculos,
+        ];
+
+        return response()->json(RecepcionUnidadesService::crear_recepcion($data, $archivos, $visitaData));
     }
 
     /**
@@ -94,10 +136,20 @@ class RecepcionUnidadesController extends Controller
             'observacion_salida' => 'nullable|string',
         ]);
 
+        $evidencias = [];
+        if ($request->hasFile('evidencias')) {
+            $files = $request->file('evidencias');
+            $evidencias = is_array($files) ? $files : [$files];
+        } else if ($request->hasFile('evidencias_salida')) {
+            $files = $request->file('evidencias_salida');
+            $evidencias = is_array($files) ? $files : [$files];
+        }
+
         $result = RecepcionUnidadesService::registrar_salida(
             $id,
             $request->input('estado_salida'),
-            $request->input('observacion_salida')
+            $request->input('observacion_salida'),
+            $evidencias
         );
 
         return response()->json($result);
@@ -131,5 +183,131 @@ class RecepcionUnidadesController extends Controller
     public function eliminar_lote(int $lote): JsonResponse
     {
         return response()->json(RecepcionUnidadesService::eliminar_lote($lote));
+    }
+
+    /**
+     * Listar programaciones pendientes de confirmación.
+     */
+    public function get_programaciones(Request $request): JsonResponse
+    {
+        $soloPendientes = filter_var($request->query('solo_pendientes', 'true'), FILTER_VALIDATE_BOOLEAN);
+
+        return response()->json(RecepcionUnidadesService::get_programaciones($soloPendientes));
+    }
+
+    /**
+     * Detalle completo de una programación: cabecera + visita asociada + vehículos + visitantes.
+     */
+    public function get_programacion(int $id): JsonResponse
+    {
+        return response()->json(RecepcionUnidadesService::get_programacion($id));
+    }
+
+    /**
+     * Crear una nueva programación.
+     */
+    public function crear_programacion(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
+            'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
+            'id_tipo_vehiculo' => 'nullable|integer|exists:tipo_vehiculo,id',
+            'id_conductor' => 'nullable|integer|exists:conductor,id',
+            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'id_sucursal' => 'nullable|integer|exists:sucursal,id',
+            'fecha_estimada_llegada' => 'nullable|date',
+            'serie_guia_remitente' => 'nullable|string|max:10',
+            'numero_guia_remitente' => 'nullable|string|max:20',
+            'serie_guia_transportista' => 'nullable|string|max:10',
+            'numero_guia_transportista' => 'nullable|string|max:20',
+            'observacion' => 'nullable|string',
+            'tipo_ingreso' => 'nullable|string|max:50',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()), 400);
+        }
+
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado para autorizar la programación.'), 401);
+        }
+
+        $data = $request->all();
+        $data['id_empleado_autoriza'] = (int) $authUser->id_empleado;
+
+        return response()->json(RecepcionUnidadesService::crear_programacion($data));
+    }
+
+    /**
+     * Actualizar una programación (solo si aún no fue confirmada).
+     */
+    public function actualizar_programacion(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'id_empresa_transporte' => 'nullable|integer|exists:empresa_transporte,id',
+            'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
+            'id_tipo_vehiculo' => 'nullable|integer|exists:tipo_vehiculo,id',
+            'id_conductor' => 'nullable|integer|exists:conductor,id',
+            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'fecha_estimada_llegada' => 'nullable|date',
+            'serie_guia_remitente' => 'nullable|string|max:10',
+            'numero_guia_remitente' => 'nullable|string|max:20',
+            'serie_guia_transportista' => 'nullable|string|max:10',
+            'numero_guia_transportista' => 'nullable|string|max:20',
+            'observacion' => 'nullable|string',
+            'tipo_ingreso' => 'nullable|string|max:50',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()), 400);
+        }
+
+        return response()->json(RecepcionUnidadesService::actualizar_programacion($id, $request->all()));
+    }
+
+    /**
+     * Confirmar una programación (la marca como 'En Planta' y registra id_empleado_recepcion).
+     */
+    public function confirmar_programacion(Request $request, int $id): JsonResponse
+    {
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado para confirmar la programación.'), 401);
+        }
+
+        $overrides = [];
+        if ($request->input('id_vehiculo')) {
+            $overrides['id_vehiculo'] = (int) $request->input('id_vehiculo');
+        }
+        if ($request->input('id_tipo_vehiculo')) {
+            $overrides['id_tipo_vehiculo'] = (int) $request->input('id_tipo_vehiculo');
+        }
+        if ($request->input('id_sucursal')) {
+            $overrides['id_sucursal'] = (int) $request->input('id_sucursal');
+        }
+        if ($request->input('id_conductor')) {
+            $overrides['id_conductor'] = (int) $request->input('id_conductor');
+        }
+        if ($request->input('id_proveedor_minero')) {
+            $overrides['id_proveedor_minero'] = (int) $request->input('id_proveedor_minero');
+        }
+        if ($request->input('id_empresa_transporte')) {
+            $overrides['id_empresa_transporte'] = (int) $request->input('id_empresa_transporte');
+        }
+        if ($request->filled('serie_guia_remitente')) {
+            $overrides['serie_guia_remitente'] = $request->input('serie_guia_remitente');
+        }
+        if ($request->filled('numero_guia_remitente')) {
+            $overrides['numero_guia_remitente'] = $request->input('numero_guia_remitente');
+        }
+        if ($request->filled('serie_guia_transportista')) {
+            $overrides['serie_guia_transportista'] = $request->input('serie_guia_transportista');
+        }
+        if ($request->filled('numero_guia_transportista')) {
+            $overrides['numero_guia_transportista'] = $request->input('numero_guia_transportista');
+        }
+
+        return response()->json(RecepcionUnidadesService::confirmar_programacion($id, (int) $authUser->id_empleado, $overrides));
     }
 }

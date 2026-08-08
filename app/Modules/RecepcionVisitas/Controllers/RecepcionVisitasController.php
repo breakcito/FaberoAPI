@@ -7,6 +7,7 @@ use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Validator;
 
 class RecepcionVisitasController extends Controller
 {
@@ -29,13 +30,14 @@ class RecepcionVisitasController extends Controller
     public function crear_recepcion(Request $request): JsonResponse
     {
         $request->validate([
-            'id_empleado_contacto' => 'required|integer|exists:empleado,id',
+            'id_empleado_contacto' => 'nullable|integer|exists:empleado,id',
+            'id_empleado_autoriza' => 'nullable|integer|exists:empleado,id',
             'id_motivo_ingreso' => 'required|integer|exists:motivo_ingreso,id',
             'observacion' => 'nullable|string',
-            'con_vehiculo' => 'required|in:0,1,true,false',
+            'con_vehiculo' => 'nullable|in:0,1,true,false',
             'serie_placa' => 'nullable|string|max:20',
             'numero_placa' => 'nullable|string|max:15',
-            'visitantes' => 'required|array|min:1',
+            'visitantes' => 'nullable|array',
             'visitantes.*.id_visitante' => 'nullable|integer|exists:visitante,id',
             'visitantes.*.nombre' => 'nullable|string|max:100',
             'visitantes.*.apellido' => 'nullable|string|max:100',
@@ -51,9 +53,12 @@ class RecepcionVisitasController extends Controller
         $conVehiculoInput = $request->input('con_vehiculo');
         $conVehiculo = ($conVehiculoInput === '1' || $conVehiculoInput === 1 || $conVehiculoInput === 'true' || $conVehiculoInput === true);
 
+        $empContacto = $request->input('id_empleado_autoriza') ?? $request->input('id_empleado_contacto');
+
         $data = [
             'id_empleado_registro' => (int) $authUser->id_empleado,
-            'id_empleado_contacto' => (int) $request->input('id_empleado_contacto'),
+            'id_empleado_contacto' => $empContacto ? (int) $empContacto : null,
+            'id_empleado_autoriza' => $empContacto ? (int) $empContacto : null,
             'id_motivo_ingreso' => (int) $request->input('id_motivo_ingreso'),
             'observacion' => $request->input('observacion'),
             'con_vehiculo' => $conVehiculo,
@@ -76,7 +81,26 @@ class RecepcionVisitasController extends Controller
             }
         }
 
-        return response()->json(RecepcionVisitasService::crear_recepcion($data, $visitantes, $archivos));
+        $vehiculos = $request->input('vehiculos', []);
+        $archivosVehiculos = [];
+        foreach ($vehiculos as $vIndex => $v) {
+            $fileKey = "vehiculos.{$vIndex}.archivos";
+            if ($request->hasFile($fileKey)) {
+                $files = $request->file($fileKey);
+                $archivosVehiculos[$vIndex] = is_array($files) ? $files : [$files];
+            }
+        }
+
+        $evidencias = [];
+        if ($request->hasFile('evidencias')) {
+            $files = $request->file('evidencias');
+            $evidencias = is_array($files) ? $files : [$files];
+        } else if ($request->hasFile('evidencias_ingreso')) {
+            $files = $request->file('evidencias_ingreso');
+            $evidencias = is_array($files) ? $files : [$files];
+        }
+
+        return response()->json(RecepcionVisitasService::crear_recepcion($data, $visitantes, $archivos, $vehiculos, $archivosVehiculos, $evidencias));
     }
 
     /**
@@ -88,9 +112,91 @@ class RecepcionVisitasController extends Controller
             'observacion_salida' => 'nullable|string',
         ]);
 
+        $evidencias = [];
+        if ($request->hasFile('evidencias')) {
+            $files = $request->file('evidencias');
+            $evidencias = is_array($files) ? $files : [$files];
+        } else if ($request->hasFile('evidencias_salida')) {
+            $files = $request->file('evidencias_salida');
+            $evidencias = is_array($files) ? $files : [$files];
+        }
+
         $result = RecepcionVisitasService::registrar_salida(
             $id,
-            $request->input('observacion_salida')
+            $request->input('observacion_salida'),
+            $evidencias
+        );
+
+        return response()->json($result);
+    }
+
+    /**
+     * Crear la visita (cabecera + detalle) asociada a una programación de unidad.
+     *
+     * Flujo:
+     *   1. Inserta la cabecera de recepcion_visita con id_recepcion_unidad.
+     *   2. Por cada visitante: upsert en `visitante` + inserta recepcion_visita_detalle.
+     *   3. Sube fotos del documento al storage.
+     */
+    public function crear_para_programacion(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'id_recepcion_unidad' => 'required|integer|exists:recepcion_unidad,id',
+            'id_motivo_ingreso' => 'required|integer|exists:motivo_ingreso,id',
+            'observacion' => 'nullable|string',
+            'visitantes' => 'nullable|array',
+            'visitantes.*.nombre' => 'nullable|string|max:100',
+            'visitantes.*.apellido' => 'nullable|string|max:100',
+            'visitantes.*.dni' => 'nullable|string|max:8',
+            'visitantes.*.telefono' => 'nullable|string|max:50',
+            'visitantes.*.id_visita_vehiculo' => 'nullable|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()), 400);
+        }
+
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        $visitantes = $request->input('visitantes', []);
+        $archivosPorIndice = [];
+        foreach ($visitantes as $index => $v) {
+            $fileKey = "visitantes.{$index}.foto_documento";
+            if ($request->hasFile($fileKey)) {
+                $files = $request->file($fileKey);
+                $archivosPorIndice[$index] = is_array($files) ? $files : [$files];
+            }
+        }
+
+        $vehiculos = $request->input('vehiculos', []);
+        $archivosVehiculos = [];
+        foreach ($vehiculos as $vIndex => $v) {
+            $fileKey = "vehiculos.{$vIndex}.archivos";
+            if ($request->hasFile($fileKey)) {
+                $files = $request->file($fileKey);
+                $archivosVehiculos[$vIndex] = is_array($files) ? $files : [$files];
+            }
+        }
+
+        $evidencias = [];
+        if ($request->hasFile('evidencias')) {
+            $files = $request->file('evidencias');
+            $evidencias = is_array($files) ? $files : [$files];
+        }
+
+        $result = RecepcionVisitasService::crear_recepcion_para_programacion(
+            (int) $authUser->id_empleado,
+            (int) $request->input('id_recepcion_unidad'),
+            (int) $request->input('id_motivo_ingreso'),
+            $request->input('observacion'),
+            $visitantes,
+            $archivosPorIndice,
+            $vehiculos,
+            $archivosVehiculos,
+            $evidencias
         );
 
         return response()->json($result);

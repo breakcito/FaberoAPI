@@ -14,7 +14,7 @@ class RecepcionUnidad extends Model
     public $timestamps = false;
 
     protected $fillable = [
-        'id_empleado_registro',
+        'id_empleado_recepcion',
         'id_vehiculo',
         'id_empresa_transporte',
         'id_tipo_vehiculo',
@@ -34,6 +34,14 @@ class RecepcionUnidad extends Model
         'fecha_hora_final_pesaje',
         'validacion_datos',
         'estado_pesaje',
+        'id_proveedor_minero',
+        'id_empleado_autoriza',
+        'es_programacion',
+        'fecha_estimada_llegada',
+        'serie_guia_remitente',
+        'numero_guia_remitente',
+        'serie_guia_transportista',
+        'numero_guia_transportista',
     ];
 
     protected $casts = [

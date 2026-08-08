@@ -15,6 +15,7 @@ class PerfilData
         SELECT
             usu.id as id_usuario,
             usu.username,
+            emp.id as id_empleado,
             emp.nombre,
             emp.apellido,
             emp.dni,
@@ -23,6 +24,7 @@ class PerfilData
             emp.pasaporte,
             emp.fecha_nacimiento,
             emp.path_foto,
+            emp.autoriza_ingreso_unidades,
             rol.nombre as nombre_rol,
             car.nombre as nombre_cargo,
             are.nombre as nombre_area,

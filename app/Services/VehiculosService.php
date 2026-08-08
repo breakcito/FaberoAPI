@@ -23,8 +23,8 @@ class VehiculosService
     public static function crear_vehiculo_simplificado(
         ?string $seriePlaca,
         string $numeroPlaca,
-        int $idEmpresaTransporte,
-        int $idTipoVehiculo
+        ?int $idEmpresaTransporte = null,
+        ?int $idTipoVehiculo = null
     ): array {
         $existenteId = VehiculosData::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
         if ($existenteId !== null) {

@@ -19,8 +19,9 @@ class VehiculosData
             et.razon_social,
             tv.nombre AS tipo_vehiculo_nombre,
             tv.es_carreta,
-            v.serie_placa,
-            v.numero_placa,
+            v.placa,
+            v.placa AS numero_placa,
+            NULL AS serie_placa,
             v.estado,
             (
                 SELECT ru2.id_conductor
@@ -34,7 +35,7 @@ class VehiculosData
         LEFT JOIN empresa_transporte et ON et.id = v.id_empresa_transporte
         LEFT JOIN tipo_vehiculo tv ON tv.id = v.id_tipo_vehiculo
         WHERE 1 = 1
-          AND (v.serie_placa IS NULL OR v.serie_placa <> \'FICT\')
+          AND (v.placa IS NULL OR v.placa <> \'FICT\')
         ';
 
         $params = [];
@@ -44,14 +45,10 @@ class VehiculosData
             $params['id'] = $id;
         }
 
-        if ($seriePlaca !== null && $seriePlaca !== '') {
-            $sql .= ' AND v.serie_placa = :serie_placa';
-            $params['serie_placa'] = $seriePlaca;
-        }
-
-        if ($numeroPlaca !== null && $numeroPlaca !== '') {
-            $sql .= ' AND v.numero_placa = :numero_placa';
-            $params['numero_placa'] = $numeroPlaca;
+        $searchPlaca = ! empty($numeroPlaca) ? $numeroPlaca : $seriePlaca;
+        if ($searchPlaca !== null && $searchPlaca !== '') {
+            $sql .= ' AND v.placa LIKE :placa';
+            $params['placa'] = '%'.$searchPlaca.'%';
         }
 
         if ($esCarreta === true) {
@@ -60,32 +57,42 @@ class VehiculosData
             $sql .= ' AND (tv.es_carreta = 0 OR tv.es_carreta IS NULL)';
         }
 
-        $sql .= ' ORDER BY v.numero_placa ASC;';
+        $sql .= ' ORDER BY v.placa ASC;';
 
         return DB::select($sql, $params);
     }
 
     /**
      * Crear un nuevo vehículo de forma simplificada.
-     * Si ya existe un vehículo con la misma (serie_placa, numero_placa), retorna su id sin crear duplicado.
+     * Si ya existe un vehículo con la misma placa, retorna su id sin crear duplicado.
      */
     public static function crear_vehiculo_simplificado(
         ?string $seriePlaca,
         string $numeroPlaca,
-        int $idEmpresaTransporte,
-        int $idTipoVehiculo
+        ?int $idEmpresaTransporte = null,
+        ?int $idTipoVehiculo = null
     ): int {
+        $placaCompleta = trim(($seriePlaca ? $seriePlaca.'-' : '').$numeroPlaca);
         $existenteId = self::buscar_vehiculo_existente($seriePlaca, $numeroPlaca);
         if ($existenteId !== null) {
             return $existenteId;
+        }
+
+        if (empty($idEmpresaTransporte)) {
+            $firstEmp = DB::table('empresa_transporte')->first();
+            $idEmpresaTransporte = $firstEmp ? (int) $firstEmp->id : 1;
+        }
+
+        if (empty($idTipoVehiculo)) {
+            $firstTipo = DB::table('tipo_vehiculo')->first();
+            $idTipoVehiculo = $firstTipo ? (int) $firstTipo->id : 1;
         }
 
         return DB::table('vehiculo')->insertGetId([
             'id_marca' => null,
             'id_empresa_transporte' => $idEmpresaTransporte,
             'id_tipo_vehiculo' => $idTipoVehiculo,
-            'serie_placa' => $seriePlaca,
-            'numero_placa' => $numeroPlaca,
+            'placa' => $placaCompleta,
             'numero_constancia_mtc' => null,
             'capacidad' => 0.0,
             'tara' => 0.0,
@@ -98,17 +105,12 @@ class VehiculosData
 
     public static function buscar_vehiculo_existente(?string $seriePlaca, string $numeroPlaca): ?int
     {
-        $query = DB::table('vehiculo')->where('numero_placa', $numeroPlaca);
-        if ($seriePlaca !== null && $seriePlaca !== '') {
-            $query->where('serie_placa', $seriePlaca);
-        } else {
-            $query->where(function ($q) {
-                $q->whereNull('serie_placa')
-                    ->orWhere('serie_placa', '');
-            });
-        }
+        $placaCompleta = trim(($seriePlaca ? $seriePlaca.'-' : '').$numeroPlaca);
 
-        return $query->value('id');
+        return DB::table('vehiculo')
+            ->where('placa', $placaCompleta)
+            ->orWhere('placa', $numeroPlaca)
+            ->value('id');
     }
 
     /**
