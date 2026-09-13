@@ -81,6 +81,47 @@ class BlendingService
     }
 
     /**
+     * Resolver numero_particion para una fila nueva de blending_detalle.
+     *
+     * Regla:
+     *   1. Buscar MAX(numero_particion) entre filas existentes para el mismo origen
+     *      (id_lote_mineral o id_reblending, según corresponda), en cualquier
+     *      blending (incluyendo el actual en construcción — no se filtra por id_blending).
+     *   2. Si hay MAX → numero_particion = MAX + 1.
+     *   3. Si no hay filas previas (primera vez para este origen):
+     *      a. Si toma todo el peso_actual_origen → NULL.
+     *      b. Si toma solo una parte → 1.
+     *
+     * @return  int|null  null cuando es la primera vez y se toma todo el peso.
+     */
+    private static function resolver_numero_particion(
+        ?int $idLoteMineral,
+        ?int $idReblending,
+        float $pesoTomado,
+        float $pesoActualOrigen,
+    ): ?int {
+        $query = DB::table('blending_detalle');
+
+        if ($idLoteMineral !== null) {
+            $query->where('id_lote_mineral', $idLoteMineral);
+        } else {
+            $query->where('id_reblending', $idReblending);
+        }
+
+        $max = $query->max('numero_particion');
+
+        if ($max !== null) {
+            return (int) $max + 1;
+        }
+
+        if (abs($pesoTomado - $pesoActualOrigen) < 0.0001) {
+            return null;
+        }
+
+        return 1;
+    }
+
+    /**
      * Obtener los lotes y blendings disponibles para mezclas.
      *
      * @return array<int, object>
@@ -212,6 +253,12 @@ class BlendingService
                     'id_reblending' => $idReblending,
                     'peso_actual' => $pesoActualOrigen,
                     'peso_tomado' => $pesoTomado,
+                    'numero_particion' => self::resolver_numero_particion(
+                        $idLoteMineral,
+                        $idReblending,
+                        $pesoTomado,
+                        $pesoActualOrigen,
+                    ),
                     'created_at' => now(),
                 ];
             }
@@ -456,6 +503,12 @@ class BlendingService
                             'id_reblending' => $idReblending,
                             'peso_actual' => $pesoActualOrigen,
                             'peso_tomado' => $pesoAdicional,
+                            'numero_particion' => self::resolver_numero_particion(
+                                $idLoteMineral,
+                                $idReblending,
+                                $pesoAdicional,
+                                $pesoActualOrigen,
+                            ),
                             'created_at' => now(),
                         ]);
                     }

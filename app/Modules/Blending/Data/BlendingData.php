@@ -221,6 +221,7 @@ class BlendingData
                     bd.id_reblending,
                     bd.peso_actual,
                     bd.peso_tomado,
+                    bd.numero_particion,
                     bd.created_at,
                     COALESCE(lm.correlativo, b2.correlativo, "") AS codigo,
                     COALESCE(lm.correlativo, b2.correlativo, "") AS correlativo_origen,
@@ -248,6 +249,7 @@ class BlendingData
                 $d->id_reblending = $d->id_reblending !== null ? (int) $d->id_reblending : null;
                 $d->peso_actual = (float) $d->peso_actual;
                 $d->peso_tomado = (float) $d->peso_tomado;
+                $d->numero_particion = $d->numero_particion !== null ? (int) $d->numero_particion : null;
                 $d->ley_humedad = (float) $d->ley_humedad;
                 $d->ley_oro = (float) $d->ley_oro;
                 $d->ley_plata = (float) $d->ley_plata;
