@@ -352,6 +352,9 @@ class ValorizacionCompraAuxData
                 vc.created_at,
                 p.razon_social AS proveedor_nombre,
                 c.nombre AS concesion_nombre,
+                vc.id_cuenta_bancaria,
+                vc.monto_penalidad,
+                vc.monto_flete,
                 COALESCE((SELECT SUM(vcd.subtotal) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS total_dolares,
                 COALESCE((SELECT SUM(tap.monto_retirado) FROM transaccion_anticipo_proveedor tap WHERE tap.id_valorizacion_compra = vc.id AND tap.estado = :tap_estado_aprobado), 0) AS monto_anticipos
             FROM valorizacion_compra vc
@@ -384,6 +387,9 @@ class ValorizacionCompraAuxData
         foreach ($rows as $r) {
             $r->id = (int) $r->id;
             $r->id_proveedor_minero = (int) $r->id_proveedor_minero;
+            $r->id_cuenta_bancaria = $r->id_cuenta_bancaria !== null ? (int) $r->id_cuenta_bancaria : null;
+            $r->monto_penalidad = (float) ($r->monto_penalidad ?? 0);
+            $r->monto_flete = (float) ($r->monto_flete ?? 0);
             $r->total_dolares = (float) $r->total_dolares;
             $r->monto_anticipos = (float) $r->monto_anticipos;
         }

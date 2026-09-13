@@ -773,7 +773,7 @@ class AuxController extends Controller
 
     /**
      * Listar cuentas bancarias de la empresa filtradas por moneda y opcionalmente por detracción.
-     * Si es_para_detraccion=true solo trae cuentas en Soles del Banco de la Nación.
+     * Si es_para_detraccion=true solo trae cuentas en Soles (sin restricción de banco ni de flag es_para_detraccion).
      */
     public function get_cuentas_bancarias_empresa_por_moneda(Request $request): JsonResponse
     {

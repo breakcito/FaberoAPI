@@ -34,6 +34,9 @@ class ContabilidadCompraData
                 cc.tipo_cambio_venta,
                 cc.porcentaje_igv,
                 cc.porcentaje_detraccion,
+                cc.total_dolares_antes_descuento,
+                cc.total_soles_antes_descuento,
+                cc.descuento,
                 cc.total_dolares,
                 cc.total_soles,
                 cc.monto_igv_soles,
@@ -43,6 +46,7 @@ class ContabilidadCompraData
                 cc.monto_neto,
                 cc.avance_pago_neto,
                 cc.avance_pago_detraccion,
+                vc.id_cuenta_bancaria AS id_cuenta_bancaria_proveedor_sugerida,
                 cc.aprobaciones,
                 cc.estado,
                 cc.created_at,
@@ -157,6 +161,9 @@ class ContabilidadCompraData
                 cc.tipo_cambio_venta,
                 cc.porcentaje_igv,
                 cc.porcentaje_detraccion,
+                cc.total_dolares_antes_descuento,
+                cc.total_soles_antes_descuento,
+                cc.descuento,
                 cc.total_dolares,
                 cc.total_soles,
                 cc.monto_igv_soles,
@@ -166,6 +173,7 @@ class ContabilidadCompraData
                 cc.monto_neto,
                 cc.avance_pago_neto,
                 cc.avance_pago_detraccion,
+                vc.id_cuenta_bancaria AS id_cuenta_bancaria_proveedor_sugerida,
                 cc.aprobaciones,
                 cc.estado,
                 cc.created_at,
@@ -247,6 +255,9 @@ class ContabilidadCompraData
         $row->tipo_cambio_venta = (float) $row->tipo_cambio_venta;
         $row->porcentaje_igv = (float) $row->porcentaje_igv;
         $row->porcentaje_detraccion = (float) $row->porcentaje_detraccion;
+        $row->total_dolares_antes_descuento = (float) ($row->total_dolares_antes_descuento ?? 0);
+        $row->total_soles_antes_descuento = (float) ($row->total_soles_antes_descuento ?? 0);
+        $row->descuento = (float) ($row->descuento ?? 0);
         $row->total_dolares = (float) $row->total_dolares;
         $row->total_soles = (float) $row->total_soles;
         $row->monto_igv_soles = (float) $row->monto_igv_soles;
@@ -256,6 +267,9 @@ class ContabilidadCompraData
         $row->monto_neto = (float) $row->monto_neto;
         $row->avance_pago_neto = (float) $row->avance_pago_neto;
         $row->avance_pago_detraccion = (float) $row->avance_pago_detraccion;
+        if (isset($row->id_cuenta_bancaria_proveedor_sugerida)) {
+            $row->id_cuenta_bancaria_proveedor_sugerida = $row->id_cuenta_bancaria_proveedor_sugerida !== null ? (int) $row->id_cuenta_bancaria_proveedor_sugerida : null;
+        }
         if (isset($row->total_pagado_neto)) {
             $row->total_pagado_neto = (float) $row->total_pagado_neto;
         }
@@ -407,9 +421,12 @@ class ContabilidadCompraData
 
     /**
      * Calcular todos los importes del comprobante a partir de la valorización y el TC.
+     * - total_dolares_antes_descuento = SUM(subtotal)
+     * - descuento = monto_penalidad + monto_flete (header valorizacion)
+     * - total_dolares = total_dolares_antes_descuento - descuento
+     * - total_soles = total_soles_antes_descuento - (descuento * tc_venta)
+     * - La base de detracción NO descuenta penalidad/flete (solo anticipos).
      *
-     * @param  float  $porcentajeIgv  Default 0.18
-     * @param  float  $porcentajeDetraccion  Default 0.11
      * @return array<string,float>
      */
     public static function calcular_importes(
@@ -418,25 +435,39 @@ class ContabilidadCompraData
         float $porcentajeIgv = 0.18,
         float $porcentajeDetraccion = 0.11
     ): array {
-        $totalDolares = (float) DB::table('valorizacion_compramineral_detalle')
+        $valorizacionRow = DB::table('valorizacion_compra')
+            ->where('id', $idValorizacion)
+            ->select('monto_penalidad', 'monto_flete')
+            ->first();
+        $montoPenalidad = (float) ($valorizacionRow->monto_penalidad ?? 0);
+        $montoFlete = (float) ($valorizacionRow->monto_flete ?? 0);
+        $descuento = $montoPenalidad + $montoFlete;
+
+        $totalDolaresAntesDescuento = (float) DB::table('valorizacion_compramineral_detalle')
             ->where('id_valorizacion_compra', $idValorizacion)
             ->sum('subtotal');
 
-        $totalSoles = $totalDolares * $tipoCambioVenta;
-        $montoIgvSoles = $totalSoles * $porcentajeIgv;
+        $totalSolesAntesDescuento = $totalDolaresAntesDescuento * $tipoCambioVenta;
+        $montoIgvSoles = $totalSolesAntesDescuento * $porcentajeIgv;
 
         $montoAnticipos = (float) DB::table('transaccion_anticipo_proveedor')
             ->where('id_valorizacion_compra', $idValorizacion)
             ->where('estado', 'Aprobado')
             ->sum('monto_retirado');
 
-        $baseDetraccion = max($totalDolares - $montoAnticipos, 0.0);
+        $totalDolares = max($totalDolaresAntesDescuento - $descuento, 0.0);
+        $totalSoles = max($totalSolesAntesDescuento - ($descuento * $tipoCambioVenta), 0.0);
+
+        $baseDetraccion = max($totalDolaresAntesDescuento - $montoAnticipos, 0.0);
         $montoDetraccion = $baseDetraccion * $porcentajeDetraccion;
         $montoDetraccionSoles = $montoDetraccion * $tipoCambioVenta;
 
         $montoNeto = $totalDolares - $montoAnticipos - $montoDetraccion;
 
         return [
+            'total_dolares_antes_descuento' => round($totalDolaresAntesDescuento, 2),
+            'total_soles_antes_descuento' => round($totalSolesAntesDescuento, 2),
+            'descuento' => round($descuento, 2),
             'total_dolares' => round($totalDolares, 2),
             'total_soles' => round($totalSoles, 2),
             'monto_igv_soles' => round($montoIgvSoles, 2),

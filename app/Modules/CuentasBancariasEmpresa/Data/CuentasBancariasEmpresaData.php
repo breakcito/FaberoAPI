@@ -108,7 +108,7 @@ class CuentasBancariasEmpresaData
 
     /**
      * Obtener cuentas bancarias activas filtradas por moneda. Si es_para_detraccion=true
-     * restringe a Soles y Banco de la Nación (id_banco del banco con abreviatura 'BN').
+     * solo restringe a la moneda indicada (sin filtrar por banco ni por flag es_para_detraccion).
      *
      * @return array<int,object>
      */
@@ -138,10 +138,6 @@ class CuentasBancariasEmpresaData
             'estado' => 'Activo',
             'moneda' => $moneda,
         ];
-
-        if ($esParaDetraccion) {
-            $sql .= " AND cn.es_para_detraccion = 1 AND (bc.abreviatura = 'BN' OR bc.es_nacional = 1)";
-        }
 
         $sql .= ' ORDER BY cn.es_para_detraccion DESC, bc.nombre, cn.numero_cuenta';
 

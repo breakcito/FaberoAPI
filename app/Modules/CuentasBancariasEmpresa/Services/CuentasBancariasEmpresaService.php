@@ -77,7 +77,7 @@ class CuentasBancariasEmpresaService
 
     /**
      * Obtener cuentas bancarias activas filtradas por moneda. Si es_para_detraccion=true
-     * restringe a Soles y Banco de la Nación.
+     * restringe únicamente a Soles (sin restricción de banco ni de flag es_para_detraccion).
      */
     public static function get_cuentas_bancarias_por_moneda(string $moneda, bool $esParaDetraccion = false): array
     {
