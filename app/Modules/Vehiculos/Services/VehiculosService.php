@@ -7,9 +7,9 @@ use App\Shared\Responses\ApiResponse;
 
 class VehiculosService
 {
-    public static function get_vehiculos(): array
+    public static function get_vehiculos(bool $soloNoCarreta = false): array
     {
-        $data = VehiculosData::get_vehiculos();
+        $data = VehiculosData::get_vehiculos(null, $soloNoCarreta);
 
         return ApiResponse::success($data, 'Vehículos obtenidos correctamente');
     }

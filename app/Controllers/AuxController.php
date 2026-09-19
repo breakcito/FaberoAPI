@@ -549,8 +549,8 @@ class AuxController extends Controller
         INNER JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
         INNER JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero
-        WHERE lm.peso_inicial IS NOT NULL
-          AND lm.peso_final IS NOT NULL
+        WHERE (lm.peso_inicial IS NOT NULL OR lm.particionado_desde_balanza = 1)
+          AND (lm.peso_final IS NOT NULL OR lm.particionado_desde_balanza = 1)
           AND plm.peso_neto > 0
           AND ru.estado_pesaje = :estado_pesaje
           AND plm.esta_validado = 1
@@ -563,7 +563,7 @@ class AuxController extends Controller
                 WHERE plm2.id_lote_mineral = lm.id
                   AND plm2.peso_neto > 0
                   AND plm2.estado = :estado_particion_activo_suma
-            ), 0) = lm.peso_neto
+            ), 0) = COALESCE(lm.peso_neto, lm.peso_neto_oficial, 0)
         ';
 
         $params2 = [

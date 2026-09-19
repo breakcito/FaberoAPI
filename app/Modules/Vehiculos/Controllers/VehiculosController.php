@@ -7,9 +7,14 @@ use Illuminate\Http\Request;
 
 class VehiculosController
 {
-    public function get_vehiculos()
+    public function get_vehiculos(Request $request)
     {
-        return response()->json(VehiculosService::get_vehiculos());
+        $soloNoCarreta = filter_var(
+            $request->query('solo_no_carreta'),
+            FILTER_VALIDATE_BOOLEAN
+        );
+
+        return response()->json(VehiculosService::get_vehiculos($soloNoCarreta));
     }
 
     public function crear_vehiculo(Request $request)

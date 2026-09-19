@@ -3,11 +3,13 @@
 namespace App\Modules\ProgramacionDespachos\Services;
 
 use App\Modules\ProgramacionDespachos\Data\ProgramacionDespachosData;
+use App\Services\EmpresasService;
+use App\Shared\Enums\_Generic\EstadoBase;
+use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Enums\ProgramacionDespachos\EstadoDistribucion;
 use App\Shared\Helpers\CorrelativoHelper;
-use App\Shared\Enums\_Generic\Periodo;
-use App\Shared\Responses\ApiResponse;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
+use App\Shared\Responses\ApiResponse;
 use Illuminate\Support\Facades\DB;
 
 class ProgramacionDespachosService
@@ -17,10 +19,11 @@ class ProgramacionDespachosService
      *
      * @return array<string, mixed>
      */
-    public static function get_despachos(?int $idPlantaDestino, ?string $fechaInicio, ?string $fechaFin): array
+    public static function get_despachos(?int $idPlantaDestino, ?int $idEmpresa, ?string $fechaInicio, ?string $fechaFin): array
     {
         $filtros = [
             'id_planta_destino' => $idPlantaDestino,
+            'id_empresa' => $idEmpresa,
             'fecha_inicio' => $fechaInicio,
             'fecha_fin' => $fechaFin,
         ];
@@ -33,13 +36,14 @@ class ProgramacionDespachosService
 
     /**
      * Listar items (lotes y blendings) disponibles para despachar.
+     * Si llega `id_empresa` filtra por esa empresa (defensa + UX del modal).
      *
      * @return array<string, mixed>
      */
-    public static function get_items_disponibles(): array
+    public static function get_items_disponibles(?int $idEmpresa = null): array
     {
         return ApiResponse::success(
-            ProgramacionDespachosData::get_items_disponibles(),
+            ProgramacionDespachosData::get_items_disponibles($idEmpresa),
             'Items disponibles para despacho consultados correctamente'
         );
     }
@@ -62,16 +66,24 @@ class ProgramacionDespachosService
     /**
      * Registrar un nuevo despacho y sus detalles (lotes / blendings).
      *
-     * @param  array{id_planta_destino: int, detalles: array<int, array{id_lote_mineral?: int|null, id_blending?: int|null, peso_tomado: float|int}>}  $data
+     * @param  array{id_planta_destino: int, id_empresa: int, detalles: array<int, array{id_lote_mineral?: int|null, id_blending?: int|null, peso_tomado: float|int, codigo_preliminar?: string|null}>}  $data
      * @return array<string, mixed>
      */
     public static function crear_despacho(array $data, int $idEmpleadoRegistro): array
     {
         $idPlantaDestino = (int) $data['id_planta_destino'];
+        $idEmpresa = (int) $data['id_empresa'];
         $detalles = $data['detalles'];
 
         if (empty($detalles)) {
             return ApiResponse::error('Debe incluir al menos un item en el despacho.', 400);
+        }
+
+        // Validar que la empresa exista y esté activa.
+        $empresaOk = EmpresasService::get_empresas(id_empresa: $idEmpresa, estado: EstadoBase::Activo);
+        $empresaData = $empresaOk['data'] ?? null;
+        if (! $empresaData) {
+            return ApiResponse::error('La empresa seleccionada no existe o no está activa.', 400);
         }
 
         try {
@@ -87,10 +99,11 @@ class ProgramacionDespachosService
         }
 
         try {
-            DB::transaction(function () use ($idPlantaDestino, $detalles, $idEmpleadoRegistro, $correlativo, &$idDespacho, &$advertencias) {
+            DB::transaction(function () use ($idPlantaDestino, $idEmpresa, $detalles, $idEmpleadoRegistro, $correlativo, &$idDespacho, &$advertencias) {
                 $idDespacho = ProgramacionDespachosData::crear_despacho(
                     idEmpleadoRegistro: $idEmpleadoRegistro,
                     idPlantaDestino: $idPlantaDestino,
+                    idEmpresa: $idEmpresa,
                     correlativo: $correlativo['correlativo'],
                     numeroCorrelativo: $correlativo['numero_correlativo'],
                 );
@@ -121,6 +134,9 @@ class ProgramacionDespachosService
                     $idLote = isset($det['id_lote_mineral']) ? (int) $det['id_lote_mineral'] : null;
                     $idBlending = isset($det['id_blending']) ? (int) $det['id_blending'] : null;
                     $pesoTomado = (float) $det['peso_tomado'];
+                    $codigoPreliminar = isset($det['codigo_preliminar']) && is_string($det['codigo_preliminar']) && trim($det['codigo_preliminar']) !== ''
+                        ? trim($det['codigo_preliminar'])
+                        : null;
 
                     if ((! $idLote && ! $idBlending) || ($idLote && $idBlending)) {
                         throw new \RuntimeException('Cada item debe tener exactamente id_lote_mineral o id_blending, no ambos ni ninguno.');
@@ -130,7 +146,7 @@ class ProgramacionDespachosService
                         throw new \RuntimeException('peso_tomado debe ser mayor a 0 en cada item.');
                     }
 
-                    $pesoDisponible = self::get_peso_disponible_item($idLote, $idBlending);
+                    $pesoDisponible = self::get_peso_disponible_item($idLote, $idBlending, $idEmpresa);
                     if ($pesoDisponible === null) {
                         throw new \RuntimeException('Uno de los items seleccionados ya no está disponible.');
                     }
@@ -147,6 +163,7 @@ class ProgramacionDespachosService
                         idBlending: $idBlending,
                         idLoteMineral: $idLote,
                         pesoTomado: $pesoTomado,
+                        codigoPreliminar: $codigoPreliminar,
                     );
                 }
 
@@ -572,25 +589,33 @@ class ProgramacionDespachosService
      * por `crear_despacho` al crear cada `despacho_detalle`. Históricamente esta
      * query restaba además `SUM(dd.peso_tomado)`, lo que provocaba doble
      * descuento y rechazos inválidos al crear un despacho.
+     *
+     * Adicionalmente valida que el lote/blending pertenezca a la `id_empresa`
+     * indicada (defensa frente a IDs cruzados entre empresas).
      */
-    private static function get_peso_disponible_item(?int $idLote, ?int $idBlending): ?float
+    private static function get_peso_disponible_item(?int $idLote, ?int $idBlending, int $idEmpresa): ?float
     {
         if ($idLote !== null) {
             $row = DB::selectOne(
                 'SELECT peso_actual AS peso_disponible
                  FROM lote_mineral
-                 WHERE id = :id AND esta_validado = 1',
-                ['id' => $idLote]
+                 WHERE id = :id
+                   AND id_empresa = :id_empresa
+                   AND esta_validado = 1',
+                ['id' => $idLote, 'id_empresa' => $idEmpresa]
             );
+
             return $row && $row->peso_disponible !== null ? (float) $row->peso_disponible : null;
         }
         if ($idBlending !== null) {
             $row = DB::selectOne(
                 'SELECT peso_actual AS peso_disponible
                  FROM blending
-                 WHERE id = :id',
-                ['id' => $idBlending]
+                 WHERE id = :id
+                   AND id_empresa = :id_empresa',
+                ['id' => $idBlending, 'id_empresa' => $idEmpresa]
             );
+
             return $row && $row->peso_disponible !== null ? (float) $row->peso_disponible : null;
         }
 

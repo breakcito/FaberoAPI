@@ -50,7 +50,8 @@ class RecepcionMineralController extends Controller
     }
 
     /**
-     * Crear un lote vacío asociado a una recepción de unidad
+     * Crear un lote vacío asociado a una recepción de unidad.
+     * Si `particionar=true`, crea además una partición A atómicamente.
      */
     public function crear_lote(Request $request, int $id): JsonResponse
     {
@@ -64,12 +65,14 @@ class RecepcionMineralController extends Controller
             'id_empresa' => ['required', 'integer', 'exists:empresa,id'],
             'con_codigo_manual' => ['required', 'boolean'],
             'codigo_manual' => 'nullable|string|max:20',
+            'particionar' => 'nullable|boolean',
         ]);
 
         $condicionIngreso = $request->input('condicion_ingreso');
         $idEmpresa = (int) $request->input('id_empresa');
         $conCodigoManual = $request->boolean('con_codigo_manual');
         $codigoManual = $conCodigoManual ? $request->input('codigo_manual') : null;
+        $particionar = $request->boolean('particionar');
 
         return response()->json(RecepcionMineralService::crear_lote(
             $id,
@@ -78,6 +81,7 @@ class RecepcionMineralController extends Controller
             $idEmpresa,
             $conCodigoManual,
             $codigoManual,
+            $particionar,
         ));
     }
 
@@ -290,5 +294,221 @@ class RecepcionMineralController extends Controller
     public function get_ticket_balanza_by_distribucion_detalle(int $idDistribucionDetalle): JsonResponse
     {
         return response()->json(RecepcionMineralService::get_ticket_balanza_by_distribucion_detalle($idDistribucionDetalle));
+    }
+
+    /**
+     * Listar los lotes padre particionados desde Balanza con particiones activas en una sucursal.
+     */
+    public function get_lotes_padre_particionados(Request $request): JsonResponse
+    {
+        $idSucursal = (int) $request->query('id_sucursal');
+        if (! $idSucursal) {
+            return response()->json(ApiResponse::error('Debe especificar la sucursal.'), 400);
+        }
+
+        return response()->json(RecepcionMineralService::get_lotes_padre_particionados($idSucursal));
+    }
+
+    /**
+     * Crear una partición adicional para un lote padre (drag a otra unidad).
+     */
+    public function crear_particion(Request $request, int $idLote): JsonResponse
+    {
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        $request->validate([
+            'id_recepcion_unidad' => 'required|integer|exists:recepcion_unidad,id',
+        ]);
+
+        return response()->json(RecepcionMineralService::crear_particion(
+            $idLote,
+            (int) $request->input('id_recepcion_unidad'),
+            (int) $authUser->id_empleado,
+        ));
+    }
+
+    /**
+     * Listar las particiones activas de un lote.
+     */
+    public function listar_particiones(int $idLote): JsonResponse
+    {
+        return response()->json(RecepcionMineralService::listar_particiones($idLote));
+    }
+
+    /**
+     * Detalle de una partición.
+     */
+    public function get_particion(int $idParticion): JsonResponse
+    {
+        return response()->json(RecepcionMineralService::get_particion($idParticion));
+    }
+
+    /**
+     * Eliminar (físicamente) una partición. La fila se borra de la tabla
+     * `particion_lote_mineral`, junto con sus archivos adjuntos. Antes del
+     * borrado se genera un log de cambios en `lote_mineral.log_cambios`.
+     */
+    public function eliminar_particion(Request $request, int $idParticion): JsonResponse
+    {
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = $authUser ? (int) $authUser->id_empleado : null;
+
+        return response()->json(RecepcionMineralService::eliminar_particion($idParticion, $idEmpleado));
+    }
+
+    /**
+     * Actualizar campos no-peso del lote padre desde una partición (cascada).
+     */
+    public function actualizar_campos_no_peso(Request $request, int $idParticion): JsonResponse
+    {
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = $authUser ? (int) $authUser->id_empleado : null;
+
+        $request->validate([
+            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'id_zona_origen' => 'nullable|integer|exists:zona_origen,id',
+            'numero_contacto' => 'nullable|string|max:50',
+            'tipo_producto' => 'nullable|string|max:100',
+            'tipo_mineral' => 'nullable|string|max:100',
+        ]);
+
+        $data = [
+            'id_proveedor_minero' => $request->input('id_proveedor_minero'),
+            'id_zona_origen' => $request->input('id_zona_origen'),
+            'numero_contacto' => $request->input('numero_contacto'),
+            'tipo_producto' => $request->input('tipo_producto'),
+            'tipo_mineral' => $request->input('tipo_mineral'),
+        ];
+
+        return response()->json(RecepcionMineralService::actualizar_campos_no_peso(
+            $idParticion,
+            $data,
+            $idEmpleado,
+        ));
+    }
+
+    /**
+     * Registrar peso inicial de una partición (crea ticket si no tiene).
+     */
+    public function registrar_peso_inicial_particion(Request $request, int $idParticion): JsonResponse
+    {
+        $request->validate([
+            'peso_inicial' => 'required|numeric|gt:0',
+            'observacion_peso_inicial' => 'nullable|string',
+            'evidencias' => 'nullable|array',
+            'evidencias.*' => 'file',
+            'evidencias_existentes' => 'nullable',
+            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'id_zona_origen' => 'nullable|integer|exists:zona_origen,id',
+            'numero_contacto' => 'nullable|string|max:50',
+            'tipo_producto' => 'nullable|string|max:100',
+            'tipo_mineral' => 'nullable|string|max:100',
+        ]);
+
+        $pesoInicial = (float) $request->input('peso_inicial');
+        if ($pesoInicial <= 0) {
+            return response()->json(ApiResponse::error('El peso inicial debe ser mayor a cero.', 422), 422);
+        }
+
+        $data = [
+            'peso_inicial' => $pesoInicial,
+            'observacion_peso_inicial' => $request->input('observacion_peso_inicial'),
+            'evidencias_existentes' => $request->input('evidencias_existentes'),
+            'id_proveedor_minero' => $request->input('id_proveedor_minero'),
+            'id_zona_origen' => $request->input('id_zona_origen'),
+            'numero_contacto' => $request->input('numero_contacto'),
+            'tipo_producto' => $request->input('tipo_producto'),
+            'tipo_mineral' => $request->input('tipo_mineral'),
+        ];
+
+        $archivos = [];
+        if ($request->hasFile('evidencias')) {
+            $archivos = $request->file('evidencias');
+            if (! is_array($archivos)) {
+                $archivos = [$archivos];
+            }
+        }
+
+        return response()->json(RecepcionMineralService::registrar_peso_inicial_particion(
+            $idParticion,
+            $data,
+            $archivos,
+        ));
+    }
+
+    /**
+     * Registrar peso final de una partición.
+     */
+    public function registrar_peso_final_particion(Request $request, int $idParticion): JsonResponse
+    {
+        $request->validate([
+            'peso_final' => 'required|numeric|gt:0',
+            'observacion_peso_final' => 'nullable|string',
+            'evidencias' => 'nullable|array',
+            'evidencias.*' => 'file',
+            'evidencias_existentes' => 'nullable',
+            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'id_zona_origen' => 'nullable|integer|exists:zona_origen,id',
+            'numero_contacto' => 'nullable|string|max:50',
+            'tipo_producto' => 'nullable|string|max:100',
+            'tipo_mineral' => 'nullable|string|max:100',
+        ]);
+
+        $pesoFinal = (float) $request->input('peso_final');
+        if ($pesoFinal <= 0) {
+            return response()->json(ApiResponse::error('El peso final debe ser mayor a cero.', 422), 422);
+        }
+
+        $data = [
+            'peso_final' => $pesoFinal,
+            'observacion_peso_final' => $request->input('observacion_peso_final'),
+            'evidencias_existentes' => $request->input('evidencias_existentes'),
+            'id_proveedor_minero' => $request->input('id_proveedor_minero'),
+            'id_zona_origen' => $request->input('id_zona_origen'),
+            'numero_contacto' => $request->input('numero_contacto'),
+            'tipo_producto' => $request->input('tipo_producto'),
+            'tipo_mineral' => $request->input('tipo_mineral'),
+        ];
+
+        $archivos = [];
+        if ($request->hasFile('evidencias')) {
+            $archivos = $request->file('evidencias');
+            if (! is_array($archivos)) {
+                $archivos = [$archivos];
+            }
+        }
+
+        return response()->json(RecepcionMineralService::registrar_peso_final_particion(
+            $idParticion,
+            $data,
+            $archivos,
+        ));
+    }
+
+    /**
+     * Finalizar el lote padre particionado desde Balanza.
+     */
+    public function finalizar_particion_lote(Request $request, int $idLote): JsonResponse
+    {
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        return response()->json(RecepcionMineralService::finalizar_particion_lote(
+            $idLote,
+            (int) $authUser->id_empleado,
+        ));
+    }
+
+    /**
+     * Metadatos del ticket de balanza de una partición para impresión PDF.
+     */
+    public function get_ticket_balanza_particion(int $idParticion): JsonResponse
+    {
+        return response()->json(RecepcionMineralService::get_ticket_balanza_particion($idParticion));
     }
 }

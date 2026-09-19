@@ -4,6 +4,7 @@ namespace App\Modules\RecepcionMineral\Services;
 
 use App\Models\Empresa;
 use App\Models\LoteMineral;
+use App\Models\ParticionLoteMineral;
 use App\Models\RecepcionUnidad;
 use App\Models\Vehiculo;
 use App\Modules\RecepcionMineral\Data\RecepcionMineralData;
@@ -14,7 +15,9 @@ use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Helpers\CorrelativoHelper;
 use App\Shared\Responses\ApiResponse;
+use App\Shared\Responses\_Generic\RES_CambiosLog;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class RecepcionMineralService
 {
@@ -152,7 +155,15 @@ class RecepcionMineralService
     }
 
     /**
-     * Crear un lote vacío para una recepción de unidad
+     * Crear un lote vacío para una recepción de unidad.
+     *
+     * Si $particionar=true:
+     *   - Crea lote SIN id_recepcion_unidad, SIN ticket, con particionado_desde_balanza=1.
+     *   - Crea automáticamente la partición A con id_recepcion_unidad=$id (la unidad actual),
+     *     SIN ticket (se crea al primer pesaje), correlativo = lote.correlativo.'-A', etc.
+     *   - Todo en una sola transacción.
+     *
+     * @param  int  $id  id de la recepción de unidad
      */
     public static function crear_lote(
         int $id,
@@ -161,6 +172,7 @@ class RecepcionMineralService
         int $idEmpresa,
         bool $conCodigoManual = false,
         ?string $codigoManual = null,
+        bool $particionar = false,
     ): array {
         $recepcion = RecepcionUnidad::find($id);
         if (! $recepcion) {
@@ -195,7 +207,59 @@ class RecepcionMineralService
             $numeroCorrelativo = $correlativoData['numero_correlativo'];
         }
 
-        // Crear automáticamente el registro en ticket_balanza al generar el lote
+        // Particionar desde balanza: lote sin unidad, sin ticket; partición A con la unidad actual.
+        if ($particionar) {
+            DB::beginTransaction();
+            try {
+                $lote = LoteMineral::create([
+                    'id_recepcion_unidad' => null,
+                    'id_empleado_registro' => $idEmpleadoRegistro,
+                    'id_empresa' => $idEmpresa,
+                    'condicion_ingreso' => $condicionIngreso,
+                    'correlativo' => $correlativo,
+                    'numero_correlativo' => $numeroCorrelativo,
+                    'con_codigo_manual' => $conCodigoManual,
+                    'id_ticket_balanza' => null,
+                    'tiene_particion' => true,
+                    'particionado_desde_balanza' => true,
+                    'particion_finalizada' => false,
+                    'estado_leyes' => EstadoLeyes::Pendiente->value,
+                    'estado' => EstadoBase::Activo->value,
+                    'created_at' => now()->toDateTimeString(),
+                ]);
+
+                DB::table('particion_lote_mineral')->insert([
+                    'id_lote_mineral' => $lote->id,
+                    'id_ticket_balanza' => null,
+                    'id_recepcion_unidad' => $id,
+                    'correlativo' => $correlativo.'-A',
+                    'particion' => 'A',
+                    'peso_inicial' => null,
+                    'fecha_hora_peso_inicial' => null,
+                    'peso_final' => null,
+                    'fecha_hora_peso_final' => null,
+                    'peso_neto' => null,
+                    'estado' => EstadoBase::Activo->value,
+                    'es_bloqueado' => false,
+                    'esta_validado' => true,
+                    'id_empleado_valida' => $idEmpleadoRegistro,
+                    'fecha_hora_validacion' => now()->toDateTimeString(),
+                    'evidencias' => null,
+                ]);
+
+                DB::commit();
+            } catch (\Throwable $e) {
+                DB::rollBack();
+
+                return ApiResponse::error('Error al crear el lote particionado: '.$e->getMessage(), 500);
+            }
+
+            $loteDetalle = RecepcionMineralData::get_lote_by_id($lote->id);
+
+            return ApiResponse::success($loteDetalle, 'Lote particionado generado correctamente.');
+        }
+
+        // Flujo normal: crear ticket de balanza al generar el lote.
         $correlativoTicketData = CorrelativoHelper::generar(
             tabla: 'ticket_balanza',
             prefijo: '',
@@ -463,6 +527,31 @@ class RecepcionMineralService
             }
         }
 
+        // Validación extra: lotes padre particionados desde balanza requieren
+        // que TODAS sus particiones activas tengan peso_final registrado.
+        $lotesPadreParticionados = LoteMineral::where('particionado_desde_balanza', true)
+            ->where('estado', 'Activo')
+            ->where(function ($q) use ($id) {
+                // Lotes padre sin id_recepcion_unidad propios cuyas particiones caen en esta unidad.
+                $q->whereNull('id_recepcion_unidad')
+                    ->orWhere('id_recepcion_unidad', $id);
+            })
+            ->get();
+
+        foreach ($lotesPadreParticionados as $padre) {
+            if (! $padre->particion_finalizada) {
+                return ApiResponse::error(
+                    "Debe finalizar el lote padre particionado {$padre->correlativo} antes de cerrar el proceso.",
+                );
+            }
+            $sinPesoFinal = RecepcionMineralData::count_particiones_sin_peso_final($padre->id);
+            if ($sinPesoFinal > 0) {
+                return ApiResponse::error(
+                    "El lote {$padre->correlativo} tiene {$sinPesoFinal} partición(es) sin peso final registrado.",
+                );
+            }
+        }
+
         $recepcion->estado_pesaje = 'Pesado';
         $recepcion->fecha_hora_final_pesaje = now()->toDateTimeString();
         $recepcion->save();
@@ -701,5 +790,714 @@ class RecepcionMineralService
         $data = RecepcionMineralData::get_resumen_filtros($idSucursal);
 
         return ApiResponse::success($data, 'Metadatos de filtros obtenidos correctamente.');
+    }
+
+    /**
+     * Listar las particiones activas de un lote padre particionado desde Balanza.
+     */
+    public static function listar_particiones(int $idLote): array
+    {
+        $lote = LoteMineral::find($idLote);
+        if (! $lote) {
+            return ApiResponse::error('No se encontró el lote padre.', 404);
+        }
+
+        $particiones = RecepcionMineralData::get_particiones_by_lote($idLote);
+
+        return ApiResponse::success($particiones, 'Particiones obtenidas correctamente.');
+    }
+
+    /**
+     * Detalle de una partición.
+     */
+    public static function get_particion(int $idParticion): array
+    {
+        $particion = RecepcionMineralData::get_particion_by_id($idParticion);
+        if (! $particion) {
+            return ApiResponse::error('No se encontró la partición.', 404);
+        }
+
+        return ApiResponse::success($particion, 'Partición obtenida correctamente.');
+    }
+
+    /**
+     * Crear una partición adicional para un lote padre particionado desde Balanza.
+     * Se usa cuando el usuario arrastra el card del lote padre a otra unidad.
+     *
+     * Reglas:
+     *  - El lote padre debe tener particionado_desde_balanza=true y particion_finalizada=false.
+     *  - No puede existir ya una partición activa del mismo lote en la misma unidad destino.
+     *  - La letra se asigna secuencialmente: A, B, C, ..., Z, AA, AB, ... según las existentes.
+     */
+    public static function crear_particion(int $idLote, int $idRecepcionUnidad, int $idEmpleadoRegistro): array
+    {
+        DB::beginTransaction();
+        try {
+            // Lock pesimista para evitar duplicados por concurrencia.
+            $lote = DB::table('lote_mineral')->where('id', $idLote)->lockForUpdate()->first();
+            if (! $lote) {
+                DB::rollBack();
+
+                return ApiResponse::error('No se encontró el lote padre.', 404);
+            }
+
+            if (! $lote->particionado_desde_balanza) {
+                DB::rollBack();
+
+                return ApiResponse::error('El lote no está particionado desde Balanza.', 422);
+            }
+
+            if ($lote->particion_finalizada) {
+                DB::rollBack();
+
+                return ApiResponse::error('El lote padre ya está finalizado. No se pueden crear más particiones.', 422);
+            }
+
+            if (RecepcionMineralData::existe_particion_en_unidad($idLote, $idRecepcionUnidad)) {
+                DB::rollBack();
+
+                return ApiResponse::error('Ya existe una partición activa de este lote en esa unidad.', 422);
+            }
+
+            // Calcular la siguiente letra.
+            $letra = self::siguienteLetraParticion($idLote);
+
+            DB::table('particion_lote_mineral')->insert([
+                'id_lote_mineral' => $idLote,
+                'id_ticket_balanza' => null,
+                'id_recepcion_unidad' => $idRecepcionUnidad,
+                'correlativo' => $lote->correlativo.'-'.$letra,
+                'particion' => $letra,
+                'peso_inicial' => null,
+                'fecha_hora_peso_inicial' => null,
+                'peso_final' => null,
+                'fecha_hora_peso_final' => null,
+                'peso_neto' => null,
+                'estado' => EstadoBase::Activo->value,
+                'es_bloqueado' => false,
+                'esta_validado' => true,
+                'id_empleado_valida' => $idEmpleadoRegistro,
+                'fecha_hora_validacion' => now()->toDateTimeString(),
+                'evidencias' => null,
+            ]);
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return ApiResponse::error('Error al crear la partición: '.$e->getMessage(), 500);
+        }
+
+        $particiones = RecepcionMineralData::get_particiones_by_lote($idLote);
+
+        return ApiResponse::success($particiones, 'Partición creada correctamente.');
+    }
+
+    /**
+     * Devuelve la siguiente letra disponible (A, B, ..., Z, AA, AB, ...) según las
+     * particiones activas del lote. La primera partición se crea como "A" al generar
+     * el lote, así que esta función devuelve "B" la primera vez.
+     */
+    private static function siguienteLetraParticion(int $idLote): string
+    {
+        $existentes = DB::table('particion_lote_mineral')
+            ->where('id_lote_mineral', $idLote)
+            ->where('estado', EstadoBase::Activo->value)
+            ->pluck('particion')
+            ->all();
+
+        if (empty($existentes)) {
+            return 'A';
+        }
+
+        $maxIndex = -1;
+        foreach ($existentes as $letra) {
+            $idx = self::letraAIndice($letra);
+            if ($idx !== null && $idx > $maxIndex) {
+                $maxIndex = $idx;
+            }
+        }
+
+        return self::indiceALetra($maxIndex + 1);
+    }
+
+    /**
+     * Convierte "A" → 0, "B" → 1, ..., "Z" → 25, "AA" → 26, "AB" → 27, ...
+     */
+    private static function letraAIndice(string $letra): ?int
+    {
+        if ($letra === '' || ! ctype_upper($letra)) {
+            return null;
+        }
+        $n = 0;
+        $len = strlen($letra);
+        for ($i = 0; $i < $len; $i++) {
+            $v = ord($letra[$i]) - 65;
+            if ($v < 0 || $v > 25) {
+                return null;
+            }
+            $n = $n * 26 + ($v + 1);
+        }
+
+        return $n - 1;
+    }
+
+    private static function indiceALetra(int $n): string
+    {
+        $letra = '';
+        $m = $n + 1;
+        while ($m > 0) {
+            $m--;
+            $letra = chr(65 + ($m % 26)).$letra;
+            $m = intdiv($m, 26);
+        }
+
+        return $letra;
+    }
+
+    /**
+     * Eliminar (físicamente) una partición. La fila se borra de la tabla
+     * `particion_lote_mineral`, junto con sus archivos adjuntos en storage
+     * y (si existe) su `ticket_balanza` asociado. Antes del borrado se
+     * registra un log de cambios en `lote_mineral.log_cambios` para
+     * preservar la trazabilidad.
+     *
+     * Si tras el borrado no quedan particiones activas, se resetea
+     * `tiene_particion=false` en el lote padre.
+     */
+    public static function eliminar_particion(int $idParticion, ?int $idEmpleado = null): array
+    {
+        DB::beginTransaction();
+        try {
+            $particion = ParticionLoteMineral::find($idParticion);
+            if (! $particion) {
+                DB::rollBack();
+
+                return ApiResponse::error('No se encontró la partición.', 404);
+            }
+
+            $idLote = (int) $particion->id_lote_mineral;
+            $lote = LoteMineral::find($idLote);
+            if (! $lote) {
+                DB::rollBack();
+
+                return ApiResponse::error('No se encontró el lote padre de la partición.', 404);
+            }
+
+            // Snapshot completo para el log de auditoría (se conserva antes
+            // de cualquier borrado para que el log refleje los valores reales
+            // que tenía la partición al momento de la eliminación).
+            $evidencias = is_array($particion->evidencias) ? $particion->evidencias : [];
+            $snapshot = [
+                'id_particion' => (int) $particion->id,
+                'id_lote_mineral' => $idLote,
+                'id_ticket_balanza' => $particion->id_ticket_balanza !== null ? (int) $particion->id_ticket_balanza : null,
+                'id_recepcion_unidad' => $particion->id_recepcion_unidad !== null ? (int) $particion->id_recepcion_unidad : null,
+                'correlativo' => (string) $particion->correlativo,
+                'particion' => (string) $particion->particion,
+                'peso_inicial' => $particion->peso_inicial !== null ? (float) $particion->peso_inicial : null,
+                'peso_final' => $particion->peso_final !== null ? (float) $particion->peso_final : null,
+                'estado' => $particion->estado instanceof EstadoBase ? $particion->estado->value : (string) $particion->estado,
+                'es_bloqueado' => (bool) $particion->es_bloqueado,
+                'esta_validado' => (bool) $particion->esta_validado,
+                'evidencias_count' => count($evidencias),
+            ];
+
+            $cambios = [];
+            foreach ($snapshot as $campoBd => $valor) {
+                $cambios[] = [
+                    'campo_bd' => "particion_lote_mineral.{$campoBd}",
+                    'campo' => "Partición {$snapshot['particion']} ({$snapshot['correlativo']}) — {$campoBd}",
+                    'valor_anterior' => $valor,
+                    'valor_nuevo' => null,
+                ];
+            }
+
+            // Borrar archivos físicos del JSON evidencias (disco `public`).
+            foreach ($evidencias as $archivo) {
+                if (! is_array($archivo)) {
+                    continue;
+                }
+                $pathRelativo = $archivo['path_relativo'] ?? null;
+                if ($pathRelativo && Storage::disk('public')->exists($pathRelativo)) {
+                    Storage::disk('public')->delete($pathRelativo);
+                }
+            }
+
+            // Si tiene ticket, eliminarlo también.
+            $idTicket = $particion->id_ticket_balanza !== null ? (int) $particion->id_ticket_balanza : null;
+
+            // DELETE físico de la partición.
+            DB::table('particion_lote_mineral')->where('id', $idParticion)->delete();
+
+            if ($idTicket !== null) {
+                DB::table('ticket_balanza')->where('id', $idTicket)->delete();
+            }
+
+            // Log de cambios en el lote padre (trazabilidad obligatoria).
+            if ($idEmpleado !== null) {
+                $logActual = $lote->log_cambios ?? [];
+                if (! is_array($logActual)) {
+                    $logActual = json_decode((string) $logActual, true) ?? [];
+                }
+                $nuevoLog = RES_CambiosLog::crear(
+                    $idEmpleado,
+                    'Eliminación física de partición',
+                    $cambios,
+                );
+                array_unshift($logActual, $nuevoLog);
+                $lote->log_cambios = $logActual;
+                if ($lote->isDirty()) {
+                    $lote->save();
+                }
+            }
+
+            // Si no quedan particiones, revertir flags del lote y marcarlo
+            // como Eliminado para que desaparezca del grid y del header global
+            // (las queries ya filtran por estado != "Eliminado").
+            $quedanActivas = DB::table('particion_lote_mineral')
+                ->where('id_lote_mineral', $idLote)
+                ->count();
+            if ($quedanActivas === 0) {
+                DB::table('lote_mineral')->where('id', $idLote)->update([
+                    'tiene_particion' => false,
+                    'estado' => EstadoBase::Eliminado->value,
+                ]);
+            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return ApiResponse::error('Error al eliminar la partición: '.$e->getMessage(), 500);
+        }
+
+        $particiones = RecepcionMineralData::get_particiones_by_lote($idLote);
+
+        return ApiResponse::success($particiones, 'Partición eliminada correctamente.');
+    }
+
+    /**
+     * Actualizar los campos no-peso del lote padre (cascada a todas las particiones).
+     * Los campos editables: id_proveedor_minero, id_zona_origen, numero_contacto,
+     * tipo_producto, tipo_mineral. Se persisten en lote_mineral y se devuelven
+     * las particiones actualizadas (con campos del padre hidratados).
+     *
+     * @param  array{id_proveedor_minero?: int|null, id_zona_origen?: int|null, numero_contacto?: string|null, tipo_producto?: string|null, tipo_mineral?: string|null}  $data
+     */
+    public static function actualizar_campos_no_peso(int $idParticion, array $data, ?int $idEmpleado = null): array
+    {
+        $particion = ParticionLoteMineral::find($idParticion);
+        if (! $particion) {
+            return ApiResponse::error('No se encontró la partición.', 404);
+        }
+
+        $idLote = (int) $particion->id_lote_mineral;
+        $lote = LoteMineral::find($idLote);
+        if (! $lote) {
+            return ApiResponse::error('No se encontró el lote padre.', 404);
+        }
+
+        $cambios = [];
+        $campos = [
+            'id_proveedor_minero' => ['tipo' => 'int', 'etiqueta' => 'Proveedor minero'],
+            'id_zona_origen' => ['tipo' => 'int', 'etiqueta' => 'Zona de origen'],
+            'numero_contacto' => ['tipo' => 'string', 'etiqueta' => 'Número de contacto'],
+            'tipo_producto' => ['tipo' => 'string', 'etiqueta' => 'Tipo de producto'],
+            'tipo_mineral' => ['tipo' => 'string', 'etiqueta' => 'Tipo de mineral'],
+        ];
+
+        foreach ($campos as $campo => $meta) {
+            if (! array_key_exists($campo, $data)) {
+                continue;
+            }
+            $ant = $lote->{$campo};
+            $nue = $data[$campo];
+            if ($meta['tipo'] === 'int') {
+                $ant = $ant !== null ? (int) $ant : null;
+                $nue = $nue !== null && $nue !== '' ? (int) $nue : null;
+            } else {
+                $ant = $ant !== null ? (string) $ant : null;
+                $nue = $nue !== null ? (string) $nue : null;
+            }
+            if ($ant !== $nue) {
+                $cambios[] = [
+                    'campo_bd' => $campo,
+                    'campo' => $meta['etiqueta'],
+                    'valor_anterior' => $ant,
+                    'valor_nuevo' => $nue,
+                ];
+                $lote->{$campo} = $data[$campo];
+            }
+        }
+
+        if (! empty($cambios) && $idEmpleado !== null) {
+            $logActual = $lote->log_cambios ?? [];
+            if (! is_array($logActual)) {
+                $logActual = json_decode($logActual, true) ?? [];
+            }
+            array_unshift($logActual, [
+                'id_empleado' => $idEmpleado,
+                'motivo' => 'Actualización desde partición',
+                'update_at' => now()->toDateTimeString(),
+                'cambios' => $cambios,
+            ]);
+            $lote->log_cambios = $logActual;
+        }
+
+        if ($lote->isDirty()) {
+            $lote->save();
+        }
+
+        $particiones = RecepcionMineralData::get_particiones_by_lote($idLote);
+
+        return ApiResponse::success([
+            'particiones' => $particiones,
+            'lote' => RecepcionMineralData::get_lote_by_id($idLote),
+        ], 'Campos no-peso actualizados correctamente.');
+    }
+
+    /**
+     * Registrar peso inicial de una partición. Crea el ticket de balanza si no tiene uno.
+     * Devuelve la partición hidratada con el correlativo del ticket.
+     *
+     * Si la request incluye campos no-peso (id_proveedor_minero, id_zona_origen,
+     * numero_contacto, tipo_producto, tipo_mineral), se persisten en el lote
+     * padre para que las demás particiones los hereden vía JOIN al listarse.
+     *
+     * @param  array{peso_inicial: float, fecha_hora_peso_inicial?: string|null, observacion_peso_inicial?: string|null, evidencias_existentes?: array<int, mixed>|null, id_proveedor_minero?: int|null, id_zona_origen?: int|null, numero_contacto?: string|null, tipo_producto?: string|null, tipo_mineral?: string|null}  $data
+     */
+    public static function registrar_peso_inicial_particion(int $idParticion, array $data, array $archivos): array
+    {
+        DB::beginTransaction();
+        try {
+            $particion = ParticionLoteMineral::find($idParticion);
+            if (! $particion) {
+                DB::rollBack();
+
+                return ApiResponse::error('No se encontró la partición.', 404);
+            }
+
+            if ($particion->estado !== EstadoBase::Activo) {
+                DB::rollBack();
+
+                return ApiResponse::error('La partición no está activa.', 422);
+            }
+
+            $pesoInicial = (float) ($data['peso_inicial'] ?? 0);
+            if ($pesoInicial <= 0) {
+                DB::rollBack();
+
+                return ApiResponse::error('El peso inicial debe ser mayor a cero.', 422);
+            }
+
+            // Crear ticket de balanza si la partición aún no tiene uno.
+            if ($particion->id_ticket_balanza === null) {
+                $correlativoTicketData = CorrelativoHelper::generar(
+                    tabla: 'ticket_balanza',
+                    prefijo: '',
+                    filtros: [],
+                    longitudCeros: 0,
+                    reseteo: Periodo::Diario,
+                    formatoFecha: 'dmy',
+                    incluirPrefijo: false,
+                );
+
+                $ticketId = DB::table('ticket_balanza')->insertGetId([
+                    'correlativo' => $correlativoTicketData['correlativo'],
+                    'numero_correlativo' => $correlativoTicketData['numero_correlativo'],
+                    'created_at' => now(),
+                ]);
+                $particion->id_ticket_balanza = $ticketId;
+            }
+
+            // Evidencias: merge con existentes + archivos nuevos.
+            $evidenciasActuales = $particion->evidencias ?? [];
+            if (isset($data['evidencias_existentes'])) {
+                $evidenciasActuales = is_array($data['evidencias_existentes'])
+                    ? $data['evidencias_existentes']
+                    : (json_decode($data['evidencias_existentes'], true) ?? []);
+            }
+            if (! empty($archivos)) {
+                $nuevosArchivos = ArchivoHelper::guardarArchivos('particiones_lotes', $archivos);
+                $evidenciasActuales = array_merge($evidenciasActuales, $nuevosArchivos);
+            }
+
+            $particion->peso_inicial = $pesoInicial;
+            $particion->fecha_hora_peso_inicial = now()->toDateTimeString();
+            $particion->evidencias = $evidenciasActuales;
+            $particion->save();
+
+            // Cascada de campos no-peso al lote padre (si vienen en la request).
+            self::persistir_campos_no_peso_en_padre((int) $particion->id_lote_mineral, $data);
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return ApiResponse::error('Error al registrar peso inicial de la partición: '.$e->getMessage(), 500);
+        }
+
+        $actualizada = RecepcionMineralData::get_particion_by_id($idParticion);
+
+        return ApiResponse::success($actualizada, 'Peso inicial registrado correctamente.');
+    }
+
+    /**
+     * Registrar peso final de una partición. Calcula peso_neto = peso_inicial - peso_final.
+     *
+     * Si la request incluye campos no-peso, también se persisten en el lote
+     * padre (mismo criterio que `registrar_peso_inicial_particion`).
+     *
+     * @param  array{peso_final: float, fecha_hora_peso_final?: string|null, observacion_peso_final?: string|null, evidencias_existentes?: array<int, mixed>|null, id_proveedor_minero?: int|null, id_zona_origen?: int|null, numero_contacto?: string|null, tipo_producto?: string|null, tipo_mineral?: string|null}  $data
+     */
+    public static function registrar_peso_final_particion(int $idParticion, array $data): array
+    {
+        $particion = ParticionLoteMineral::find($idParticion);
+        if (! $particion) {
+            return ApiResponse::error('No se encontró la partición.', 404);
+        }
+
+        if ($particion->peso_inicial === null) {
+            return ApiResponse::error('Debe registrar primero el peso inicial de la partición.', 422);
+        }
+
+        $pesoFinal = (float) ($data['peso_final'] ?? 0);
+        if ($pesoFinal <= 0) {
+            return ApiResponse::error('El peso final debe ser mayor a cero.', 422);
+        }
+        if ($pesoFinal >= (float) $particion->peso_inicial) {
+            return ApiResponse::error('El peso final no puede ser mayor o igual al peso inicial.', 422);
+        }
+
+        $pesoNeto = round(((float) $particion->peso_inicial) - $pesoFinal, 2);
+
+        $particion->peso_final = $pesoFinal;
+        $particion->fecha_hora_peso_final = now()->toDateTimeString();
+        $particion->peso_neto = $pesoNeto;
+        $particion->save();
+
+        // Cascada de campos no-peso al lote padre (si vienen en la request).
+        self::persistir_campos_no_peso_en_padre((int) $particion->id_lote_mineral, $data);
+
+        $actualizada = RecepcionMineralData::get_particion_by_id($idParticion);
+
+        return ApiResponse::success($actualizada, 'Peso final registrado correctamente.');
+    }
+
+    /**
+     * Persiste los campos no-peso en el lote padre de la partición (cascada).
+     * Helper compartido por `registrar_peso_inicial_particion` y
+     * `registrar_peso_final_particion`. Solo actualiza los campos que vienen
+     * explícitamente en $data.
+     *
+     * @param  array{id_proveedor_minero?: mixed, id_zona_origen?: mixed, numero_contacto?: mixed, tipo_producto?: mixed, tipo_mineral?: mixed}  $data
+     */
+    private static function persistir_campos_no_peso_en_padre(int $idLote, array $data): void
+    {
+        $campos = [
+            'id_proveedor_minero',
+            'id_zona_origen',
+            'numero_contacto',
+            'tipo_producto',
+            'tipo_mineral',
+        ];
+
+        $hayCambios = false;
+        foreach ($campos as $campo) {
+            if (array_key_exists($campo, $data)) {
+                $hayCambios = true;
+                break;
+            }
+        }
+        if (! $hayCambios) {
+            return;
+        }
+
+        $lote = LoteMineral::find($idLote);
+        if (! $lote) {
+            return;
+        }
+
+        foreach ($campos as $campo) {
+            if (! array_key_exists($campo, $data)) {
+                continue;
+            }
+            $valor = $data[$campo];
+            // Normalizar '' → null para strings opcionales (numero_contacto,
+            // tipo_producto, tipo_mineral) para mantener consistencia con
+            // cómo se persisten desde otras rutas.
+            if (in_array($campo, ['numero_contacto', 'tipo_producto', 'tipo_mineral'], true) && $valor === '') {
+                $valor = null;
+            }
+            $lote->{$campo} = $valor;
+        }
+
+        if ($lote->isDirty()) {
+            $lote->save();
+        }
+    }
+
+    /**
+     * Finalizar el lote padre particionado desde Balanza.
+     * Suma los peso_neto de las particiones activas y los asigna como peso_neto_oficial
+     * y peso_actual del lote padre. Sella particion_finalizada + fecha/empleado.
+     * Valida que TODAS las particiones activas tengan peso_final.
+     */
+    public static function finalizar_particion_lote(int $idLote, int $idEmpleado): array
+    {
+        error_log("[finalizar_particion_lote] START idLote={$idLote} idEmpleado={$idEmpleado}");
+        DB::beginTransaction();
+        try {
+            $lote = LoteMineral::find($idLote);
+            if (! $lote) {
+                DB::rollBack();
+                error_log("[finalizar_particion_lote] 404 lote no encontrado");
+
+                return ApiResponse::error('No se encontró el lote.', 404);
+            }
+            error_log('[finalizar_particion_lote] lote encontrado ' . json_encode([
+                'particionado_desde_balanza' => (bool) $lote->particionado_desde_balanza,
+                'particion_finalizada' => (bool) $lote->particion_finalizada,
+                'estado' => $lote->estado,
+            ]));
+
+            if (! $lote->particionado_desde_balanza) {
+                DB::rollBack();
+                error_log('[finalizar_particion_lote] 422 no particionado desde balanza');
+
+                return ApiResponse::error('El lote no está particionado desde Balanza.', 422);
+            }
+
+            if ($lote->particion_finalizada) {
+                DB::rollBack();
+                error_log('[finalizar_particion_lote] 422 ya finalizado');
+
+                return ApiResponse::error('El lote ya fue finalizado.', 422);
+            }
+
+            $sinPesoFinal = RecepcionMineralData::count_particiones_sin_peso_final($idLote);
+            error_log("[finalizar_particion_lote] sinPesoFinal={$sinPesoFinal}");
+            if ($sinPesoFinal > 0) {
+                DB::rollBack();
+                error_log("[finalizar_particion_lote] 422 hay {$sinPesoFinal} particiones sin peso final");
+
+                return ApiResponse::error(
+                    "No se puede finalizar: hay {$sinPesoFinal} partición(es) sin peso final registrado.",
+                );
+            }
+
+            $totalNeto = RecepcionMineralData::sum_peso_neto_particiones($idLote);
+            error_log("[finalizar_particion_lote] totalNeto={$totalNeto}");
+
+            $now = now()->toDateTimeString();
+            $lote->peso_neto_oficial = round($totalNeto, 2);
+            $lote->peso_actual = round($totalNeto, 2);
+            $lote->particion_finalizada = true;
+            $lote->id_empleado_fin_particion = $idEmpleado;
+            $lote->fecha_hora_fin_particion = $now;
+            $lote->save();
+            error_log('[finalizar_particion_lote] lote guardado OK');
+
+            // Auto-validación en validacion-distribucion: al finalizar el lote
+            // padre, el lote y todas sus particiones activas quedan validadas.
+            // El listado de validacion-distribucion los mostrará como ya
+            // validados (check verde) sin paso manual del operador.
+            $nowValidacion = now()->toDateTimeString();
+            DB::table('particion_lote_mineral')
+                ->where('id_lote_mineral', $idLote)
+                ->where('estado', EstadoBase::Activo->value)
+                ->update([
+                    'esta_validado' => 1,
+                    'id_empleado_valida' => $idEmpleado,
+                    'fecha_hora_validacion' => $nowValidacion,
+                ]);
+            $lote->esta_validado = 1;
+            $lote->id_empleado_valida = $idEmpleado;
+            $lote->fecha_hora_validacion = $nowValidacion;
+            $lote->save();
+
+            DB::commit();
+            error_log('[finalizar_particion_lote] COMMIT OK');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            error_log('[finalizar_particion_lote] THROWABLE: '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
+            error_log('[finalizar_particion_lote] TRACE: '.$e->getTraceAsString());
+
+            return ApiResponse::error('Error al finalizar el lote particionado: '.$e->getMessage(), 500);
+        }
+
+        $loteDetalle = RecepcionMineralData::get_lote_by_id($idLote);
+        $particiones = RecepcionMineralData::get_particiones_by_lote($idLote);
+        error_log('[finalizar_particion_lote] devolviendo respuesta success');
+
+        return ApiResponse::success([
+            'lote' => $loteDetalle,
+            'particiones' => $particiones,
+        ], 'Lote particionado finalizado correctamente.');
+    }
+
+    /**
+     * Lotes padre particionados desde Balanza con particiones activas en una sucursal.
+     * Sirve para alimentar el header global del frontend.
+     */
+    public static function get_lotes_padre_particionados(int $idSucursal): array
+    {
+        $rows = RecepcionMineralData::get_lotes_padre_particionados_by_sucursal($idSucursal);
+
+        return ApiResponse::success($rows, 'Lotes padre particionados obtenidos correctamente.');
+    }
+
+    /**
+     * Metadatos para imprimir el Ticket de Balanza de una PARTICIÓN de Balanza.
+     *
+     * Usa la query SQL dedicada `get_ticket_balanza_info_particion`, que pivota
+     * desde `particion_lote_mineral` y resuelve todos los JOINs contra la UNIDAD
+     * DESTINO de la partición (`plm.id_recepcion_unidad`):
+     *  - ticket propio de la partición (`tb.id = plm.id_ticket_balanza`)
+     *  - placa, conductor, transportista y operador desde la unidad destino
+     *  - proveedor con cascada `rec.id_proveedor_minero → gui.id_proveedor → lot.id_proveedor_minero`
+     *
+     * Antes esta función reusaba `get_ticket_balanza_info($particion->id_lote_mineral)`,
+     * que devolvía los datos del LOTE PADRE (ticket, unidad, operador, etc.) — no
+     * los de la partición. Ahora cada módulo imprime correctamente para su tipo.
+     *
+     * Los overrides defensivos de `peso_bruto`/`peso_tara`/`peso_neto` se mantienen
+     * por si la query dedicada deja `null` (defensa en profundidad).
+     */
+    public static function get_ticket_balanza_particion(int $idParticion): array
+    {
+        $particion = RecepcionMineralData::get_particion_by_id($idParticion);
+        if (! $particion) {
+            return ApiResponse::error('No se encontró la partición.', 404);
+        }
+
+        if ($particion->id_ticket_balanza === null) {
+            return ApiResponse::error('La partición aún no tiene ticket de balanza. Registre primero el peso inicial.', 422);
+        }
+
+        $data = RecepcionMineralData::get_ticket_balanza_info_particion($idParticion);
+        if (! $data) {
+            return ApiResponse::error('No se encontró la información del ticket para la partición especificada.', 404);
+        }
+
+        // Defenderse por si la query dedicada dejó los pesos en null (no debería,
+        // pero preserva el comportamiento histórico por si cambia el contrato).
+        if ($particion->peso_inicial !== null) {
+            $data['peso_bruto'] = (float) $particion->peso_inicial;
+            $data['fecha_hora_peso_bruto'] = $particion->fecha_hora_peso_inicial;
+        }
+        if ($particion->peso_final !== null) {
+            $data['peso_tara'] = (float) $particion->peso_final;
+            $data['fecha_hora_peso_tara'] = $particion->fecha_hora_peso_final;
+        }
+        if ($particion->peso_neto !== null) {
+            $data['peso_neto'] = (float) $particion->peso_neto;
+        }
+
+        // Metadato adicional por si el frontend lo requiere en el futuro.
+        $data['particion'] = $particion->particion;
+
+        return ApiResponse::success($data, 'Ticket de balanza de la partición obtenido correctamente.');
     }
 }

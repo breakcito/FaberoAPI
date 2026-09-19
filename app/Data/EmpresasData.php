@@ -43,10 +43,11 @@ class EmpresasData
             return DB::selectOne($sql, $params);
         }
 
-        if ($estado !== null) {
-            $sql .= ' AND emp.estado = :estado';
-            $params['estado'] = $estado->value;
-        }
+        // Nota: la tabla `empresa` actualmente NO tiene columna `estado`
+        // (legacy anterior a la regla del README sobre borrado lógico).
+        // El parámetro $estado del Service queda como no-op hasta que se
+        // agregue la columna vía ALTER TABLE y se popule en Empresa::insertGetId().
+        // Si en el futuro se agrega, reactivar este bloque aquí.
 
         $sql .= ' ORDER BY razon_social ASC';
 

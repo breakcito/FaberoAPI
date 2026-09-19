@@ -12,9 +12,9 @@ use Illuminate\Support\Facades\DB;
 class ProgramacionDespachosData
 {
     /**
-     * Listar despachos con filtros opcionales por planta destino y rango de fechas.
+     * Listar despachos con filtros opcionales por planta destino, empresa y rango de fechas.
      *
-     * @param  array{id_planta_destino?: int|null, fecha_inicio?: string|null, fecha_fin?: string|null}  $filtros
+     * @param  array{id_planta_destino?: int|null, id_empresa?: int|null, fecha_inicio?: string|null, fecha_fin?: string|null}  $filtros
      * @return array<object>
      */
     public static function get_despachos(array $filtros = []): array
@@ -25,6 +25,8 @@ class ProgramacionDespachosData
             d.id_planta_destino,
             pd.razon_social AS planta_destino_razon_social,
             pd.ruc AS planta_destino_ruc,
+            d.id_empresa,
+            e.razon_social AS empresa_razon_social,
             d.id_empleado_registro,
             CONCAT(emp_reg.nombre, " ", emp_reg.apellido) AS empleado_registro_nombre,
             d.id_empleado_anulacion,
@@ -38,6 +40,7 @@ class ProgramacionDespachosData
             (SELECT COALESCE(SUM(peso_actual), 0) FROM despacho_detalle WHERE id_despacho = d.id) AS peso_total_pendiente
         FROM despacho d
         INNER JOIN planta_destino pd ON pd.id = d.id_planta_destino
+        LEFT JOIN empresa e ON e.id = d.id_empresa
         LEFT JOIN empleado emp_reg ON emp_reg.id = d.id_empleado_registro
         WHERE 1 = 1
         ';
@@ -47,6 +50,11 @@ class ProgramacionDespachosData
         if (! empty($filtros['id_planta_destino'])) {
             $sql .= ' AND d.id_planta_destino = :id_planta_destino';
             $params['id_planta_destino'] = (int) $filtros['id_planta_destino'];
+        }
+
+        if (! empty($filtros['id_empresa'])) {
+            $sql .= ' AND d.id_empresa = :id_empresa';
+            $params['id_empresa'] = (int) $filtros['id_empresa'];
         }
 
         if (! empty($filtros['fecha_inicio'])) {
@@ -66,6 +74,8 @@ class ProgramacionDespachosData
         foreach ($results as $row) {
             $row->id = (int) $row->id;
             $row->id_planta_destino = (int) $row->id_planta_destino;
+            $row->id_empresa = $row->id_empresa !== null ? (int) $row->id_empresa : null;
+            $row->empresa_razon_social = $row->empresa_razon_social !== null ? (string) $row->empresa_razon_social : null;
             $row->id_empleado_registro = (int) $row->id_empleado_registro;
             $row->id_empleado_anulacion = $row->id_empleado_anulacion !== null ? (int) $row->id_empleado_anulacion : null;
             $row->numero_correlativo = (int) $row->numero_correlativo;
@@ -91,6 +101,9 @@ class ProgramacionDespachosData
             d.id_planta_destino,
             pd.razon_social AS planta_destino_razon_social,
             pd.ruc AS planta_destino_ruc,
+            d.id_empresa,
+            e.razon_social AS empresa_razon_social,
+            e.ruc AS empresa_ruc,
             d.id_empleado_registro,
             CONCAT(emp_reg.nombre, " ", emp_reg.apellido) AS empleado_registro_nombre,
             d.id_empleado_anulacion,
@@ -102,6 +115,7 @@ class ProgramacionDespachosData
             d.created_at
         FROM despacho d
         INNER JOIN planta_destino pd ON pd.id = d.id_planta_destino
+        LEFT JOIN empresa e ON e.id = d.id_empresa
         LEFT JOIN empleado emp_reg ON emp_reg.id = d.id_empleado_registro
         LEFT JOIN empleado emp_anu ON emp_anu.id = d.id_empleado_anulacion
         WHERE d.id = :id
@@ -115,6 +129,9 @@ class ProgramacionDespachosData
 
         $cabecera->id = (int) $cabecera->id;
         $cabecera->id_planta_destino = (int) $cabecera->id_planta_destino;
+        $cabecera->id_empresa = $cabecera->id_empresa !== null ? (int) $cabecera->id_empresa : null;
+        $cabecera->empresa_razon_social = $cabecera->empresa_razon_social !== null ? (string) $cabecera->empresa_razon_social : null;
+        $cabecera->empresa_ruc = $cabecera->empresa_ruc !== null ? (string) $cabecera->empresa_ruc : null;
         $cabecera->id_empleado_registro = (int) $cabecera->id_empleado_registro;
         $cabecera->id_empleado_anulacion = $cabecera->id_empleado_anulacion !== null ? (int) $cabecera->id_empleado_anulacion : null;
         $cabecera->numero_correlativo = (int) $cabecera->numero_correlativo;
@@ -128,6 +145,7 @@ class ProgramacionDespachosData
             dd.id_lote_mineral,
             dd.peso_tomado,
             dd.peso_actual,
+            dd.codigo_preliminar,
             b.correlativo AS blending_correlativo,
             b.peso_neto AS blending_peso_neto,
             lm.correlativo AS lote_correlativo,
@@ -151,6 +169,7 @@ class ProgramacionDespachosData
             $d->id_lote_mineral = $d->id_lote_mineral !== null ? (int) $d->id_lote_mineral : null;
             $d->peso_tomado = (float) $d->peso_tomado;
             $d->peso_actual = (float) $d->peso_actual;
+            $d->codigo_preliminar = $d->codigo_preliminar !== null ? (string) $d->codigo_preliminar : null;
             $d->blending_peso_neto = $d->blending_peso_neto !== null ? (float) $d->blending_peso_neto : null;
             $d->lote_peso_neto = $d->lote_peso_neto !== null ? (float) $d->lote_peso_neto : null;
         }
@@ -356,15 +375,21 @@ class ProgramacionDespachosData
      * sobre `despacho_detalle` con despacho no anulado queda comentada en este
      * modulo hasta que se requiera).
      *
+     * Si llega `id_empresa`, el resultado se filtra a lotes/blendings cuya
+     * `id_empresa` coincida (defensa + UX: el dropdown del modal solo muestra
+     * items de la empresa seleccionada).
+     *
      * @return array<int, object>
      */
-    public static function get_items_disponibles(): array
+    public static function get_items_disponibles(?int $idEmpresa = null): array
     {
         $sqlLotesSinParticion = '
         SELECT
             "LOTE" AS tipo_item,
             lm.id AS id_lote_mineral,
             NULL AS id_blending,
+            lm.id_empresa,
+            e.razon_social AS empresa_razon_social,
             lm.correlativo,
             lm.numero_correlativo,
             lm.tipo_producto,
@@ -381,6 +406,7 @@ class ProgramacionDespachosData
         INNER JOIN valorizacion_compramineral_detalle vcd ON vcd.id_lote_guia = lg.id
         INNER JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
         INNER JOIN comprobante_compra cc ON cc.id_valorizacion_compra = vc.id
+        LEFT JOIN empresa e ON e.id = lm.id_empresa
         LEFT JOIN proveedor pr ON pr.id = lm.id_proveedor_minero
         WHERE lm.tiene_particion = 0
           AND lm.peso_actual > 0
@@ -407,6 +433,8 @@ class ProgramacionDespachosData
             "LOTE" AS tipo_item,
             lm.id AS id_lote_mineral,
             NULL AS id_blending,
+            lm.id_empresa,
+            e.razon_social AS empresa_razon_social,
             lm.correlativo,
             lm.numero_correlativo,
             lm.tipo_producto,
@@ -428,6 +456,7 @@ class ProgramacionDespachosData
         INNER JOIN valorizacion_compramineral_detalle vcd ON vcd.id_lote_guia = lg.id
         INNER JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
         INNER JOIN comprobante_compra cc ON cc.id_valorizacion_compra = vc.id
+        LEFT JOIN empresa e ON e.id = lm.id_empresa
         LEFT JOIN proveedor pr ON pr.id = lm.id_proveedor_minero
         WHERE lm.tiene_particion = 1
           AND lm.peso_actual > 0
@@ -480,6 +509,8 @@ class ProgramacionDespachosData
             "BLENDING" AS tipo_item,
             NULL AS id_lote_mineral,
             b.id AS id_blending,
+            b.id_empresa,
+            e.razon_social AS empresa_razon_social,
             b.correlativo,
             b.numero_correlativo,
             NULL AS tipo_producto,
@@ -489,6 +520,7 @@ class ProgramacionDespachosData
             b.created_at,
             NULL AS proveedor_razon_social
         FROM blending b
+        LEFT JOIN empresa e ON e.id = b.id_empresa
         WHERE b.peso_actual > 0
         ';
 
@@ -519,34 +551,60 @@ class ProgramacionDespachosData
 
         $results = [];
 
-        foreach (DB::select($sqlLotesSinParticion, $paramsLotesSinParticion) as $row) {
+        $normalizeLote = static function (object $row): array {
             $row->id_lote_mineral = (int) $row->id_lote_mineral;
             $row->id_blending = null;
+            $row->id_empresa = $row->id_empresa !== null ? (int) $row->id_empresa : null;
+            $row->empresa_razon_social = $row->empresa_razon_social !== null ? (string) $row->empresa_razon_social : null;
             $row->numero_correlativo = (int) $row->numero_correlativo;
             $row->peso_neto = (float) $row->peso_neto;
             $row->peso_actual = (float) $row->peso_actual;
             $row->id = (int) $row->id_lote_mineral;
-            $results[] = (array) $row;
-        }
 
-        foreach (DB::select($sqlLotesConParticion, $paramsLotesConParticion) as $row) {
-            $row->id_lote_mineral = (int) $row->id_lote_mineral;
-            $row->id_blending = null;
-            $row->numero_correlativo = (int) $row->numero_correlativo;
-            $row->peso_neto = (float) $row->peso_neto;
-            $row->peso_actual = (float) $row->peso_actual;
-            $row->id = (int) $row->id_lote_mineral;
-            $results[] = (array) $row;
-        }
+            return (array) $row;
+        };
 
-        foreach (DB::select($sqlBlendings) as $row) {
+        $normalizeBlending = static function (object $row): array {
             $row->id_blending = (int) $row->id_blending;
             $row->id_lote_mineral = null;
+            $row->id_empresa = $row->id_empresa !== null ? (int) $row->id_empresa : null;
+            $row->empresa_razon_social = $row->empresa_razon_social !== null ? (string) $row->empresa_razon_social : null;
             $row->numero_correlativo = (int) $row->numero_correlativo;
             $row->peso_neto = (float) $row->peso_neto;
             $row->peso_actual = (float) $row->peso_actual;
             $row->id = (int) $row->id_blending;
-            $results[] = (array) $row;
+
+            return (array) $row;
+        };
+
+        // Filtro por id_empresa, si llega.
+        $empFilterLote = static function (array $row) use ($idEmpresa): bool {
+            if ($idEmpresa === null) {
+                return true;
+            }
+
+            return isset($row['id_empresa']) && (int) $row['id_empresa'] === $idEmpresa;
+        };
+
+        foreach (DB::select($sqlLotesSinParticion, $paramsLotesSinParticion) as $row) {
+            $arr = $normalizeLote($row);
+            if ($empFilterLote($arr)) {
+                $results[] = $arr;
+            }
+        }
+
+        foreach (DB::select($sqlLotesConParticion, $paramsLotesConParticion) as $row) {
+            $arr = $normalizeLote($row);
+            if ($empFilterLote($arr)) {
+                $results[] = $arr;
+            }
+        }
+
+        foreach (DB::select($sqlBlendings) as $row) {
+            $arr = $normalizeBlending($row);
+            if ($empFilterLote($arr)) {
+                $results[] = $arr;
+            }
         }
 
         usort($results, static fn ($a, $b) => strcmp((string) ($a['correlativo'] ?? ''), (string) ($b['correlativo'] ?? '')));
@@ -560,11 +618,13 @@ class ProgramacionDespachosData
     public static function crear_despacho(
         int $idEmpleadoRegistro,
         int $idPlantaDestino,
+        int $idEmpresa,
         string $correlativo,
         int $numeroCorrelativo,
     ): int {
         return DB::table('despacho')->insertGetId([
             'id_planta_destino' => $idPlantaDestino,
+            'id_empresa' => $idEmpresa,
             'id_empleado_registro' => $idEmpleadoRegistro,
             'correlativo' => $correlativo,
             'numero_correlativo' => $numeroCorrelativo,
@@ -581,6 +641,7 @@ class ProgramacionDespachosData
         ?int $idBlending,
         ?int $idLoteMineral,
         float $pesoTomado,
+        ?string $codigoPreliminar = null,
     ): int {
         return DB::table('despacho_detalle')->insertGetId([
             'id_despacho' => $idDespacho,
@@ -588,6 +649,7 @@ class ProgramacionDespachosData
             'id_lote_mineral' => $idLoteMineral,
             'peso_tomado' => $pesoTomado,
             'peso_actual' => $pesoTomado,
+            'codigo_preliminar' => $codigoPreliminar,
         ]);
     }
 

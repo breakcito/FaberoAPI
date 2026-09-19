@@ -12,25 +12,29 @@ use Illuminate\Support\Facades\Validator;
 class ProgramacionDespachosController extends Controller
 {
     /**
-     * Listar despachos (filtros: id_planta_destino, fecha_inicio, fecha_fin).
+     * Listar despachos (filtros: id_planta_destino, id_empresa, fecha_inicio, fecha_fin).
      */
     public function get_despachos(Request $request): JsonResponse
     {
         $idPlanta = $request->query('id_planta_destino') ? (int) $request->query('id_planta_destino') : null;
+        $idEmpresa = $request->query('id_empresa') ? (int) $request->query('id_empresa') : null;
         $fechaInicio = $request->query('fecha_inicio') ?: null;
         $fechaFin = $request->query('fecha_fin') ?: null;
 
         return response()->json(
-            ProgramacionDespachosService::get_despachos($idPlanta, $fechaInicio, $fechaFin)
+            ProgramacionDespachosService::get_despachos($idPlanta, $idEmpresa, $fechaInicio, $fechaFin)
         );
     }
 
     /**
      * Items (lotes y blendings) disponibles para despachar.
+     * Acepta filtro opcional `id_empresa` (?id_empresa=N).
      */
     public function get_items_disponibles(Request $request): JsonResponse
     {
-        return response()->json(ProgramacionDespachosService::get_items_disponibles());
+        $idEmpresa = $request->query('id_empresa') ? (int) $request->query('id_empresa') : null;
+
+        return response()->json(ProgramacionDespachosService::get_items_disponibles($idEmpresa));
     }
 
     /**
@@ -48,10 +52,12 @@ class ProgramacionDespachosController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'id_planta_destino' => 'required|integer',
+            'id_empresa' => 'required|integer',
             'detalles' => 'required|array|min:1',
             'detalles.*.id_lote_mineral' => 'nullable|integer',
             'detalles.*.id_blending' => 'nullable|integer',
             'detalles.*.peso_tomado' => 'required|numeric|gt:0',
+            'detalles.*.codigo_preliminar' => 'nullable|string|max:20',
         ]);
 
         if ($validator->fails()) {
@@ -64,7 +70,10 @@ class ProgramacionDespachosController extends Controller
         }
 
         return response()->json(
-            ProgramacionDespachosService::crear_despacho($validator->validated(), (int) $authUser->id_empleado)
+            ProgramacionDespachosService::crear_despacho(
+                $validator->validated(),
+                (int) $authUser->id_empleado,
+            )
         );
     }
 

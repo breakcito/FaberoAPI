@@ -47,6 +47,8 @@ class ContabilidadCompraData
                 cc.avance_pago_neto,
                 cc.avance_pago_detraccion,
                 vc.id_cuenta_bancaria AS id_cuenta_bancaria_proveedor_sugerida,
+                vc.monto_penalidad AS monto_penalidad,
+                vc.monto_flete AS monto_flete,
                 cc.aprobaciones,
                 cc.estado,
                 cc.created_at,
@@ -174,6 +176,8 @@ class ContabilidadCompraData
                 cc.avance_pago_neto,
                 cc.avance_pago_detraccion,
                 vc.id_cuenta_bancaria AS id_cuenta_bancaria_proveedor_sugerida,
+                vc.monto_penalidad AS monto_penalidad,
+                vc.monto_flete AS monto_flete,
                 cc.aprobaciones,
                 cc.estado,
                 cc.created_at,
@@ -267,6 +271,12 @@ class ContabilidadCompraData
         $row->monto_neto = (float) $row->monto_neto;
         $row->avance_pago_neto = (float) $row->avance_pago_neto;
         $row->avance_pago_detraccion = (float) $row->avance_pago_detraccion;
+        if (isset($row->monto_penalidad)) {
+            $row->monto_penalidad = (float) ($row->monto_penalidad ?? 0);
+        }
+        if (isset($row->monto_flete)) {
+            $row->monto_flete = (float) ($row->monto_flete ?? 0);
+        }
         if (isset($row->id_cuenta_bancaria_proveedor_sugerida)) {
             $row->id_cuenta_bancaria_proveedor_sugerida = $row->id_cuenta_bancaria_proveedor_sugerida !== null ? (int) $row->id_cuenta_bancaria_proveedor_sugerida : null;
         }

@@ -24,6 +24,10 @@ class ParticionLoteMineral extends Model
         'peso_neto',
         'estado',
         'es_bloqueado',
+        'esta_validado',
+        'id_empleado_valida',
+        'fecha_hora_validacion',
+        'evidencias',
     ];
 
     protected $casts = [
@@ -33,6 +37,8 @@ class ParticionLoteMineral extends Model
         'estado' => EstadoBase::class,
         'es_bloqueado' => 'boolean',
         'esta_validado' => 'boolean',
+        'fecha_hora_validacion' => 'datetime',
+        'evidencias' => 'array',
     ];
 
     public function loteMineral()

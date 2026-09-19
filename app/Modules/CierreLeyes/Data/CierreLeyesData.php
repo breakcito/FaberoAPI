@@ -33,8 +33,19 @@ class CierreLeyesData
                 lm.estado_leyes,
                 lm.created_at
             FROM lote_mineral lm
-            INNER JOIN recepcion_unidad ru ON lm.id_recepcion_unidad = ru.id
-            WHERE ru.estado_pesaje = "'.EstadoPesaje::Pesado->value.'"
+            LEFT JOIN recepcion_unidad ru ON lm.id_recepcion_unidad = ru.id
+            WHERE (
+                -- Lote regular: tiene unidad y está pesado.
+                (lm.id_recepcion_unidad IS NOT NULL
+                 AND ru.estado_pesaje = "'.EstadoPesaje::Pesado->value.'")
+                OR
+                -- Lote padre particionado y finalizado: no tiene unidad directa,
+                -- pero el total consolidado ya fue sellado por finalizar_particion_lote.
+                (lm.particionado_desde_balanza = 1
+                 AND lm.particion_finalizada = 1
+                 AND lm.id_recepcion_unidad IS NULL
+                 AND lm.peso_neto_oficial IS NOT NULL)
+            )
               AND lm.condicion_ingreso = "'.CondicionIngreso::Comercializacion->value.'"
               AND (lm.estado_leyes = "'.EstadoLeyes::Pendiente->value.'" OR lm.estado_leyes IS NULL OR lm.estado_leyes = "")
             ORDER BY lm.created_at DESC, lm.id DESC

@@ -20,11 +20,30 @@ class ValidacionDistribucionData
             SELECT
                 lm.id AS id_lote_mineral,
                 lm.correlativo AS lote_correlativo,
-                lm.peso_neto AS lote_peso_neto,
-                lm.peso_final AS lote_peso_final,
-                lm.peso_inicial AS lote_peso_inicial,
-                lm.fecha_hora_peso_inicial AS lote_fecha_peso_inicial,
-                lm.fecha_hora_peso_final AS lote_fecha_peso_final,
+                -- NULLIF(..., 0) trata el peso "0.00" como NULL para que el
+                -- COALESCE no lo prefiera sobre peso_neto real de los lotes
+                -- regulares (cuyo peso_neto_oficial queda en 0).
+                COALESCE(NULLIF(lm.peso_neto_oficial, 0), lm.peso_neto) AS lote_peso_neto,
+                COALESCE(
+                    lm.peso_final,
+                    (SELECT SUM(p.peso_final) FROM particion_lote_mineral p
+                     WHERE p.id_lote_mineral = lm.id AND p.estado = "Activo")
+                ) AS lote_peso_final,
+                COALESCE(
+                    lm.peso_inicial,
+                    (SELECT SUM(p.peso_inicial) FROM particion_lote_mineral p
+                     WHERE p.id_lote_mineral = lm.id AND p.estado = "Activo")
+                ) AS lote_peso_inicial,
+                COALESCE(
+                    lm.fecha_hora_peso_inicial,
+                    (SELECT MIN(p.fecha_hora_peso_inicial) FROM particion_lote_mineral p
+                     WHERE p.id_lote_mineral = lm.id AND p.estado = "Activo")
+                ) AS lote_fecha_peso_inicial,
+                COALESCE(
+                    lm.fecha_hora_peso_final,
+                    (SELECT MAX(p.fecha_hora_peso_final) FROM particion_lote_mineral p
+                     WHERE p.id_lote_mineral = lm.id AND p.estado = "Activo")
+                ) AS lote_fecha_peso_final,
                 lm.tiene_particion,
                 lm.esta_validado AS lote_esta_validado,
                 lm.id_empleado_valida AS lote_id_empleado_valida,
@@ -33,23 +52,45 @@ class ValidacionDistribucionData
                 v.id AS id_vehiculo,
                 v.placa AS vehiculo_placa,
                 v.capacidad AS vehiculo_capacidad,
-                (lm.peso_neto - v.capacidad) AS excedente,
+                (COALESCE(NULLIF(lm.peso_neto_oficial, 0), lm.peso_neto) - v.capacidad) AS excedente,
                 tb.correlativo AS ticket_correlativo,
                 lm.created_at AS lote_fecha_creacion
             FROM lote_mineral lm
-            INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
-            INNER JOIN vehiculo v ON v.id = ru.id_vehiculo
-            LEFT JOIN ticket_balanza tb ON tb.id = lm.id_ticket_balanza
+            -- LEFT JOIN porque el lote padre particionado tiene id_recepcion_unidad = NULL.
+            LEFT JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
+            LEFT JOIN vehiculo v          ON v.id = ru.id_vehiculo
+            LEFT JOIN ticket_balanza tb   ON tb.id = lm.id_ticket_balanza
             WHERE (lm.estado IS NULL OR lm.estado != "Eliminado")
-              AND ru.estado_pesaje = "Pesado"
-              AND lm.peso_neto > 0
+              AND COALESCE(NULLIF(lm.peso_neto_oficial, 0), lm.peso_neto) > 0
+              AND (
+                  -- (1) Lote regular pesado asignado a una unidad de la sucursal.
+                  (lm.id_recepcion_unidad IS NOT NULL
+                     AND ru.id_sucursal = :id_sucursal_a
+                     AND ru.estado_pesaje = "Pesado")
+                  OR
+                  -- (2) Lote padre particionado y finalizado. No tiene unidad
+                  -- asignada, pero sus particiones hijas están en unidades de la
+                  -- sucursal. La auto-validación al finalizar marca
+                  -- `esta_validado = 1` en `lote_mineral` y `particion_lote_mineral`,
+                  -- así que aparecen en el listado como ya validados.
+                  (lm.particionado_desde_balanza = 1
+                     AND lm.particion_finalizada = 1
+                     AND lm.id_recepcion_unidad IS NULL
+                     AND EXISTS (
+                         SELECT 1
+                         FROM particion_lote_mineral p
+                         INNER JOIN recepcion_unidad ru2 ON ru2.id = p.id_recepcion_unidad
+                         WHERE p.id_lote_mineral = lm.id
+                           AND ru2.id_sucursal = :id_sucursal_lp
+                     ))
+              )
         ';
 
         $params = [];
 
         if (! empty($filtros['id_sucursal'])) {
-            $sql .= ' AND ru.id_sucursal = :id_sucursal';
-            $params['id_sucursal'] = (int) $filtros['id_sucursal'];
+            $params['id_sucursal_a'] = (int) $filtros['id_sucursal'];
+            $params['id_sucursal_lp'] = (int) $filtros['id_sucursal'];
         }
         if (! empty($filtros['fecha_inicio'])) {
             $sql .= ' AND DATE(lm.created_at) >= :fecha_inicio';
@@ -66,9 +107,9 @@ class ValidacionDistribucionData
 
         return array_map(function ($r) {
             $r->id_lote_mineral = (int) $r->id_lote_mineral;
-            $r->lote_peso_neto = (float) ($r->lote_peso_neto ?? 0);
-            $r->lote_peso_final = (float) ($r->lote_peso_final ?? 0);
-            $r->lote_peso_inicial = (float) ($r->lote_peso_inicial ?? 0);
+            $r->lote_peso_neto = $r->lote_peso_neto !== null ? (float) $r->lote_peso_neto : null;
+            $r->lote_peso_final = $r->lote_peso_final !== null ? (float) $r->lote_peso_final : null;
+            $r->lote_peso_inicial = $r->lote_peso_inicial !== null ? (float) $r->lote_peso_inicial : null;
             $r->tiene_particion = (bool) $r->tiene_particion;
             $r->lote_esta_validado = (bool) ($r->lote_esta_validado ?? 0);
             $r->lote_id_empleado_valida = $r->lote_id_empleado_valida !== null ? (int) $r->lote_id_empleado_valida : null;
@@ -144,6 +185,7 @@ class ValidacionDistribucionData
                 {$bloqueadoExpr},
                 tb.correlativo AS ticket_correlativo,
                 ru.id_vehiculo,
+                ru.id_vehiculo_carreta,
                 ru.id_conductor,
                 ru.id_sucursal,
                 ru.id_empresa_transporte,
@@ -153,11 +195,13 @@ class ValidacionDistribucionData
                 ru.fecha_hora_salida,
                 v.placa AS vehiculo_placa,
                 v.tara AS vehiculo_tara,
-                v.capacidad AS vehiculo_capacidad
+                v.capacidad AS vehiculo_capacidad,
+                vc.placa AS vehiculo_carreta_placa
             FROM particion_lote_mineral plm
             LEFT JOIN ticket_balanza tb ON tb.id = plm.id_ticket_balanza
             LEFT JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
             LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
+            LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
             WHERE plm.id = :id
             LIMIT 1
         ";
@@ -180,6 +224,7 @@ class ValidacionDistribucionData
         $row->id_empleado_valida = $row->id_empleado_valida !== null ? (int) $row->id_empleado_valida : null;
         $row->fecha_hora_validacion = $row->fecha_hora_validacion !== null ? (string) $row->fecha_hora_validacion : null;
         $row->id_vehiculo = $row->id_vehiculo !== null ? (int) $row->id_vehiculo : null;
+        $row->id_vehiculo_carreta = $row->id_vehiculo_carreta !== null ? (int) $row->id_vehiculo_carreta : null;
         $row->id_conductor = $row->id_conductor !== null ? (int) $row->id_conductor : null;
         $row->id_sucursal = $row->id_sucursal !== null ? (int) $row->id_sucursal : null;
         $row->id_empresa_transporte = $row->id_empresa_transporte !== null ? (int) $row->id_empresa_transporte : null;
@@ -239,6 +284,7 @@ class ValidacionDistribucionData
                 {$bloqueadoExpr},
                 tb.correlativo AS ticket_correlativo,
                 ru.id_vehiculo,
+                ru.id_vehiculo_carreta,
                 ru.id_conductor,
                 ru.id_sucursal,
                 ru.id_empresa_transporte,
@@ -248,11 +294,13 @@ class ValidacionDistribucionData
                 ru.fecha_hora_salida,
                 v.placa AS vehiculo_placa,
                 v.tara AS vehiculo_tara,
-                v.capacidad AS vehiculo_capacidad
+                v.capacidad AS vehiculo_capacidad,
+                vc.placa AS vehiculo_carreta_placa
             FROM particion_lote_mineral plm
             LEFT JOIN ticket_balanza tb ON tb.id = plm.id_ticket_balanza
             LEFT JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
             LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
+            LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
             WHERE plm.id_lote_mineral = :id_lote
               AND plm.estado = :estado_particion_activo
             ORDER BY plm.id ASC
@@ -276,6 +324,7 @@ class ValidacionDistribucionData
             $r->id_empleado_valida = $r->id_empleado_valida !== null ? (int) $r->id_empleado_valida : null;
             $r->fecha_hora_validacion = $r->fecha_hora_validacion !== null ? (string) $r->fecha_hora_validacion : null;
             $r->id_vehiculo = $r->id_vehiculo !== null ? (int) $r->id_vehiculo : null;
+            $r->id_vehiculo_carreta = $r->id_vehiculo_carreta !== null ? (int) $r->id_vehiculo_carreta : null;
             $r->id_conductor = $r->id_conductor !== null ? (int) $r->id_conductor : null;
             $r->id_sucursal = $r->id_sucursal !== null ? (int) $r->id_sucursal : null;
             $r->id_empresa_transporte = $r->id_empresa_transporte !== null ? (int) $r->id_empresa_transporte : null;

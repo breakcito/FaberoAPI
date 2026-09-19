@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
 
 class VehiculosData
 {
-    public static function get_vehiculos(?int $id = null)
+    public static function get_vehiculos(?int $id = null, bool $soloNoCarreta = false)
     {
         $sql = '
         SELECT
@@ -20,6 +20,7 @@ class VehiculosData
             et.ruc AS empresa_transporte_ruc,
             v.id_tipo_vehiculo,
             tv.nombre AS tipo_vehiculo_nombre,
+            tv.es_carreta AS es_carreta,
             v.placa,
             v.numero_constancia_mtc,
             CAST(v.capacidad AS DECIMAL(10,2)) AS capacidad,
@@ -38,6 +39,9 @@ class VehiculosData
         ';
 
         $params = [];
+        if ($soloNoCarreta) {
+            $sql .= ' AND (tv.es_carreta = 0 OR tv.es_carreta IS NULL)';
+        }
         if ($id !== null) {
             $sql .= ' AND v.id = :id';
             $params['id'] = $id;
