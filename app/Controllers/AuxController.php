@@ -16,6 +16,7 @@ use App\Services\TipoCambioService;
 use App\Services\TiposVehiculoService;
 use App\Services\UbigeoService;
 use App\Services\ValorizacionCompraAuxService;
+use App\Services\ValorizacionVentaAuxService;
 use App\Services\VehiculosService;
 use App\Services\VisitanteService;
 use App\Services\ZonasOrigenService;
@@ -808,5 +809,42 @@ class AuxController extends Controller
             'placa' => $actualizado->placa,
             'capacidad' => (float) $actualizado->capacidad,
         ], 'Capacidad del vehículo actualizada correctamente.'));
+    }
+
+    /**
+     * Plantas destino activas con distribuciones_detalle pendientes de valorizar
+     */
+    public function get_plantas_con_distribuciones_valorizacion(): JsonResponse
+    {
+        return response()->json(ValorizacionVentaAuxService::get_plantas_con_distribuciones());
+    }
+
+    /**
+     * distribuciones_detalle disponibles para valorizar de una planta específica.
+     * Acepta query param: id_planta (obligatorio) y opcional id_valorizacion para edición.
+     */
+    public function get_distribuciones_detalles_disponibles_valorizacion(Request $request): JsonResponse
+    {
+        $idPlanta = (int) $request->query('id_planta');
+        if (! $idPlanta) {
+            return response()->json(ApiResponse::success([], 'Debe especificar id_planta.'));
+        }
+
+        $idValorizacion = $request->query('id_valorizacion') ? (int) $request->query('id_valorizacion') : null;
+
+        return response()->json(ValorizacionVentaAuxService::get_distribuciones_detalles_disponibles($idPlanta, $idValorizacion));
+    }
+
+    /**
+     * Condiciones comerciales activas de una planta destino, indexadas por elemento químico.
+     */
+    public function get_condiciones_comerciales_planta(Request $request): JsonResponse
+    {
+        $idPlanta = (int) $request->query('id_planta');
+        if (! $idPlanta) {
+            return response()->json(ApiResponse::success(['Oro' => [], 'Plata' => []], 'Debe especificar id_planta.'));
+        }
+
+        return response()->json(ValorizacionVentaAuxService::get_condiciones_comerciales_planta($idPlanta));
     }
 }

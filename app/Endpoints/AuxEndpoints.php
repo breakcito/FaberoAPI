@@ -88,5 +88,10 @@ Route::middleware('auth.jwt.custom')->group(function () {
 
         // cuentas bancarias empresa filtradas por moneda (para módulo contabilidad-compra)
         Route::get('/cuentas-bancarias-empresa-moneda', [AuxController::class, 'get_cuentas_bancarias_empresa_por_moneda']);
+
+        // valorizacion venta auxiliares
+        Route::get('/plantas-con-distribuciones-valorizacion', [AuxController::class, 'get_plantas_con_distribuciones_valorizacion']);
+        Route::get('/distribuciones-detalles-disponibles-valorizacion', [AuxController::class, 'get_distribuciones_detalles_disponibles_valorizacion']);
+        Route::get('/condiciones-comerciales-planta', [AuxController::class, 'get_condiciones_comerciales_planta']);
     });
 });

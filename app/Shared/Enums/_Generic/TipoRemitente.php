@@ -4,6 +4,6 @@ namespace App\Shared\Enums\_Generic;
 
 enum TipoRemitente: string
 {
-    case EmpresaTransporte = 'EMPRESA_TRANSPORTE';
+    case Empresa = 'EMPRESA';
     case PlantaDestino = 'PLANTA_DESTINO';
 }

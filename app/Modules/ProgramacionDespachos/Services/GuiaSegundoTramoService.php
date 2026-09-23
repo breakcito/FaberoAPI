@@ -135,6 +135,38 @@ class GuiaSegundoTramoService
 
             $idEmpleadoRegistro = self::getIdEmpleadoFromRequest($request);
 
+            // Resolver el remitente de forma MUTUAMENTE EXCLUSIVA:
+            //   Camino 1 (canónico): el frontend envía `tipo_remitente` + `id_remitente`.
+            //   Camino 2 (legacy): el frontend envía `id_empresa` o `id_planta_destino` directos.
+            // Si el Camino 1 tiene un id_remitente válido (>0), gana y el Camino 2 se ignora
+            // (así no se pisa con ceros provenientes del estado inicial del form).
+            $idEmpresa = null;
+            $idPlantaDestino = null;
+            $tipoRemitente = isset($data['tipo_remitente']) ? (string) $data['tipo_remitente'] : null;
+            $idRemitenteRaw = $data['id_remitente'] ?? null;
+            $idRemitente = ($idRemitenteRaw !== null && $idRemitenteRaw !== '' && (int) $idRemitenteRaw > 0)
+                ? (int) $idRemitenteRaw
+                : null;
+
+            if ($idRemitente !== null) {
+                // Camino canónico
+                if ($tipoRemitente === TipoRemitente::PlantaDestino->value) {
+                    $idPlantaDestino = $idRemitente;
+                } elseif ($tipoRemitente === TipoRemitente::Empresa->value) {
+                    $idEmpresa = $idRemitente;
+                }
+            } else {
+                // Camino directo (legacy): ignorar explícitamente el valor si es 0 o vacío.
+                $idEmpresaRaw = $data['id_empresa'] ?? null;
+                if ($idEmpresaRaw !== null && $idEmpresaRaw !== '' && (int) $idEmpresaRaw > 0) {
+                    $idEmpresa = (int) $idEmpresaRaw;
+                }
+                $idPlantaDestinoRaw = $data['id_planta_destino'] ?? null;
+                if ($idPlantaDestinoRaw !== null && $idPlantaDestinoRaw !== '' && (int) $idPlantaDestinoRaw > 0) {
+                    $idPlantaDestino = (int) $idPlantaDestinoRaw;
+                }
+            }
+
             $payload = [
                 'id_ditribucion' => $idDistribucion,
                 'id_empleado_reistro' => $idEmpleadoRegistro,
@@ -143,12 +175,8 @@ class GuiaSegundoTramoService
                 'fecha_emision' => $data['fecha_emision'] ?? null,
                 'fecha_en_planta' => $data['fecha_en_planta'] ?? null,
                 'guia_remitente' => $data['guia_remitente'] ?? null,
-                'id_remitente' => isset($data['id_remitente']) && $data['id_remitente'] !== null
-                    ? (int) $data['id_remitente']
-                    : null,
-                'tipo_remitente' => isset($data['tipo_remitente']) && $data['tipo_remitente'] !== null
-                    ? (TipoRemitente::tryFrom((string) $data['tipo_remitente'])?->value ?? (string) $data['tipo_remitente'])
-                    : null,
+                'id_empresa' => $idEmpresa,
+                'id_planta_destino' => $idPlantaDestino,
                 'guia_transportista' => $sinGuiaTransportista ? null : ($data['guia_transportista'] ?? null),
                 'sin_guia_transportista' => $sinGuiaTransportista,
                 'log_cambios' => null,
@@ -214,18 +242,46 @@ class GuiaSegundoTramoService
             $previosDocumentos = is_array($guiaPrevio['documentos'] ?? null) ? $guiaPrevio['documentos'] : [];
             $documentos = self::build_documentos($archivos, $previosDocumentos, $sinGuiaTransportista);
 
+            // Resolver el remitente de forma MUTUAMENTE EXCLUSIVA:
+            //   Camino 1 (canónico): el frontend envía `tipo_remitente` + `id_remitente`.
+            //   Camino 2 (legacy): el frontend envía `id_empresa` o `id_planta_destino` directos.
+            // Si el Camino 1 tiene un id_remitente válido (>0), gana y el Camino 2 se ignora
+            // (así no se pisa con ceros provenientes del estado inicial del form).
+            $idEmpresa = null;
+            $idPlantaDestino = null;
+            $tipoRemitente = isset($data['tipo_remitente']) ? (string) $data['tipo_remitente'] : null;
+            $idRemitenteRaw = $data['id_remitente'] ?? null;
+            $idRemitente = ($idRemitenteRaw !== null && $idRemitenteRaw !== '' && (int) $idRemitenteRaw > 0)
+                ? (int) $idRemitenteRaw
+                : null;
+
+            if ($idRemitente !== null) {
+                // Camino canónico
+                if ($tipoRemitente === TipoRemitente::PlantaDestino->value) {
+                    $idPlantaDestino = $idRemitente;
+                } elseif ($tipoRemitente === TipoRemitente::Empresa->value) {
+                    $idEmpresa = $idRemitente;
+                }
+            } else {
+                // Camino directo (legacy): ignorar explícitamente el valor si es 0 o vacío.
+                $idEmpresaRaw = $data['id_empresa'] ?? null;
+                if ($idEmpresaRaw !== null && $idEmpresaRaw !== '' && (int) $idEmpresaRaw > 0) {
+                    $idEmpresa = (int) $idEmpresaRaw;
+                }
+                $idPlantaDestinoRaw = $data['id_planta_destino'] ?? null;
+                if ($idPlantaDestinoRaw !== null && $idPlantaDestinoRaw !== '' && (int) $idPlantaDestinoRaw > 0) {
+                    $idPlantaDestino = (int) $idPlantaDestinoRaw;
+                }
+            }
+
             $nuevosValores = [
                 'motivo_traslado' => $data['motivo_traslado'],
                 'fecha_inicio_traslado' => $data['fecha_inicio_traslado'] ?? null,
                 'fecha_emision' => $data['fecha_emision'] ?? null,
                 'fecha_en_planta' => $data['fecha_en_planta'] ?? null,
                 'guia_remitente' => $data['guia_remitente'] ?? null,
-                'id_remitente' => isset($data['id_remitente']) && $data['id_remitente'] !== null
-                    ? (int) $data['id_remitente']
-                    : null,
-                'tipo_remitente' => isset($data['tipo_remitente']) && $data['tipo_remitente'] !== null
-                    ? (TipoRemitente::tryFrom((string) $data['tipo_remitente'])?->value ?? (string) $data['tipo_remitente'])
-                    : null,
+                'id_empresa' => $idEmpresa,
+                'id_planta_destino' => $idPlantaDestino,
                 'guia_transportista' => $sinGuiaTransportista ? null : ($data['guia_transportista'] ?? null),
                 'sin_guia_transportista' => $sinGuiaTransportista,
                 'documentos' => json_encode($documentos),
@@ -239,8 +295,8 @@ class GuiaSegundoTramoService
                 'fecha_emision' => ['nombre' => 'Fecha de emisión', 'tipo' => 'string'],
                 'fecha_en_planta' => ['nombre' => 'Fecha en planta', 'tipo' => 'string'],
                 'guia_remitente' => ['nombre' => 'Guía remitente', 'tipo' => 'string'],
-                'id_remitente' => ['nombre' => 'ID remitente', 'tipo' => 'string'],
-                'tipo_remitente' => ['nombre' => 'Tipo de remitente', 'tipo' => 'string'],
+                'id_empresa' => ['nombre' => 'ID Empresa remitente', 'tipo' => 'string'],
+                'id_planta_destino' => ['nombre' => 'ID Planta destino remitente', 'tipo' => 'string'],
                 'guia_transportista' => ['nombre' => 'Guía transportista', 'tipo' => 'string'],
                 'sin_guia_transportista' => ['nombre' => 'Sin guía transportista', 'tipo' => 'bool'],
             ];

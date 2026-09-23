@@ -1,0 +1,76 @@
+<?php
+
+namespace App\Modules\CondicionesComercialesPlanta\Data;
+
+use Illuminate\Support\Facades\DB;
+
+class CondicionesComercialesPlantaData
+{
+    /**
+     * Obtener las condiciones comerciales registradas para una planta destino.
+     */
+    public static function get_condiciones_por_planta(int $idPlanta, ?string $estado = null): array
+    {
+        $query = DB::table('condicion_comercial_planta as ccp')
+            ->where('ccp.id_planta', $idPlanta);
+
+        if ($estado !== null && $estado !== '' && $estado !== 'Todos') {
+            $query->where('ccp.estado', $estado);
+        }
+
+        $results = $query->select([
+            'ccp.id',
+            'ccp.id_planta',
+            'ccp.elemento_quimico',
+            'ccp.ley_inicio',
+            'ccp.ley_fin',
+            'ccp.maquila',
+            'ccp.recuperacion',
+            'ccp.consumo',
+            'ccp.riesgo_comercial',
+            'ccp.estado',
+            'ccp.created_at',
+        ])
+            ->orderBy('ccp.id', 'DESC')
+            ->get()
+            ->toArray();
+
+        foreach ($results as $row) {
+            $row->id = (int) $row->id;
+            $row->id_planta = (int) $row->id_planta;
+            $row->ley_inicio = (float) $row->ley_inicio;
+            $row->ley_fin = (float) $row->ley_fin;
+            $row->maquila = (float) $row->maquila;
+            $row->recuperacion = (float) $row->recuperacion;
+            $row->consumo = (float) $row->consumo;
+            $row->riesgo_comercial = (float) $row->riesgo_comercial;
+        }
+
+        return $results;
+    }
+
+    /**
+     * Obtener una condición comercial específica por su ID.
+     */
+    public static function get_condicion_por_id(int $id): ?object
+    {
+        $row = DB::table('condicion_comercial_planta')
+            ->where('id', $id)
+            ->first();
+
+        if (! $row) {
+            return null;
+        }
+
+        $row->id = (int) $row->id;
+        $row->id_planta = (int) $row->id_planta;
+        $row->ley_inicio = (float) $row->ley_inicio;
+        $row->ley_fin = (float) $row->ley_fin;
+        $row->maquila = (float) $row->maquila;
+        $row->recuperacion = (float) $row->recuperacion;
+        $row->consumo = (float) $row->consumo;
+        $row->riesgo_comercial = (float) $row->riesgo_comercial;
+
+        return $row;
+    }
+}

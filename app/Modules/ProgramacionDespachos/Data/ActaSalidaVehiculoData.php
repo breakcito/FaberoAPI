@@ -27,6 +27,10 @@ class ActaSalidaVehiculoData
                 s_dir.departamento_nombre                     AS empresa_sede_departamento,
                 s_dir.provincia_nombre                        AS empresa_sede_provincia,
                 s_dir.distrito_nombre                         AS empresa_sede_distrito,
+                COALESCE(pd_remitente.razon_social, emp_remitente.razon_social, pd.razon_social, emp_fabero.razon_social) AS remitente_razon_social,
+                COALESCE(pd_remitente.ruc, emp_remitente.ruc, pd.ruc, emp_fabero.ruc) AS remitente_ruc,
+                COALESCE(s_dir.direccion, emp_fabero.domicilio_fiscal) AS direccion_partida,
+                COALESCE(pd.direccion, '—')                   AS direccion_destino,
                 prov.razon_social                             AS proveedor_razon_social,
                 prov.ruc                                      AS proveedor_ruc,
                 prov.direccion                                AS proveedor_direccion,
@@ -47,7 +51,7 @@ class ActaSalidaVehiculoData
                 ru.fecha_hora_ingreso                         AS fecha_hora_ingreso,
                 ru.fecha_hora_salida                          AS fecha_hora_salida,
                 lm.correlativo                                AS cod_lote,
-                lm.tipo_producto                              AS producto,
+                COALESCE(lm.tipo_producto, 'MINERAL AURIFERO EN BRUTO SIN PROCESAR') AS producto,
                 dd_sum.total_peso_neto_kg                     AS total_peso_neto_kg
             FROM distribucion d
             INNER JOIN despacho desp                  ON desp.id = d.id_despacho
@@ -63,6 +67,8 @@ class ActaSalidaVehiculoData
             LEFT JOIN lote_mineral lm               ON lm.id = desdd.id_lote_mineral
             LEFT JOIN proveedor prov                ON prov.id = lm.id_proveedor_minero
             LEFT JOIN guia_segundo_tramo gst        ON gst.id_ditribucion = d.id AND gst.estado = 'Activo'
+            LEFT JOIN empresa emp_remitente           ON emp_remitente.id = gst.id_empresa
+            LEFT JOIN planta_destino pd_remitente     ON pd_remitente.id = gst.id_planta_destino
             LEFT JOIN recepcion_unidad ru           ON ru.id_distribucion = d.id
             LEFT JOIN conductor c                    ON c.id = ru.id_conductor
             LEFT JOIN (
@@ -119,13 +125,17 @@ class ActaSalidaVehiculoData
             ? '—'
             : implode(' - ', $sedePartes);
 
-        $proveedorDireccionPartes = array_filter([
-            $row->proveedor_direccion ?? null,
-        ], fn ($v) => is_string($v) && trim($v) !== '');
+        $partida = ! empty($row->direccion_partida) ? $row->direccion_partida : $empresaSedeProductiva;
+        $destino = ! empty($row->direccion_destino) ? $row->direccion_destino : ($row->planta_destino_direccion ?? '—');
 
-        $proveedorDireccion = $proveedorDireccionPartes === []
-            ? '—'
-            : implode(' - ', $proveedorDireccionPartes);
+        // Formato fechas y horas
+        $fechaHoraIngreso = ! empty($row->fecha_hora_ingreso) ? \Carbon\Carbon::parse($row->fecha_hora_ingreso) : null;
+        $fechaHoraSalida = ! empty($row->fecha_hora_salida) ? \Carbon\Carbon::parse($row->fecha_hora_salida) : null;
+
+        $fechaIngreso = $fechaHoraIngreso ? $fechaHoraIngreso->format('d/m/Y') : '—';
+        $horaIngreso = $fechaHoraIngreso ? $fechaHoraIngreso->format('h:i:s a') : '—';
+        $fechaSalida = $fechaHoraSalida ? $fechaHoraSalida->format('d/m/Y') : '—';
+        $horaSalida = $fechaHoraSalida ? $fechaHoraSalida->format('h:i:s a') : '—';
 
         // Peso en TM (toneladas métricas). Fuente única: SUM de los detalles de la
         // distribución (`distribucion_detalle.peso_neto`). Sirve para AMBOS campos
@@ -133,6 +143,9 @@ class ActaSalidaVehiculoData
         $pesoKg = (float) ($row->total_peso_neto_kg ?? 0);
         $pesoVehicularTotalTm = $pesoKg > 0 ? round($pesoKg / 1000, 3) : 0;
         $pesoGuiaTm = $pesoVehicularTotalTm;
+
+        $remitenteRazonSocial = self::strOrDash($row->remitente_razon_social ?? $row->empresa_razon_social ?? null);
+        $remitenteRuc = self::strOrDash($row->remitente_ruc ?? $row->empresa_ruc ?? null);
 
         return [
             'correlativo' => self::strOrDash($row->correlativo ?? null),
@@ -146,16 +159,23 @@ class ActaSalidaVehiculoData
                 'sede_productiva' => $empresaSedeProductiva,
             ],
 
+            'remitente' => [
+                'razon_social' => $remitenteRazonSocial,
+                'ruc' => $remitenteRuc,
+                'direccion_partida' => self::strOrDash($partida),
+                'direccion_destino' => self::strOrDash($destino),
+            ],
+
             'proveedor' => [
-                'razon_social' => self::strOrDash($row->proveedor_razon_social ?? null),
-                'ruc' => self::strOrDash($row->proveedor_ruc ?? null),
-                'direccion_partida' => $proveedorDireccion,
+                'razon_social' => $remitenteRazonSocial,
+                'ruc' => $remitenteRuc,
+                'direccion_partida' => self::strOrDash($partida),
             ],
 
             'destino' => [
                 'razon_social' => self::strOrDash($row->planta_destino_razon_social ?? null),
                 'ruc' => self::strOrDash($row->planta_destino_ruc ?? null),
-                'direccion' => self::strOrDash($row->planta_destino_direccion ?? null),
+                'direccion' => self::strOrDash($destino),
             ],
 
             'vehiculo' => [
@@ -186,12 +206,15 @@ class ActaSalidaVehiculoData
             'producto' => self::strOrDash($row->producto ?? null),
             'guia_transportista' => self::strOrDash($row->guia_transportista ?? null),
 
-            'fecha_ingreso' => self::formatDateTime($row->fecha_hora_ingreso ?? null),
-            'hora_salida' => self::formatDateTime($row->fecha_hora_salida ?? null),
+            'fecha_ingreso' => $fechaIngreso,
+            'hora_ingreso' => $horaIngreso,
+            'fecha_salida' => $fechaSalida,
+            'hora_salida' => $horaSalida,
 
             'peso_guia_tm' => $pesoGuiaTm,
             'peso_vehicular_total_tm' => $pesoVehicularTotalTm,
             'cod_lote' => self::strOrDash($row->cod_lote ?? null),
+            'observaciones' => '—',
         ];
     }
 

@@ -816,13 +816,16 @@ class RecepcionMineralData
                  SELECT 1
                  FROM particion_lote_mineral p
                  INNER JOIN recepcion_unidad ru2 ON ru2.id = p.id_recepcion_unidad
-                 WHERE p.id_lote_mineral = lm.id AND ru2.id_sucursal = :id_sucursal
+                 WHERE p.id_lote_mineral = lm.id AND ru2.id_sucursal = :id_sucursal_2
              ))
         )
           AND (lm.estado IS NULL OR lm.estado != "Eliminado")
         ORDER BY lm.correlativo DESC;
         ';
-        $lotes = DB::select($lotesSql, ['id_sucursal' => $idSucursal]);
+        $lotes = DB::select($lotesSql, [
+            'id_sucursal' => $idSucursal,
+            'id_sucursal_2' => $idSucursal,
+        ]);
 
         // 2. Obtener vehículos de la sucursal (de la recepción de unidad)
         $vehiculosSql = '

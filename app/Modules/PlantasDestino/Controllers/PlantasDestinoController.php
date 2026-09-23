@@ -16,9 +16,9 @@ class PlantasDestinoController
         return response()->json(PlantasDestinoService::get_plantas());
     }
 
-    public function get_planta(Request $request, int $id): JsonResponse
+    public function get_planta(Request $request, int|string $id): JsonResponse
     {
-        return response()->json(PlantasDestinoService::get_planta($id));
+        return response()->json(PlantasDestinoService::get_planta((int) $id));
     }
 
     public function crear_planta(Request $request): JsonResponse
@@ -46,7 +46,7 @@ class PlantasDestinoController
         ));
     }
 
-    public function editar_planta(Request $request, int $id): JsonResponse
+    public function editar_planta(Request $request, int|string $id): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'ruc' => 'required|string|size:11',
@@ -63,7 +63,7 @@ class PlantasDestinoController
         $v = $validator->validated();
 
         return response()->json(PlantasDestinoService::editar_planta(
-            id: $id,
+            id: (int) $id,
             ruc: $v['ruc'],
             razon_social: $v['razon_social'],
             direccion: $v['direccion'] ?? null,
@@ -72,7 +72,7 @@ class PlantasDestinoController
         ));
     }
 
-    public function cambiar_estado_planta(Request $request, int $id): JsonResponse
+    public function cambiar_estado_planta(Request $request, int|string $id): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'estado' => ['required', 'string', Rule::in(['Activo', 'Inactivo'])],
@@ -83,16 +83,16 @@ class PlantasDestinoController
         }
 
         return response()->json(PlantasDestinoService::cambiar_estado_planta(
-            $id,
+            (int) $id,
             $request->estado
         ));
     }
 
-    /* --- Asociación de Proveedores --- */
+    /* --- AsociaciA3n de Proveedores --- */
 
-    public function get_proveedores_asociados(Request $request, int $id_planta): JsonResponse
+    public function get_proveedores_asociados(Request $request, int|string $id_planta): JsonResponse
     {
-        return response()->json(PlantasDestinoService::get_proveedores_asociados($id_planta));
+        return response()->json(PlantasDestinoService::get_proveedores_asociados((int) $id_planta));
     }
 
     public function asociar_proveedor(Request $request): JsonResponse
@@ -114,11 +114,11 @@ class PlantasDestinoController
         ));
     }
 
-    public function desasociar_proveedor(Request $request, int $id_planta, int $id_proveedor): JsonResponse
+    public function desasociar_proveedor(Request $request, int|string $id_planta, int|string $id_proveedor): JsonResponse
     {
         return response()->json(PlantasDestinoService::desasociar_proveedor(
-            $id_planta,
-            $id_proveedor
+            (int) $id_planta,
+            (int) $id_proveedor
         ));
     }
 }

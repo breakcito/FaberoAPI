@@ -30,8 +30,9 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/CuentasBancariasEmpresa/CuentasBancariasEmpresaEndpoints.php');
                 require base_path('app/Modules/ModoAuditoria/ModoAuditoriaEndpoints.php');
                 require base_path('app/Modules/Sucursales/SucursalesEndpoints.php');
-                require base_path('app/Modules/PlantasDestino/PlantasDestinoEndpoints.php');
                 require base_path('app/Modules/CuentasBancariasPlantaDestino/CuentasBancariasPlantaDestinoEndpoints.php');
+                require base_path('app/Modules/CondicionesComercialesPlanta/CondicionesComercialesPlantaEndpoints.php');
+                require base_path('app/Modules/PlantasDestino/PlantasDestinoEndpoints.php');
                 require base_path('app/Modules/Conductores/ConductoresEndpoints.php');
                 require base_path('app/Modules/EmpresasTransporte/EmpresasTransporteEndpoints.php');
                 require base_path('app/Modules/Vehiculos/VehiculosEndpoints.php');
@@ -48,7 +49,9 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/CierreLeyes/CierreLeyesEndpoints.php');
                 require base_path('app/Modules/CondicionesComercialesProveedor/CondicionesComercialesProveedorEndpoints.php');
                 require base_path('app/Modules/AnticiposProveedor/AnticiposProveedorEndpoints.php');
+                require base_path('app/Modules/AnticiposPlanta/AnticiposPlantaEndpoints.php');
                 require base_path('app/Modules/ValorizacionCompra/Endpoints/ValorizacionCompraEndpoints.php');
+                require base_path('app/Modules/ValorizacionVenta/Endpoints/ValorizacionVentaEndpoints.php');
                 require base_path('app/Modules/ContabilidadCompra/ContabilidadCompraEndpoints.php');
                 require base_path('app/Modules/Blending/Endpoints/BlendingEndpoints.php');
                 require base_path('app/Modules/ProgramacionDespachos/ProgramacionDespachosEndpoints.php');

@@ -85,12 +85,16 @@ class GuiaSegundoTramoData
         $row->id_empleado_reistro = $row->id_empleado_reistro !== null
             ? (int) $row->id_empleado_reistro
             : null;
-        $row->id_remitente = isset($row->id_remitente) && $row->id_remitente !== null
-            ? (int) $row->id_remitente
+        $row->id_empresa = isset($row->id_empresa) && $row->id_empresa !== null
+            ? (int) $row->id_empresa
             : null;
-        $row->tipo_remitente = isset($row->tipo_remitente) && $row->tipo_remitente !== null
-            ? (TipoRemitente::tryFrom((string) $row->tipo_remitente)?->value ?? (string) $row->tipo_remitente)
+        $row->id_planta_destino = isset($row->id_planta_destino) && $row->id_planta_destino !== null
+            ? (int) $row->id_planta_destino
             : null;
+        $row->id_remitente = $row->id_planta_destino ?? $row->id_empresa ?? null;
+        $row->tipo_remitente = $row->id_planta_destino !== null
+            ? TipoRemitente::PlantaDestino->value
+            : ($row->id_empresa !== null ? TipoRemitente::Empresa->value : null);
 
         $row->sin_guia_transportista = (bool) $row->sin_guia_transportista;
 
