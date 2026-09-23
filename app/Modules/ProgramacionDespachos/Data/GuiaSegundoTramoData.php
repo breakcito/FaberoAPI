@@ -2,6 +2,7 @@
 
 namespace App\Modules\ProgramacionDespachos\Data;
 
+use App\Shared\Enums\_Generic\TipoRemitente;
 use Illuminate\Support\Facades\DB;
 
 class GuiaSegundoTramoData
@@ -83,6 +84,12 @@ class GuiaSegundoTramoData
         $row->id_ditribucion = $row->id_ditribucion !== null ? (int) $row->id_ditribucion : null;
         $row->id_empleado_reistro = $row->id_empleado_reistro !== null
             ? (int) $row->id_empleado_reistro
+            : null;
+        $row->id_remitente = isset($row->id_remitente) && $row->id_remitente !== null
+            ? (int) $row->id_remitente
+            : null;
+        $row->tipo_remitente = isset($row->tipo_remitente) && $row->tipo_remitente !== null
+            ? (TipoRemitente::tryFrom((string) $row->tipo_remitente)?->value ?? (string) $row->tipo_remitente)
             : null;
 
         $row->sin_guia_transportista = (bool) $row->sin_guia_transportista;

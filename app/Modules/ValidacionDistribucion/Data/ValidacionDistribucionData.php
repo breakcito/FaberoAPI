@@ -623,17 +623,14 @@ class ValidacionDistribucionData
             if (empty($r->fecha_hora_ingreso)) {
                 $camposFaltantes[] = 'recepcion.fecha_hora_ingreso';
             }
-            if (empty($r->fecha_hora_salida)) {
-                $camposFaltantes[] = 'recepcion.fecha_hora_salida';
-            }
+            // fecha_hora_salida es opcional: no se exige para validar.
 
             $cumpleRecepcion = ! in_array('recepcion.id_vehiculo', $camposFaltantes, true)
                 && ! in_array('recepcion.id_conductor', $camposFaltantes, true)
                 && ! in_array('recepcion.id_empresa_transporte', $camposFaltantes, true)
                 && ! in_array('recepcion.id_tipo_vehiculo', $camposFaltantes, true)
                 && ! in_array('recepcion.id_proveedor_minero', $camposFaltantes, true)
-                && ! in_array('recepcion.fecha_hora_ingreso', $camposFaltantes, true)
-                && ! in_array('recepcion.fecha_hora_salida', $camposFaltantes, true);
+                && ! in_array('recepcion.fecha_hora_ingreso', $camposFaltantes, true);
 
             $cumple = $cumplePesos && $cumpleFechas && $cumpleRecepcion;
 

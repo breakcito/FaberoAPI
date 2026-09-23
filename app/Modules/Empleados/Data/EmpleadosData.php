@@ -46,7 +46,9 @@ class EmpleadosData
             $sql .= ' AND e.id = :id_empleado';
             $params['id_empleado'] = $id_empleado;
 
-            return DB::selectOne($sql, $params);
+            $row = DB::selectOne($sql, $params);
+
+            return $row ? [$row] : [];
         }
 
         if ($id_empresa !== null) {

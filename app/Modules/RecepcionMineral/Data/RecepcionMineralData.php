@@ -3,6 +3,7 @@
 namespace App\Modules\RecepcionMineral\Data;
 
 use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
+use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoPesaje;
 use Illuminate\Support\Facades\DB;
 
@@ -41,6 +42,7 @@ class RecepcionMineralData
             ru.estado_salida,
             ru.estado_pesaje,
             ru.id_sucursal AS id_sucursal,
+            ru.id_distribucion AS id_distribucion,
             ru.es_recepcion_ficticia,
             ru.es_programacion,
             ru.documentos_programacion,
@@ -91,6 +93,9 @@ class RecepcionMineralData
                 $item->documentos_programacion ?? null,
             );
             $item->id_proveedor_minero = $item->id_proveedor_minero !== null ? (int) $item->id_proveedor_minero : null;
+            $item->id_distribucion = isset($item->id_distribucion) && $item->id_distribucion !== null
+                ? (int) $item->id_distribucion
+                : null;
             // Obtener los lotes de esta recepción
             $item->lotes = self::get_lotes_by_recepcion($item->id);
             // Adjuntar los detalles de distribución (vacío si no es despacho o no hay detalles)
@@ -408,6 +413,7 @@ class RecepcionMineralData
             ru.estado_salida,
             ru.estado_pesaje,
             ru.id_sucursal AS id_sucursal,
+            ru.id_distribucion AS id_distribucion,
             ru.es_recepcion_ficticia,
             ru.es_programacion,
             ru.documentos_programacion
@@ -432,6 +438,9 @@ class RecepcionMineralData
             $item->documentos_programacion = RecepcionUnidadesData::normalizar_documentos_programacion(
                 $item->documentos_programacion ?? null,
             );
+            $item->id_distribucion = isset($item->id_distribucion) && $item->id_distribucion !== null
+                ? (int) $item->id_distribucion
+                : null;
             $item->lotes = self::get_lotes_by_recepcion($id);
             if (($item->tipo_ingreso ?? null) === 'Despacho de Mineral') {
                 $detalles = self::get_distribucion_detalles_by_recepciones([$id]);
@@ -1444,6 +1453,58 @@ class RecepcionMineralData
             ->where('id_lote_mineral', $idLote)
             ->where('estado', 'Activo')
             ->count();
+    }
+
+    /**
+     * Cantidad de particiones activas que viven en una unidad de recepción
+     * específica. Usado por `cerrar_proceso` para exigir que la unidad tenga
+     * al menos una partición cuando no hay lotes regulares.
+     */
+    public static function count_particiones_activas_by_unidad(int $idRecepcionUnidad): int
+    {
+        return DB::table('particion_lote_mineral')
+            ->where('id_recepcion_unidad', $idRecepcionUnidad)
+            ->where('estado', EstadoBase::Activo->value)
+            ->count();
+    }
+
+    /**
+     * Devuelve, para cada partición activa del lote padre, el estado de pesaje de su
+     * unidad huésped (`recepcion_unidad.estado_pesaje`). Una partición cuyo
+     * `id_recepcion_unidad` es NULL o apunta a una unidad inexistente se reporta
+     * con `estado_pesaje = null`.
+     *
+     * Estructura de cada fila:
+     *   { id_particion, particion, id_recepcion_unidad, estado_pesaje }
+     *
+     * Usado por `finalizar_particion_lote` para exigir que TODAS las particiones
+     * vivan en unidades con `estado_pesaje = 'Pesado'`.
+     */
+    public static function get_particiones_estado_pesaje_unidades(int $idLote): array
+    {
+        $sql = '
+        SELECT
+            p.id              AS id_particion,
+            p.particion      AS particion,
+            p.id_recepcion_unidad,
+            ru.estado_pesaje AS estado_pesaje
+        FROM particion_lote_mineral p
+        LEFT JOIN recepcion_unidad ru ON ru.id = p.id_recepcion_unidad
+        WHERE p.id_lote_mineral = :id_lote
+          AND p.estado = "Activo"
+        ORDER BY p.particion ASC
+        ';
+
+        $rows = DB::select($sql, ['id_lote' => $idLote]);
+
+        return array_map(static function ($r) {
+            return [
+                'id_particion' => (int) $r->id_particion,
+                'particion' => (string) $r->particion,
+                'id_recepcion_unidad' => $r->id_recepcion_unidad !== null ? (int) $r->id_recepcion_unidad : null,
+                'estado_pesaje' => $r->estado_pesaje !== null ? (string) $r->estado_pesaje : null,
+            ];
+        }, $rows);
     }
 
     /**

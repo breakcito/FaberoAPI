@@ -191,6 +191,7 @@ class ProgramacionDespachosData
             di.id_empleado_registro,
             CONCAT(emp_reg.nombre, " ", emp_reg.apellido) AS empleado_registro_nombre,
             di.fecha_estimada_llegada,
+            di.fecha_llegada_cliente,
             di.log_cambios,
             di.estado,
             di.created_at,
@@ -251,11 +252,21 @@ class ProgramacionDespachosData
                 ddt.peso_bruto,
                 ddt.fecha_hora_peso_bruto,
                 ddt.peso_neto,
+                ddt.peso_neto_cliente,
+                ddt.codigo_cliente,
+                ddt.ley_oro_cliente,
+                ddt.ley_plata_cliente,
+                ddt.ley_humedad_cliente,
                 dd.id_lote_mineral AS detalle_id_lote_mineral,
                 dd.id_blending AS detalle_id_blending,
                 lm.correlativo AS lote_correlativo,
                 lm.ley_humedad AS lote_ley_humedad,
+                lm.ley_oro AS lote_ley_oro,
+                lm.ley_plata AS lote_ley_plata,
                 b.correlativo AS blending_correlativo,
+                b.ley_humedad AS blending_ley_humedad,
+                b.ley_oro AS blending_ley_oro,
+                b.ley_plata AS blending_ley_plata,
                 pr.razon_social AS proveedor_razon_social,
                 tb.correlativo AS ticket_correlativo
             FROM distribucion_detalle ddt
@@ -281,9 +292,19 @@ class ProgramacionDespachosData
                 $row->fecha_hora_peso_bruto = $row->fecha_hora_peso_bruto !== null ? (string) $row->fecha_hora_peso_bruto : null;
                 $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
                 $row->lote_ley_humedad = $row->lote_ley_humedad !== null ? (float) $row->lote_ley_humedad : null;
+                $row->lote_ley_oro = $row->lote_ley_oro !== null ? (float) $row->lote_ley_oro : null;
+                $row->lote_ley_plata = $row->lote_ley_plata !== null ? (float) $row->lote_ley_plata : null;
+                $row->blending_ley_humedad = $row->blending_ley_humedad !== null ? (float) $row->blending_ley_humedad : null;
+                $row->blending_ley_oro = $row->blending_ley_oro !== null ? (float) $row->blending_ley_oro : null;
+                $row->blending_ley_plata = $row->blending_ley_plata !== null ? (float) $row->blending_ley_plata : null;
                 $row->ticket_correlativo = $row->ticket_correlativo !== null ? (string) $row->ticket_correlativo : null;
                 $row->detalle_id_lote_mineral = $row->detalle_id_lote_mineral !== null ? (int) $row->detalle_id_lote_mineral : null;
                 $row->detalle_id_blending = $row->detalle_id_blending !== null ? (int) $row->detalle_id_blending : null;
+                $row->peso_neto_cliente = $row->peso_neto_cliente !== null ? (float) $row->peso_neto_cliente : null;
+                $row->codigo_cliente = $row->codigo_cliente !== null ? (string) $row->codigo_cliente : null;
+                $row->ley_oro_cliente = $row->ley_oro_cliente !== null ? (float) $row->ley_oro_cliente : null;
+                $row->ley_plata_cliente = $row->ley_plata_cliente !== null ? (float) $row->ley_plata_cliente : null;
+                $row->ley_humedad_cliente = $row->ley_humedad_cliente !== null ? (float) $row->ley_humedad_cliente : null;
                 $distribucionesDetalle[$row->id_distribucion][] = $row;
             }
         }
@@ -755,6 +776,45 @@ class ProgramacionDespachosData
     }
 
     /**
+     * Actualizar la fecha de llegada del cliente a nivel distribución.
+     *
+     * @param  string  $fecha  Formato esperado: 'Y-m-d'. Se guarda como date (sin hora).
+     */
+    public static function update_distribucion_fecha_llegada(int $idDistribucion, string $fecha): bool
+    {
+        return DB::table('distribucion')
+            ->where('id', $idDistribucion)
+            ->update(['fecha_llegada_cliente' => $fecha]) > 0;
+    }
+
+    /**
+     * Actualizar los datos reportados por el cliente para un detalle de distribución.
+     * Solo se persisten los campos presentes en $datos (UPDATE dinámico).
+     *
+     * @param  array{
+     *     peso_neto_cliente?: float|null,
+     *     codigo_cliente?: string|null,
+     *     ley_oro_cliente?: float|null,
+     *     ley_plata_cliente?: float|null,
+     *     ley_humedad_cliente?: float|null,
+     * }  $datos
+     */
+    public static function update_detalle_datos_cliente(int $idDetalle, array $datos): bool
+    {
+        $map = [
+            'peso_neto_cliente' => $datos['peso_neto_cliente'] ?? null,
+            'codigo_cliente' => $datos['codigo_cliente'] ?? null,
+            'ley_oro_cliente' => $datos['ley_oro_cliente'] ?? null,
+            'ley_plata_cliente' => $datos['ley_plata_cliente'] ?? null,
+            'ley_humedad_cliente' => $datos['ley_humedad_cliente'] ?? null,
+        ];
+
+        return DB::table('distribucion_detalle')
+            ->where('id', $idDetalle)
+            ->update($map) > 0;
+    }
+
+    /**
      * Insertar recepcion_unidad automática para la distribución.
      *
      * @param  array<string, mixed>  $data
@@ -818,6 +878,7 @@ class ProgramacionDespachosData
             di.id_vehiculo_carreta,
             di.id_empleado_registro,
             di.fecha_estimada_llegada,
+            di.fecha_llegada_cliente,
             di.log_cambios,
             di.created_at,
             di.estado
@@ -935,15 +996,26 @@ class ProgramacionDespachosData
                 ddt.peso_neto,
                 ddt.peso_tara_confirmado,
                 ddt.peso_bruto_confirmado,
+                ddt.peso_neto_cliente,
+                ddt.codigo_cliente,
+                ddt.ley_oro_cliente,
+                ddt.ley_plata_cliente,
+                ddt.ley_humedad_cliente,
                 dd.id_lote_mineral AS detalle_id_lote_mineral,
                 dd.id_blending AS detalle_id_blending,
                 lm.correlativo AS lote_correlativo,
                 lm.ley_humedad AS lote_ley_humedad,
+                lm.ley_oro AS lote_ley_oro,
+                lm.ley_plata AS lote_ley_plata,
                 b.correlativo AS blending_correlativo,
                 b.ley_humedad AS blending_ley_humedad,
-                COALESCE(p.razon_social, \'—\') AS proveedor_razon_social
+                b.ley_oro AS blending_ley_oro,
+                b.ley_plata AS blending_ley_plata,
+                COALESCE(p.razon_social, \'—\') AS proveedor_razon_social,
+                d.correlativo AS despacho_correlativo
             FROM distribucion_detalle ddt
             INNER JOIN despacho_detalle dd ON dd.id = ddt.id_despacho_detalle
+            INNER JOIN despacho d ON d.id = dd.id_despacho
             LEFT JOIN lote_mineral lm ON lm.id = dd.id_lote_mineral
             LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero
             LEFT JOIN blending b ON b.id = dd.id_blending

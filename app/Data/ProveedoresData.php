@@ -33,7 +33,9 @@ class ProveedoresData
             $sql .= 'AND p.id = :id_proveedor';
             $params['id_proveedor'] = $id_proveedor;
 
-            return DB::selectOne($sql, $params);
+            $row = DB::selectOne($sql, $params);
+
+            return $row ? [$row] : [];
         }
 
         if ($estado !== null) {

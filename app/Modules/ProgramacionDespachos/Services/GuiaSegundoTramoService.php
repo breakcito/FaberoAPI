@@ -4,6 +4,7 @@ namespace App\Modules\ProgramacionDespachos\Services;
 
 use App\Modules\ProgramacionDespachos\Data\GuiaSegundoTramoData;
 use App\Shared\Enums\_Generic\EstadoBase;
+use App\Shared\Enums\_Generic\TipoRemitente;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
@@ -142,6 +143,12 @@ class GuiaSegundoTramoService
                 'fecha_emision' => $data['fecha_emision'] ?? null,
                 'fecha_en_planta' => $data['fecha_en_planta'] ?? null,
                 'guia_remitente' => $data['guia_remitente'] ?? null,
+                'id_remitente' => isset($data['id_remitente']) && $data['id_remitente'] !== null
+                    ? (int) $data['id_remitente']
+                    : null,
+                'tipo_remitente' => isset($data['tipo_remitente']) && $data['tipo_remitente'] !== null
+                    ? (TipoRemitente::tryFrom((string) $data['tipo_remitente'])?->value ?? (string) $data['tipo_remitente'])
+                    : null,
                 'guia_transportista' => $sinGuiaTransportista ? null : ($data['guia_transportista'] ?? null),
                 'sin_guia_transportista' => $sinGuiaTransportista,
                 'log_cambios' => null,
@@ -213,6 +220,12 @@ class GuiaSegundoTramoService
                 'fecha_emision' => $data['fecha_emision'] ?? null,
                 'fecha_en_planta' => $data['fecha_en_planta'] ?? null,
                 'guia_remitente' => $data['guia_remitente'] ?? null,
+                'id_remitente' => isset($data['id_remitente']) && $data['id_remitente'] !== null
+                    ? (int) $data['id_remitente']
+                    : null,
+                'tipo_remitente' => isset($data['tipo_remitente']) && $data['tipo_remitente'] !== null
+                    ? (TipoRemitente::tryFrom((string) $data['tipo_remitente'])?->value ?? (string) $data['tipo_remitente'])
+                    : null,
                 'guia_transportista' => $sinGuiaTransportista ? null : ($data['guia_transportista'] ?? null),
                 'sin_guia_transportista' => $sinGuiaTransportista,
                 'documentos' => json_encode($documentos),
@@ -226,6 +239,8 @@ class GuiaSegundoTramoService
                 'fecha_emision' => ['nombre' => 'Fecha de emisión', 'tipo' => 'string'],
                 'fecha_en_planta' => ['nombre' => 'Fecha en planta', 'tipo' => 'string'],
                 'guia_remitente' => ['nombre' => 'Guía remitente', 'tipo' => 'string'],
+                'id_remitente' => ['nombre' => 'ID remitente', 'tipo' => 'string'],
+                'tipo_remitente' => ['nombre' => 'Tipo de remitente', 'tipo' => 'string'],
                 'guia_transportista' => ['nombre' => 'Guía transportista', 'tipo' => 'string'],
                 'sin_guia_transportista' => ['nombre' => 'Sin guía transportista', 'tipo' => 'bool'],
             ];

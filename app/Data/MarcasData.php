@@ -50,7 +50,9 @@ class MarcasData
             $sql .= ' AND mr.id = :id_marca';
             $params['id_marca'] = $id_marca;
 
-            return DB::selectOne($sql, $params);
+            $row = DB::selectOne($sql, $params);
+
+            return $row ? [$row] : [];
         }
 
         if ($estado != null) {

@@ -255,10 +255,7 @@ class ProgramacionDespachosService
      */
     public static function crear_distribucion(int $idDespacho, array $data, int $idEmpleadoRegistro): array
     {
-        $detalles = $data['detalles'];
-        if (empty($detalles)) {
-            return ApiResponse::error('Debe incluir al menos un detalle en la distribución.', 400);
-        }
+        $detalles = $data['detalles'] ?? [];
 
         try {
             DB::transaction(function () use ($idDespacho, $data, $detalles, $idEmpleadoRegistro, &$idDistribucion, &$idRecepcionUnidad, &$advertencias) {
@@ -361,21 +358,18 @@ class ProgramacionDespachosService
                     );
                 }
 
-                $segundaPlaca = null;
-                if (! empty($data['id_vehiculo_carreta'])) {
-                    $segundaPlaca = self::get_placa_vehiculo((int) $data['id_vehiculo_carreta']);
-                }
-
                 $idRecepcionUnidad = ProgramacionDespachosData::crear_recepcion_unidad_despacho([
                     'id_distribucion' => $idDistribucion,
                     'id_empleado_autoriza' => $idEmpleadoAutoriza,
                     'id_empresa_transporte' => (int) $data['id_empresa_transporte'],
                     'id_vehiculo' => (int) $data['id_vehiculo'],
+                    'id_vehiculo_carreta' => ! empty($data['id_vehiculo_carreta'])
+                        ? (int) $data['id_vehiculo_carreta']
+                        : null,
                     'id_tipo_vehiculo' => (int) $data['id_tipo_vehiculo'],
                     'id_conductor' => (int) $data['id_conductor'],
                     'id_sucursal' => (int) $data['id_sucursal'],
                     'tipo_ingreso' => 'Despacho de Mineral',
-                    'segunda_placa' => $segundaPlaca,
                     'fecha_estimada_llegada' => $data['fecha_estimada_llegada'] ?? null,
                     'estado' => EstadoDistribucion::EnEspera->value,
                     'es_programacion' => 1,
@@ -431,6 +425,143 @@ class ProgramacionDespachosService
             ],
             'Distribución registrada correctamente'
         );
+    }
+
+    /**
+     * Agregar un detalle (carga) a una distribución existente.
+     *
+     * El detalle representa la asignación de un lote del despacho a la distribución
+     * con un peso estimado a tomar. El pesaje real se hace después vía
+     * `pesar_distribucion_detalle`.
+     *
+     * @param  array{id_despacho_detalle: int, peso_tomado: float|int}  $data
+     * @return array<string, mixed>
+     */
+    public static function agregar_detalle_distribucion(int $idDistribucion, array $data, int $idEmpleadoRegistro): array
+    {
+        $idDespachoDetalle = (int) ($data['id_despacho_detalle'] ?? 0);
+        $pesoTomado = (float) ($data['peso_tomado'] ?? 0);
+
+        if ($idDespachoDetalle <= 0) {
+            return ApiResponse::error('Debe indicar el despacho_detalle a asignar.', 422);
+        }
+        if ($pesoTomado <= 0) {
+            return ApiResponse::error('El peso a tomar debe ser mayor a 0.', 422);
+        }
+
+        try {
+            return DB::transaction(function () use ($idDistribucion, $idDespachoDetalle, $pesoTomado) {
+                $distribucion = ProgramacionDespachosData::get_distribucion($idDistribucion);
+                if (! $distribucion) {
+                    return ApiResponse::error('La distribución no existe.', 404);
+                }
+
+                $idDespacho = (int) $distribucion['id_despacho'];
+
+                $despachoDetalle = ProgramacionDespachosData::get_despacho_detalle($idDespachoDetalle);
+                if (! $despachoDetalle) {
+                    return ApiResponse::error('El despacho_detalle no existe.', 404);
+                }
+                if ((int) $despachoDetalle['id_despacho'] !== $idDespacho) {
+                    return ApiResponse::error('El despacho_detalle no pertenece al despacho de la distribución.', 422);
+                }
+
+                $pesoActual = (float) $despachoDetalle['peso_actual'];
+                if ($pesoTomado > $pesoActual + 0.0001) {
+                    return ApiResponse::error(
+                        sprintf('El peso a tomar (%.3f KG) excede el peso pendiente del lote (%.3f KG).', $pesoTomado, $pesoActual),
+                        422
+                    );
+                }
+
+                // Validar que el lote no esté ya asignado a esta distribución.
+                $yaAsignado = DB::selectOne(
+                    'SELECT COUNT(*) AS total FROM distribucion_detalle
+                     WHERE id_distribucion = :id_dist AND id_despacho_detalle = :id_dd',
+                    ['id_dist' => $idDistribucion, 'id_dd' => $idDespachoDetalle]
+                );
+                if ($yaAsignado && (int) $yaAsignado->total > 0) {
+                    return ApiResponse::error('Este lote ya está asignado a la distribución.', 422);
+                }
+
+                // numero_particion = null SOLO si es la primera distribución y consume todo.
+                $countPrev = ProgramacionDespachosData::count_distribuciones_por_despacho_detalle($idDespachoDetalle);
+                $numeroParticion = ($countPrev === 0 && $pesoTomado >= $pesoActual)
+                    ? null
+                    : ($countPrev + 1);
+
+                $idDetalle = ProgramacionDespachosData::insertar_distribucion_detalle(
+                    idDistribucion: $idDistribucion,
+                    idDespachoDetalle: $idDespachoDetalle,
+                    numeroParticion: $numeroParticion,
+                    pesoTomado: $pesoTomado,
+                );
+
+                ProgramacionDespachosData::decrementar_peso_actual_despacho_detalle(
+                    idDespachoDetalle: $idDespachoDetalle,
+                    delta: $pesoTomado,
+                );
+
+                $detalle = ProgramacionDespachosData::get_detalle_by_id_with_lote($idDetalle);
+
+                return ApiResponse::success($detalle, 'Carga asignada a la distribución.');
+            });
+        } catch (\Throwable $e) {
+            \Log::error('agregar_detalle_distribucion: '.$e->getMessage(), ['exception' => $e]);
+
+            return ApiResponse::error('No se pudo asignar la carga a la distribución: '.$e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Listar los despacho_detalle del despacho original que aún NO están asignados a
+     * esta distribución. Usado en Balanza (recepcion-mineral) para presentar al
+     * operador los lotes que puede cargar.
+     *
+     * @return array<int, object>
+     */
+    public static function get_lotes_disponibles_para_distribucion(int $idDistribucion): array
+    {
+        $distribucion = ProgramacionDespachosData::get_distribucion($idDistribucion);
+        if (! $distribucion) {
+            return [];
+        }
+        $idDespacho = (int) $distribucion['id_despacho'];
+
+        $sql = '
+            SELECT
+                dd.id,
+                dd.id_despacho,
+                dd.id_lote_mineral,
+                dd.id_blending,
+                dd.peso_tomado,
+                dd.peso_actual,
+                CASE
+                    WHEN dd.id_lote_mineral IS NOT NULL THEN "LOTE"
+                    ELSE "BLEND"
+                END AS tipo_item,
+                lm.correlativo AS lote_correlativo,
+                bl.correlativo AS blending_correlativo,
+                p.razon_social AS proveedor_razon_social
+            FROM despacho_detalle dd
+            LEFT JOIN lote_mineral lm ON lm.id = dd.id_lote_mineral
+            LEFT JOIN blending bl ON bl.id = dd.id_blending
+            LEFT JOIN proveedor p
+                ON p.id = COALESCE(lm.id_proveedor_minero, bl.id_empresa)
+            WHERE dd.id_despacho = :id_despacho
+              AND dd.peso_actual > 0
+              AND dd.id NOT IN (
+                  SELECT ddid.id_despacho_detalle
+                  FROM distribucion_detalle ddid
+                  WHERE ddid.id_distribucion = :id_dist
+              )
+            ORDER BY dd.id ASC
+        ';
+
+        return DB::select($sql, [
+            'id_despacho' => $idDespacho,
+            'id_dist' => $idDistribucion,
+        ]);
     }
 
     /**
@@ -580,6 +711,179 @@ class ProgramacionDespachosService
         $dist = ProgramacionDespachosData::get_distribucion($id);
 
         return ApiResponse::success($dist, 'Llegada al cliente registrada correctamente');
+    }
+
+    /**
+     * Persistir los datos reportados por el cliente (fecha de llegada + datos por detalle).
+     *
+     * Valida que la distribución esté en un estado que permita registrar/editar la
+     * llegada: `Salió de Planta` (primer registro) o `Llegó al Cliente` (edición).
+     * NO cambia el estado de la distribución.
+     *
+     * @param  array{
+     *     fecha_llegada_cliente: string,
+     *     detalles: array<int, array{
+     *         id_detalle: int,
+     *         peso_neto_cliente?: float|null,
+     *         codigo_cliente?: string|null,
+     *         ley_oro_cliente?: float|null,
+     *         ley_plata_cliente?: float|null,
+     *         ley_humedad_cliente?: float|null,
+     *     }>
+     * }  $data
+     * @return array<string, mixed>
+     */
+    public static function actualizar_datos_cliente(int $idDistribucion, array $data, int $idEmpleadoOperador): array
+    {
+        $fechaLlegada = $data['fecha_llegada_cliente'] ?? null;
+        $detalles = $data['detalles'] ?? [];
+
+        if (! is_string($fechaLlegada) || $fechaLlegada === '') {
+            return ApiResponse::error('Debe indicar la fecha de llegada al cliente.', 422);
+        }
+        if (! is_array($detalles)) {
+            return ApiResponse::error('El detalle de datos del cliente es inválido.', 422);
+        }
+
+        try {
+            DB::transaction(function () use ($idDistribucion, $fechaLlegada, $detalles, $idEmpleadoOperador) {
+                $dist = ProgramacionDespachosData::get_distribucion($idDistribucion);
+                if (! $dist) {
+                    throw new \RuntimeException('Distribución no encontrada.');
+                }
+
+                $estadoActual = $dist['estado'] ?? null;
+                if ($estadoActual !== EstadoDistribucion::SalioDePlanta->value
+                    && $estadoActual !== EstadoDistribucion::LlegoAlCliente->value) {
+                    throw new \RuntimeException(
+                        'Solo se pueden registrar datos del cliente cuando la distribución '
+                        .'está en estado "Salió de Planta" o "Llegó al Cliente".'
+                    );
+                }
+
+                $logExistente = is_string($dist['log_cambios'] ?? null)
+                    ? json_decode($dist['log_cambios'], true) ?? []
+                    : ($dist['log_cambios'] ?? []);
+                $logsNuevos = [];
+
+                // 1) Fecha de llegada al cliente (a nivel distribución).
+                $fechaAnterior = $dist['fecha_llegada_cliente'] ?? null;
+                if (ProgramacionDespachosData::update_distribucion_fecha_llegada($idDistribucion, $fechaLlegada)) {
+                    if ($fechaAnterior !== $fechaLlegada) {
+                        $logsNuevos[] = RES_CambiosLog::crear($idEmpleadoOperador, 'Edición datos del cliente', [
+                            [
+                                'campo_bd' => 'fecha_llegada_cliente',
+                                'campo' => 'Fecha llegada cliente',
+                                'valor_anterior' => $fechaAnterior,
+                                'valor_nuevo' => $fechaLlegada,
+                            ],
+                        ]);
+                    }
+                }
+
+                // 2) Datos por detalle (peso neto cliente, código, leyes, humedad).
+                $camposCliente = [
+                    'peso_neto_cliente' => 'Peso neto cliente',
+                    'codigo_cliente' => 'Código cliente',
+                    'ley_oro_cliente' => 'Ley oro cliente',
+                    'ley_plata_cliente' => 'Ley plata cliente',
+                    'ley_humedad_cliente' => 'Humedad cliente',
+                ];
+
+                foreach ($detalles as $det) {
+                    $idDetalle = (int) ($det['id_detalle'] ?? 0);
+                    if ($idDetalle <= 0) {
+                        throw new \RuntimeException('Cada detalle debe incluir `id_detalle` válido.');
+                    }
+
+                    // Leer valores actuales del detalle para detectar cambios reales.
+                    $actual = ProgramacionDespachosData::get_detalle_by_id_with_lote($idDetalle);
+                    if (! $actual) {
+                        throw new \RuntimeException('Detalle #'.$idDetalle.' no encontrado.');
+                    }
+
+                    $datosDetalle = [];
+                    $cambiosDetalle = [];
+                    foreach ($camposCliente as $campo => $label) {
+                        if (! array_key_exists($campo, $det)) {
+                            continue;
+                        }
+                        $valorNuevo = $det[$campo];
+                        if ($valorNuevo === '') {
+                            $valorNuevo = null;
+                        }
+                        $datosDetalle[$campo] = $valorNuevo;
+
+                        $valorAnterior = $actual[$campo] ?? null;
+                        $cambiosDetalle[] = [
+                            'campo_bd' => $campo,
+                            'campo' => $label,
+                            'valor_anterior' => $valorAnterior,
+                            'valor_nuevo' => $valorNuevo,
+                        ];
+                    }
+
+                    if (empty($datosDetalle)) {
+                        continue;
+                    }
+
+                    if (ProgramacionDespachosData::update_detalle_datos_cliente($idDetalle, $datosDetalle)) {
+                        // Filtrar solo los campos que efectivamente cambiaron para el log.
+                        $cambiosEfectivos = array_filter(
+                            $cambiosDetalle,
+                            static fn ($c) => $c['valor_anterior'] !== $c['valor_nuevo'],
+                        );
+                        if (! empty($cambiosEfectivos)) {
+                            $logsNuevos[] = RES_CambiosLog::crear(
+                                $idEmpleadoOperador,
+                                'Edición datos del cliente (detalle #'.$idDetalle.')',
+                                array_values($cambiosEfectivos),
+                            );
+                        }
+                    }
+                }
+
+                // Auto-transición de estado: si la distribución aún estaba
+                // en "Salió de Planta" al guardar los datos del cliente, la
+                // marcamos como "Llegó al Cliente" (acción esperada del
+                // operador). Si ya estaba en "Llegó al Cliente", no hace nada.
+                if ($estadoActual === EstadoDistribucion::SalioDePlanta->value) {
+                    $nuevoEstado = EstadoDistribucion::LlegoAlCliente->value;
+                    $logsNuevos[] = RES_CambiosLog::crear(
+                        $idEmpleadoOperador,
+                        'Llegó al cliente (auto desde datos del cliente)',
+                        [[
+                            'campo_bd' => 'estado',
+                            'campo' => 'Estado',
+                            'valor_anterior' => $estadoActual,
+                            'valor_nuevo' => $nuevoEstado,
+                        ]],
+                    );
+                    ProgramacionDespachosData::update_distribucion($idDistribucion, [
+                        'estado' => $nuevoEstado,
+                    ]);
+                    $estadoActual = $nuevoEstado;
+                }
+
+                if (! empty($logsNuevos)) {
+                    ProgramacionDespachosData::update_distribucion($idDistribucion, [
+                        'log_cambios' => json_encode(array_merge($logExistente, $logsNuevos)),
+                    ]);
+                }
+            });
+        } catch (\Throwable $e) {
+            return ApiResponse::error($e->getMessage(), 400);
+        }
+
+        // Recargar la distribución completa para devolver la versión actualizada al frontend.
+        $distribucionActualizada = ProgramacionDespachosData::get_despacho_full(
+            (int) ProgramacionDespachosData::get_distribucion($idDistribucion)['id_despacho']
+        );
+
+        return ApiResponse::success(
+            $distribucionActualizada,
+            'Datos del cliente guardados correctamente.'
+        );
     }
 
     /**

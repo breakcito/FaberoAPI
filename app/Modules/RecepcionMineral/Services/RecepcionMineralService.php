@@ -17,7 +17,6 @@ use App\Shared\Helpers\CorrelativoHelper;
 use App\Shared\Responses\ApiResponse;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 
 class RecepcionMineralService
 {
@@ -515,42 +514,38 @@ class RecepcionMineralService
                 }
             }
         } else {
-            // Recepción de Mineral (flujo histórico).
+            // Recepción de Mineral: la unidad puede tener lotes regulares y/o
+            // particiones de lotes padre particionados desde Balanza (cuyo
+            // padre tiene `id_recepcion_unidad = NULL` y por tanto no aparece
+            // en la consulta de lotes regulares). Si AMBAS listas están
+            // vacías, no hay nada que cerrar.
             $lotes = LoteMineral::where('id_recepcion_unidad', $id)->get();
-            if ($lotes->isEmpty()) {
-                return ApiResponse::error('Debe registrar al menos un lote de mineral para esta unidad.');
+            $particionesDeUnidad = DB::table('particion_lote_mineral')
+                ->where('id_recepcion_unidad', $id)
+                ->where('estado', EstadoBase::Activo->value)
+                ->get();
+            if ($lotes->isEmpty() && $particionesDeUnidad->isEmpty()) {
+                return ApiResponse::error('Debe registrar al menos un lote o partición de mineral para esta unidad.');
             }
             foreach ($lotes as $lote) {
                 if ($lote->peso_final === null) {
                     return ApiResponse::error("El lote {$lote->correlativo} no tiene registrado su peso final.");
                 }
             }
-        }
-
-        // Validación extra: lotes padre particionados desde balanza requieren
-        // que TODAS sus particiones activas tengan peso_final registrado.
-        $lotesPadreParticionados = LoteMineral::where('particionado_desde_balanza', true)
-            ->where('estado', 'Activo')
-            ->where(function ($q) use ($id) {
-                // Lotes padre sin id_recepcion_unidad propios cuyas particiones caen en esta unidad.
-                $q->whereNull('id_recepcion_unidad')
-                    ->orWhere('id_recepcion_unidad', $id);
-            })
-            ->get();
-
-        foreach ($lotesPadreParticionados as $padre) {
-            if (! $padre->particion_finalizada) {
-                return ApiResponse::error(
-                    "Debe finalizar el lote padre particionado {$padre->correlativo} antes de cerrar el proceso.",
-                );
-            }
-            $sinPesoFinal = RecepcionMineralData::count_particiones_sin_peso_final($padre->id);
-            if ($sinPesoFinal > 0) {
-                return ApiResponse::error(
-                    "El lote {$padre->correlativo} tiene {$sinPesoFinal} partición(es) sin peso final registrado.",
-                );
+            foreach ($particionesDeUnidad as $particion) {
+                if ($particion->peso_final === null) {
+                    return ApiResponse::error("La partición {$particion->correlativo} no tiene registrado su peso final.");
+                }
             }
         }
+
+        // NOTA: la validación de "padre debe estar finalizado" y "todas las
+        // particiones del padre con peso_final" NO se hace acá. Esas reglas
+        // son prerrequisito de `finalizar_particion_lote` (que exige ≥2
+        // particiones Y todas las unidades anfitrionas en estado 'Pesado'),
+        // no del cierre de proceso de una unidad individual. Cada unidad
+        // puede (y debe) cerrar proceso de forma independiente antes de
+        // que el padre se finalice.
 
         $recepcion->estado_pesaje = 'Pesado';
         $recepcion->fecha_hora_final_pesaje = now()->toDateTimeString();
@@ -956,14 +951,15 @@ class RecepcionMineralService
     }
 
     /**
-     * Eliminar (físicamente) una partición. La fila se borra de la tabla
-     * `particion_lote_mineral`, junto con sus archivos adjuntos en storage
-     * y (si existe) su `ticket_balanza` asociado. Antes del borrado se
-     * registra un log de cambios en `lote_mineral.log_cambios` para
-     * preservar la trazabilidad.
+     * Eliminar (lógicamente) una partición. La fila se conserva en la tabla
+     * `particion_lote_mineral` con `estado = 'Eliminado'`; los archivos físicos
+     * de `evidencias` y el `ticket_balanza` asociado NO se borran del storage
+     * (preservan la trazabilidad del pesaje y pueden consultarse por el log de
+     * cambios del lote padre). Antes de la baja se registra un snapshot completo
+     * en `lote_mineral.log_cambios`.
      *
-     * Si tras el borrado no quedan particiones activas, se resetea
-     * `tiene_particion=false` en el lote padre.
+     * Si tras la baja lógica no quedan particiones activas, se resetea
+     * `tiene_particion=false` en el lote padre y se lo marca como `Eliminado`.
      */
     public static function eliminar_particion(int $idParticion, ?int $idEmpleado = null): array
     {
@@ -976,6 +972,12 @@ class RecepcionMineralService
                 return ApiResponse::error('No se encontró la partición.', 404);
             }
 
+            if ($particion->estado === EstadoBase::Eliminado) {
+                DB::rollBack();
+
+                return ApiResponse::error('La partición ya está eliminada.', 422);
+            }
+
             $idLote = (int) $particion->id_lote_mineral;
             $lote = LoteMineral::find($idLote);
             if (! $lote) {
@@ -985,8 +987,8 @@ class RecepcionMineralService
             }
 
             // Snapshot completo para el log de auditoría (se conserva antes
-            // de cualquier borrado para que el log refleje los valores reales
-            // que tenía la partición al momento de la eliminación).
+            // de cualquier cambio de estado para que el log refleje los valores
+            // reales que tenía la partición al momento de la eliminación).
             $evidencias = is_array($particion->evidencias) ? $particion->evidencias : [];
             $snapshot = [
                 'id_particion' => (int) $particion->id,
@@ -1013,26 +1015,10 @@ class RecepcionMineralService
                 ];
             }
 
-            // Borrar archivos físicos del JSON evidencias (disco `public`).
-            foreach ($evidencias as $archivo) {
-                if (! is_array($archivo)) {
-                    continue;
-                }
-                $pathRelativo = $archivo['path_relativo'] ?? null;
-                if ($pathRelativo && Storage::disk('public')->exists($pathRelativo)) {
-                    Storage::disk('public')->delete($pathRelativo);
-                }
-            }
-
-            // Si tiene ticket, eliminarlo también.
-            $idTicket = $particion->id_ticket_balanza !== null ? (int) $particion->id_ticket_balanza : null;
-
-            // DELETE físico de la partición.
-            DB::table('particion_lote_mineral')->where('id', $idParticion)->delete();
-
-            if ($idTicket !== null) {
-                DB::table('ticket_balanza')->where('id', $idTicket)->delete();
-            }
+            // Baja lógica: cambiar estado. NO se borran archivos físicos ni
+            // ticket_balanza (decisión del proyecto: conservar para auditoría).
+            $particion->estado = EstadoBase::Eliminado;
+            $particion->save();
 
             // Log de cambios en el lote padre (trazabilidad obligatoria).
             if ($idEmpleado !== null) {
@@ -1042,7 +1028,7 @@ class RecepcionMineralService
                 }
                 $nuevoLog = RES_CambiosLog::crear(
                     $idEmpleado,
-                    'Eliminación física de partición',
+                    'Eliminación lógica de partición',
                     $cambios,
                 );
                 array_unshift($logActual, $nuevoLog);
@@ -1052,11 +1038,12 @@ class RecepcionMineralService
                 }
             }
 
-            // Si no quedan particiones, revertir flags del lote y marcarlo
-            // como Eliminado para que desaparezca del grid y del header global
-            // (las queries ya filtran por estado != "Eliminado").
+            // Si no quedan particiones ACTIVAS, revertir flags del lote y
+            // marcarlo como Eliminado para que desaparezca del grid y del
+            // header global (las queries ya filtran por estado != "Eliminado").
             $quedanActivas = DB::table('particion_lote_mineral')
                 ->where('id_lote_mineral', $idLote)
+                ->where('estado', EstadoBase::Activo->value)
                 ->count();
             if ($quedanActivas === 0) {
                 DB::table('lote_mineral')->where('id', $idLote)->update([
@@ -1384,6 +1371,45 @@ class RecepcionMineralService
 
                 return ApiResponse::error(
                     "No se puede finalizar: hay {$sinPesoFinal} partición(es) sin peso final registrado.",
+                );
+            }
+
+            // Regla: el padre debe tener al menos 2 particiones activas para finalizar.
+            $totalParticiones = RecepcionMineralData::count_particiones_activas($idLote);
+            error_log("[finalizar_particion_lote] totalParticiones={$totalParticiones}");
+            if ($totalParticiones < 2) {
+                DB::rollBack();
+
+                return ApiResponse::error(
+                    "No se puede finalizar: se requieren al menos 2 particiones (hay {$totalParticiones}).",
+                    422,
+                );
+            }
+
+            // Regla: cada partición debe vivir en una unidad con `estado_pesaje = 'Pesado'`,
+            // lo cual se logra cerrando el proceso de esa unidad anfitriona.
+            $particionesUnidades = RecepcionMineralData::get_particiones_estado_pesaje_unidades($idLote);
+            $sinCerrar = array_values(array_filter(
+                $particionesUnidades,
+                static fn ($p) => ($p['estado_pesaje'] ?? null) !== 'Pesado',
+            ));
+            if (! empty($sinCerrar)) {
+                DB::rollBack();
+                $letras = implode(', ', array_map(static fn ($p) => $p['particion'], $sinCerrar));
+                $detalle = array_map(
+                    static fn ($p) => sprintf(
+                        '%s (unidad %s, estado "%s")',
+                        $p['particion'],
+                        $p['id_recepcion_unidad'] ?? '—',
+                        $p['estado_pesaje'] ?? 'sin unidad',
+                    ),
+                    $sinCerrar,
+                );
+                error_log('[finalizar_particion_lote] 422 particiones en unidades no Pesado: '.implode(' | ', $detalle));
+
+                return ApiResponse::error(
+                    'No se puede finalizar: debe cerrar el proceso de las unidades anfitrionas de las particiones '.$letras.' antes de finalizar el lote padre.',
+                    422,
                 );
             }
 

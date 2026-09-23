@@ -41,7 +41,9 @@ class SucursalesData
             $sql .= ' AND sc.id = :id_sucursal';
             $params['id_sucursal'] = $id_sucursal;
 
-            return DB::selectOne($sql, $params);
+            $row = DB::selectOne($sql, $params);
+
+            return $row ? [$row] : [];
         }
 
         $sql .= ' ORDER BY sc.nombre ASC;';

@@ -40,7 +40,9 @@ class EmpresasData
             $sql .= ' AND emp.id = :id_empresa';
             $params['id_empresa'] = $id_empresa;
 
-            return DB::selectOne($sql, $params);
+            $row = DB::selectOne($sql, $params);
+
+            return $row ? [$row] : [];
         }
 
         // Nota: la tabla `empresa` actualmente NO tiene columna `estado`

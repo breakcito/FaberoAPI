@@ -106,9 +106,9 @@ class ProgramacionDespachosController extends Controller
             'id_tipo_vehiculo' => 'required|integer',
             'id_conductor' => 'required|integer',
             'fecha_estimada_llegada' => 'nullable|date',
-            'detalles' => 'required|array|min:1',
-            'detalles.*.id_despacho_detalle' => 'required|integer',
-            'detalles.*.peso_tomado' => 'required|numeric|gt:0',
+            'detalles' => 'nullable|array',
+            'detalles.*.id_despacho_detalle' => 'required_with:detalles|integer',
+            'detalles.*.peso_tomado' => 'required_with:detalles|numeric|gt:0',
         ]);
 
         if ($validator->fails()) {
@@ -125,6 +125,50 @@ class ProgramacionDespachosController extends Controller
                 $id,
                 $validator->validated(),
                 (int) $authUser->id_empleado
+            )
+        );
+    }
+
+    /**
+     * Agregar un detalle (carga) a una distribución existente.
+     * Usado en Balanza (recepcion-mineral) para asignar lotes + peso estimado
+     * después de que la distribución ya fue creada en programacion-despachos.
+     */
+    public function agregar_detalle_distribucion(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'id_despacho_detalle' => 'required|integer',
+            'peso_tomado' => 'required|numeric|gt:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()), 400);
+        }
+
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        return response()->json(
+            ProgramacionDespachosService::agregar_detalle_distribucion(
+                $id,
+                $validator->validated(),
+                (int) $authUser->id_empleado
+            )
+        );
+    }
+
+    /**
+     * Listar los despacho_detalle del despacho original que aún NO están asignados
+     * a esta distribución. Usado por Balanza (recepcion-mineral) para ofrecer al
+     * operador los lotes disponibles para cargar.
+     */
+    public function get_lotes_disponibles_para_distribucion(Request $request, int $id): JsonResponse
+    {
+        return response()->json(
+            ApiResponse::success(
+                ProgramacionDespachosService::get_lotes_disponibles_para_distribucion($id)
             )
         );
     }
@@ -215,6 +259,42 @@ class ProgramacionDespachosController extends Controller
                 $idDetalle,
                 $payload,
                 (int) $authUser->id_empleado
+            )
+        );
+    }
+
+    /**
+     * Persistir los datos reportados por el cliente (fecha de llegada + datos por detalle).
+     * La distribución debe estar en "Salió de Planta" (primer registro) o
+     * "Llegó al Cliente" (edición). NO cambia el estado de la distribución.
+     */
+    public function actualizar_datos_cliente(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'fecha_llegada_cliente' => 'required|date_format:Y-m-d',
+            'detalles' => 'present|array',
+            'detalles.*.id_detalle' => 'required|integer',
+            'detalles.*.peso_neto_cliente' => 'nullable|numeric|min:0',
+            'detalles.*.codigo_cliente' => 'nullable|string|max:50',
+            'detalles.*.ley_oro_cliente' => 'nullable|numeric|min:0',
+            'detalles.*.ley_plata_cliente' => 'nullable|numeric|min:0',
+            'detalles.*.ley_humedad_cliente' => 'nullable|numeric|min:0|max:100',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()), 400);
+        }
+
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        return response()->json(
+            ProgramacionDespachosService::actualizar_datos_cliente(
+                $id,
+                $validator->validated(),
+                (int) $authUser->id_empleado,
             )
         );
     }

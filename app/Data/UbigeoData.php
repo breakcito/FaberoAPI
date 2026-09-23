@@ -34,9 +34,9 @@ class UbigeoData
      */
     public static function get_distritos(int $id_provincia): array
     {
-        $sql = 'SELECT id, id_provincia, nombre, codigo 
-                FROM distrito 
-                WHERE id_provincia = :id_provincia 
+        $sql = 'SELECT id, id_provincia, id_departamento, nombre, codigo
+                FROM distrito
+                WHERE id_provincia = :id_provincia
                 ORDER BY nombre ASC';
 
         return DB::select($sql, ['id_provincia' => $id_provincia]);

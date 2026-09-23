@@ -12,7 +12,7 @@ class Distrito extends Model
 
     protected $fillable = [
         'id_provincia',
-        //
+        'id_departamento',
         'nombre',
         'codigo',
     ];
