@@ -336,6 +336,16 @@ class ProgramacionDespachosData
                 $g->id_empleado_reistro = $g->id_empleado_reistro !== null
                     ? (int) $g->id_empleado_reistro
                     : null;
+                $g->id_empresa = $g->id_empresa !== null ? (int) $g->id_empresa : null;
+                $g->id_planta_destino = $g->id_planta_destino !== null ? (int) $g->id_planta_destino : null;
+                // Campos derivados (de FK a empresa/planta) que el modal necesita
+                // para pre-rellenar el Select de Remitente y el switch Empresa/Planta.
+                // Replicamos la lógica de GuiaSegundoTramoData::hydrate() para no
+                // duplicarla como public.
+                $g->id_remitente = $g->id_planta_destino ?? $g->id_empresa ?? null;
+                $g->tipo_remitente = $g->id_planta_destino !== null
+                    ? \App\Shared\Enums\_Generic\TipoRemitente::PlantaDestino->value
+                    : ($g->id_empresa !== null ? \App\Shared\Enums\_Generic\TipoRemitente::Empresa->value : null);
                 $g->sin_guia_transportista = (bool) $g->sin_guia_transportista;
                 $g->documentos = isset($g->documentos) ? json_decode($g->documentos, true) ?? null : null;
                 $g->log_cambios = isset($g->log_cambios) ? json_decode($g->log_cambios, true) ?? [] : [];

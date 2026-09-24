@@ -4,6 +4,7 @@ namespace App\Modules\ProgramacionDespachos\Controllers;
 
 use App\Modules\ProgramacionDespachos\Services\GuiaSegundoTramoService;
 use App\Shared\Enums\_Generic\MotivoTraslado;
+use App\Shared\Enums\_Generic\TipoRemitente;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,6 +35,7 @@ class GuiaSegundoTramoController extends Controller
             'guia_transportista' => 'nullable|string|max:20',
             'sin_guia_transportista' => 'nullable|boolean',
             'id_remitente' => ['nullable', 'integer', 'min:1'],
+            'tipo_remitente' => ['nullable', 'string', Rule::enum(TipoRemitente::class)],
             'documento_guia_remitente' => 'nullable|file',
             'documento_guia_transportista' => 'nullable|file',
         ]);
@@ -77,6 +79,7 @@ class GuiaSegundoTramoController extends Controller
             'guia_transportista' => 'nullable|string|max:20',
             'sin_guia_transportista' => 'nullable|boolean',
             'id_remitente' => ['nullable', 'integer', 'min:1'],
+            'tipo_remitente' => ['nullable', 'string', Rule::enum(TipoRemitente::class)],
             'documento_guia_remitente' => 'nullable|file',
             'documento_guia_transportista' => 'nullable|file',
             'motivo' => 'nullable|string',
