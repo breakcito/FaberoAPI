@@ -5,6 +5,8 @@ namespace App\Modules\ProgramacionDespachos\Services;
 use App\Modules\ProgramacionDespachos\Data\ProgramacionDespachosData;
 use App\Services\EmpresasService;
 use App\Shared\Enums\_Generic\EstadoBase;
+use App\Shared\Enums\_Generic\EstadoSalida;
+use App\Shared\Enums\_Generic\EstadoUnidad;
 use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Enums\ProgramacionDespachos\EstadoDistribucion;
 use App\Shared\Helpers\CorrelativoHelper;
@@ -652,8 +654,8 @@ class ProgramacionDespachosService
                 $recepcionId = self::get_recepcion_unidad_id_para_distribucion($id);
                 if ($recepcionId !== null) {
                     $updates = [
-                        'estado' => EstadoDistribucion::SalioDePlanta->value,
-                        'estado_salida' => 'Fuera de Planta',
+                        'estado' => EstadoUnidad::FueraDePlanta->value,
+                        'estado_salida' => EstadoSalida::ConCarga->value,
                         'fecha_hora_salida' => now()->toDateTimeString(),
                     ];
                     if ($observacion !== null) {
@@ -782,12 +784,16 @@ class ProgramacionDespachosService
                 }
 
                 // 2) Datos por detalle (peso neto cliente, código, leyes, humedad).
+                //    Solo se persisten en BD; NO se registran en `log_cambios` para
+                //    no saturar el historial de la distribución con cambios menores.
+                //    El log sólo refleja cambios a nivel distribución: `estado` y
+                //    `fecha_llegada_cliente`.
                 $camposCliente = [
-                    'peso_neto_cliente' => 'Peso neto cliente',
-                    'codigo_cliente' => 'Código cliente',
-                    'ley_oro_cliente' => 'Ley oro cliente',
-                    'ley_plata_cliente' => 'Ley plata cliente',
-                    'ley_humedad_cliente' => 'Humedad cliente',
+                    'peso_neto_cliente',
+                    'codigo_cliente',
+                    'ley_oro_cliente',
+                    'ley_plata_cliente',
+                    'ley_humedad_cliente',
                 ];
 
                 foreach ($detalles as $det) {
@@ -796,15 +802,8 @@ class ProgramacionDespachosService
                         throw new \RuntimeException('Cada detalle debe incluir `id_detalle` válido.');
                     }
 
-                    // Leer valores actuales del detalle para detectar cambios reales.
-                    $actual = ProgramacionDespachosData::get_detalle_by_id_with_lote($idDetalle);
-                    if (! $actual) {
-                        throw new \RuntimeException('Detalle #'.$idDetalle.' no encontrado.');
-                    }
-
                     $datosDetalle = [];
-                    $cambiosDetalle = [];
-                    foreach ($camposCliente as $campo => $label) {
+                    foreach ($camposCliente as $campo) {
                         if (! array_key_exists($campo, $det)) {
                             continue;
                         }
@@ -813,34 +812,13 @@ class ProgramacionDespachosService
                             $valorNuevo = null;
                         }
                         $datosDetalle[$campo] = $valorNuevo;
-
-                        $valorAnterior = $actual[$campo] ?? null;
-                        $cambiosDetalle[] = [
-                            'campo_bd' => $campo,
-                            'campo' => $label,
-                            'valor_anterior' => $valorAnterior,
-                            'valor_nuevo' => $valorNuevo,
-                        ];
                     }
 
                     if (empty($datosDetalle)) {
                         continue;
                     }
 
-                    if (ProgramacionDespachosData::update_detalle_datos_cliente($idDetalle, $datosDetalle)) {
-                        // Filtrar solo los campos que efectivamente cambiaron para el log.
-                        $cambiosEfectivos = array_filter(
-                            $cambiosDetalle,
-                            static fn ($c) => $c['valor_anterior'] !== $c['valor_nuevo'],
-                        );
-                        if (! empty($cambiosEfectivos)) {
-                            $logsNuevos[] = RES_CambiosLog::crear(
-                                $idEmpleadoOperador,
-                                'Edición datos del cliente (detalle #'.$idDetalle.')',
-                                array_values($cambiosEfectivos),
-                            );
-                        }
-                    }
+                    ProgramacionDespachosData::update_detalle_datos_cliente($idDetalle, $datosDetalle);
                 }
 
                 // Auto-transición de estado: si la distribución aún estaba
@@ -851,7 +829,7 @@ class ProgramacionDespachosService
                     $nuevoEstado = EstadoDistribucion::LlegoAlCliente->value;
                     $logsNuevos[] = RES_CambiosLog::crear(
                         $idEmpleadoOperador,
-                        'Llegó al cliente (auto desde datos del cliente)',
+                        'Llego al cliente',
                         [[
                             'campo_bd' => 'estado',
                             'campo' => 'Estado',

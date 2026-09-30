@@ -3,11 +3,13 @@
 namespace App\Modules\RecepcionUnidades\Controllers;
 
 use App\Modules\RecepcionUnidades\Services\RecepcionUnidadesService;
+use App\Shared\Enums\_Generic\EstadoSalida;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class RecepcionUnidadesController extends Controller
 {
@@ -140,7 +142,7 @@ class RecepcionUnidadesController extends Controller
     public function registrar_salida(Request $request, int $id): JsonResponse
     {
         $request->validate([
-            'estado_salida' => 'required|string|max:50',
+            'estado_salida' => ['required', 'string', Rule::in(array_column(EstadoSalida::cases(), 'value'))],
             'observacion_salida' => 'nullable|string',
         ]);
 

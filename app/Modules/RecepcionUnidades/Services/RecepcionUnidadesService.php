@@ -8,6 +8,7 @@ use App\Models\RecepcionVisitaDetalle;
 use App\Modules\ProgramacionDespachos\Data\ProgramacionDespachosData;
 use App\Modules\ProgramacionDespachos\Services\ProgramacionDespachosService;
 use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
+use App\Shared\Enums\_Generic\EstadoUnidad;
 use App\Shared\Enums\_Generic\EstadoVisita;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
@@ -192,7 +193,7 @@ class RecepcionUnidadesService
         $recepcion->estado_salida = $estadoSalida;
         $recepcion->observacion_salida = $observacionSalida;
         $recepcion->fecha_hora_salida = $nowStr;
-        $recepcion->estado = EstadoVisita::FueraDePlanta->value;
+        $recepcion->estado = EstadoUnidad::FueraDePlanta->value;
         $recepcion->save();
 
         // Registrar la salida en la visita y sus detalles vinculados a esta recepción de unidad
