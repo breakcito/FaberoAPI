@@ -1079,4 +1079,58 @@ class ProgramacionDespachosService
             'advertencias' => $advertencias,
         ], 'Pesaje registrado correctamente');
     }
+
+    /**
+     * Actualizar y confirmar/desconfirmar la ley final (Oro o Plata) de un despacho_detalle.
+     *
+     * @return array{success:bool, data:mixed, message:string, errors?:mixed}
+     */
+    public static function actualizar_ley_final(int $idDetalle, string $elemento, float $leyFinal, bool $confirmada): array
+    {
+        $dd = ProgramacionDespachosData::get_despacho_detalle($idDetalle);
+        if (! $dd) {
+            return ApiResponse::error('El item de despacho no existe.', 404);
+        }
+
+        $esOro = strtolower($elemento) === 'oro';
+        $estaValorizado = $esOro ? (bool) ($dd['esta_valorizado_oro'] ?? false) : (bool) ($dd['esta_valorizado_plata'] ?? false);
+        if ($estaValorizado) {
+            return ApiResponse::error("No se puede modificar la ley final de {$elemento} porque este item ya se encuentra valorizado en venta.", 422);
+        }
+
+        if ($confirmada) {
+            if ($leyFinal < 0) {
+                return ApiResponse::error('La ley final no puede ser negativa.', 422);
+            }
+
+            // Validar que todas las distribuciones tengan fecha de llegada y leyes de cliente
+            $totalDist = ProgramacionDespachosData::count_distribuciones_por_despacho_detalle($idDetalle);
+            if ($totalDist === 0) {
+                return ApiResponse::error('El item aún no tiene distribuciones asociadas.', 422);
+            }
+
+            $distribucionesIncompletas = DB::table('distribucion_detalle as ddt')
+                ->join('distribucion as di', 'di.id', '=', 'ddt.id_distribucion')
+                ->where('ddt.id_despacho_detalle', $idDetalle)
+                ->where(function ($q) use ($esOro) {
+                    $q->whereNull('di.fecha_llegada_cliente')
+                        ->orWhereNull($esOro ? 'ddt.ley_oro_cliente' : 'ddt.ley_plata_cliente')
+                        ->orWhere($esOro ? 'ddt.ley_oro_cliente' : 'ddt.ley_plata_cliente', '<=', 0);
+                })
+                ->count();
+
+            if ($distribucionesIncompletas > 0) {
+                return ApiResponse::error("Para confirmar la ley final de {$elemento}, todas las distribuciones deben tener fecha de llegada y ley de cliente registrada.", 422);
+            }
+        }
+
+        ProgramacionDespachosData::actualizar_ley_final_despacho_detalle($idDetalle, $elemento, $leyFinal, $confirmada);
+
+        $despachoActualizado = ProgramacionDespachosData::get_despacho_full((int) $dd['id_despacho']);
+
+        return ApiResponse::success(
+            $despachoActualizado,
+            $confirmada ? "Ley final de {$elemento} confirmada correctamente." : "Ley final de {$elemento} desbloqueada."
+        );
+    }
 }

@@ -45,7 +45,8 @@ class ValorizacionVentaController
         $request->validate([
             'id_planta' => 'required|integer|exists:planta_destino,id',
             'detalles' => 'required|array|min:1',
-            'detalles.*.id_distribucion_detalle' => 'required|integer|exists:distribucion_detalle,id',
+            'detalles.*.id_despacho_detalle' => 'nullable|integer|exists:despacho_detalle,id',
+            'detalles.*.id_distribucion_detalle' => 'nullable|integer',
             'detalles.*.elemento_quimico' => 'required|string|in:Oro,Plata',
             'detalles.*.id_condicion_comercial' => 'nullable|integer',
             'detalles.*.id_valor_elemento_quimico' => 'nullable|integer',
@@ -105,7 +106,8 @@ class ValorizacionVentaController
         $request->validate([
             'id_planta' => 'required|integer|exists:planta_destino,id',
             'detalles' => 'required|array|min:1',
-            'detalles.*.id_distribucion_detalle' => 'required|integer|exists:distribucion_detalle,id',
+            'detalles.*.id_despacho_detalle' => 'nullable|integer|exists:despacho_detalle,id',
+            'detalles.*.id_distribucion_detalle' => 'nullable|integer',
             'detalles.*.elemento_quimico' => 'required|string|in:Oro,Plata',
             'detalles.*.id_condicion_comercial' => 'nullable|integer',
             'detalles.*.id_valor_elemento_quimico' => 'nullable|integer',

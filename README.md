@@ -5,10 +5,10 @@ API del ERP para una planta de beneficio de mineral de oro y plata. Digitaliza e
 ## Módulos
 
 - **Configuración y accesos**: Empresas, Sucursales, Bancos, Marcas, Organigrama, Empleados, Roles, Cuentas, Perfil, Login, Modo Auditoría
-- **Maestros de mineral**: Proveedores, Concesiones mineras, Condiciones Comerciales Proveedor, Cuentas Bancarias (Proveedor / Empresa / Planta Destino), Empresas Transporte, Vehículos, Conductores, Encargados de Muestra, Zonas de Origen, Motivos de Ingreso, Plantas Destino
-- **Recepción**: Recepción Visitas, Guías Primer Tramo, Recepción Mineral, Recepción Unidades (TicketBalanza)
-- **Análisis y procesamiento**: Gestión de Leyes, Cierre de Leyes, Blending
-- **Compra y contabilidad**: Anticipos Proveedor, Valorización Compra, Contabilidad Compra (Comprobantes + Pagos)
+- **Maestros y logística**: Proveedores, Concesiones mineras, Condiciones Comerciales Proveedor, Cuentas Bancarias (Proveedor / Empresa / Planta Destino), Empresas Transporte, Vehículos, Conductores, Visita Vehículo, Plantas Destino, Condiciones Comerciales Planta
+- **Recepción**: Recepción Visitas, Programar Recepción, Guías Primer Tramo, Recepción Mineral, Recepción Unidades (TicketBalanza)
+- **Análisis y procesamiento**: Gestión de Leyes, Cierre de Leyes, Blending, Validación Distribución
+- **Compra, venta y contabilidad**: Anticipos Proveedor, Anticipos Planta, Programación Despachos, Valorización Compra, Valorización Venta, Valor Elemento Químico, Contabilidad Compra (Comprobantes + Pagos)
 - **Catálogos globales**: Tipo de Cambio, Ubigeo (departamentos / provincias / distritos)
 
 ## Stack
@@ -44,7 +44,7 @@ Para catálogos recurrentes (empleados, proveedores, marcas, ubigeo, tipos de ve
 
 En `app/Shared/Enums/`. **Cada proceso físico tiene su Enum dedicado** dentro de su subcarpeta. Ejemplo: `ValorizacionCompra/EstadoValorizacionCompra` y `ContabilidadCompra/EstadoComprobanteCompra` NO se reciclan.
 
-Enums genéricos en `_Generic/`: `TipoMineral`, `TipoProducto`, `Moneda`, `MetodoPago`, `Periodo`, `EstadoBase`, `TipoEntidad`, `TipoCarga`, `TipoComprobante`, `TipoOrigen`, `MotivoTraslado`, `CondicionIngreso`, `ElementoQuimicoValorizacion`, `EstadoAnticipoProveedor`, `EstadoLeyes`, `EstadoPesaje`, `EstadoVisita`.
+Enums genéricos en `_Generic/`: `TipoMineral`, `TipoProducto`, `Moneda`, `MetodoPago`, `Periodo`, `EstadoBase`, `TipoEntidad`, `TipoComprobante`, `TipoOrigen`, `MotivoTraslado`, `CondicionIngreso`, `ElementoQuimicoValorizacion`, `EstadoAnticipoProveedor`, `EstadoLeyes`, `EstadoPesaje`, `EstadoVisita`.
 
 ### Respuestas
 

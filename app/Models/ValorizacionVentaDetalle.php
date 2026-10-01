@@ -14,7 +14,7 @@ class ValorizacionVentaDetalle extends Model
 
     protected $fillable = [
         'id_valorizacion_venta',
-        'id_distribucion_detalle',
+        'id_despacho_detalle',
         'id_condicion_comercial',
         'id_valor_elemento_quimico',
         'elemento_quimico',
@@ -31,7 +31,7 @@ class ValorizacionVentaDetalle extends Model
 
     protected $casts = [
         'id_valorizacion_venta' => 'integer',
-        'id_distribucion_detalle' => 'integer',
+        'id_despacho_detalle' => 'integer',
         'id_condicion_comercial' => 'integer',
         'id_valor_elemento_quimico' => 'integer',
         'inter' => 'float',
@@ -51,9 +51,9 @@ class ValorizacionVentaDetalle extends Model
         return $this->belongsTo(ValorizacionVenta::class, 'id_valorizacion_venta');
     }
 
-    public function distribucionDetalle(): BelongsTo
+    public function despachoDetalle(): BelongsTo
     {
-        return $this->belongsTo(DistribucionDetalle::class, 'id_distribucion_detalle');
+        return $this->belongsTo(DespachoDetalle::class, 'id_despacho_detalle');
     }
 
     public function condicionComercial(): BelongsTo

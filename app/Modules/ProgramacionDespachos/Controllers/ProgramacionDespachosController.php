@@ -298,4 +298,31 @@ class ProgramacionDespachosController extends Controller
             )
         );
     }
+
+    /**
+     * Actualizar ley final (Oro o Plata) y su estado de confirmación.
+     */
+    public function actualizar_ley_final(Request $request, int $idDetalle): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'elemento' => 'required|string|in:oro,plata,Oro,Plata',
+            'ley_final' => 'required|numeric|min:0',
+            'confirmada' => 'required|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(
+                ApiResponse::error('Datos inválidos.', $validator->errors()->toArray()),
+                422
+            );
+        }
+
+        $elemento = ucfirst(strtolower((string) $request->input('elemento')));
+        $leyFinal = (float) $request->input('ley_final');
+        $confirmada = (bool) $request->input('confirmada');
+
+        $result = ProgramacionDespachosService::actualizar_ley_final($idDetalle, $elemento, $leyFinal, $confirmada);
+
+        return response()->json($result, $result['success'] ? 200 : ($result['errors'] ?? 422));
+    }
 }

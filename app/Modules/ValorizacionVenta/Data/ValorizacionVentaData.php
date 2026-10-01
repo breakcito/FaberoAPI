@@ -19,7 +19,7 @@ class ValorizacionVentaData
             'empleadoAprobacion:id,nombre,apellido',
             'empleadoAnulacion:id,nombre,apellido',
             'detalles',
-            'detalles.distribucionDetalle',
+            'detalles.despachoDetalle',
             'detalles.condicionComercial',
         ]);
     }
@@ -78,47 +78,65 @@ class ValorizacionVentaData
             'total_subtotal' => round($totalSubtotal, 2),
             'evidencias' => self::decode_json_field($item->evidencias),
             'detalles' => $item->detalles->map(function (ValorizacionVentaDetalle $d) {
-                $ddt = $d->distribucionDetalle;
+                $dd = $d->despachoDetalle;
 
-                $pesoNeto = $ddt && $ddt->peso_neto_cliente !== null ? (float) $ddt->peso_neto_cliente : 0;
-                $leyHumedad = $ddt && $ddt->ley_humedad_cliente !== null ? (float) $ddt->ley_humedad_cliente : 0;
+                $pesoNeto = $dd ? (float) $dd->peso_tomado : 0.0;
+
+                // Promedio de humedad de cliente de las distribuciones detalle hijas
+                $leyHumedad = 0.0;
+                if ($dd) {
+                    $avgHumedad = DB::table('distribucion_detalle')
+                        ->where('id_despacho_detalle', $dd->id)
+                        ->whereNotNull('ley_humedad_cliente')
+                        ->avg('ley_humedad_cliente');
+                    $leyHumedad = $avgHumedad !== null ? round((float) $avgHumedad, 3) : 0.0;
+                }
                 $tms = round($pesoNeto * (1 - ($leyHumedad / 100)), 4);
 
                 $despachoCorrelativo = null;
-                $codigoCliente = null;
+                $codigoPreliminar = null;
                 $loteCorrelativo = null;
                 $blendingCorrelativo = null;
 
-                if ($ddt) {
-                    $distRow = DB::table('distribucion as d')
-                        ->join('despacho as dsp', 'dsp.id', '=', 'd.id_despacho')
-                        ->where('d.id', $ddt->id_distribucion)
-                        ->select('d.id_despacho', 'dsp.correlativo as despacho_correlativo')
+                if ($dd) {
+                    $dspRow = DB::table('despacho')
+                        ->where('id', $dd->id_despacho)
+                        ->select('correlativo')
                         ->first();
-
-                    if ($distRow) {
-                        $despachoCorrelativo = $distRow->despacho_correlativo !== null ? (string) $distRow->despacho_correlativo : null;
+                    if ($dspRow) {
+                        $despachoCorrelativo = (string) $dspRow->correlativo;
                     }
-
-                    $despachoDetalle = DB::table('despacho_detalle')->where('id', $ddt->id_despacho_detalle)->first();
-                    if ($despachoDetalle) {
-                        if ($despachoDetalle->id_lote_mineral) {
-                            $lote = DB::table('lote_mineral')->where('id', $despachoDetalle->id_lote_mineral)->first();
-                            $loteCorrelativo = $lote ? (string) ($lote->correlativo ?? $lote->numero_correlativo ?? '') : null;
-                        }
-                        if ($despachoDetalle->id_blending) {
-                            $b = DB::table('blending')->where('id', $despachoDetalle->id_blending)->first();
-                            $blendingCorrelativo = $b ? (string) ($b->correlativo ?? '') : null;
-                        }
+                    if ($dd->id_lote_mineral) {
+                        $lote = DB::table('lote_mineral')->where('id', $dd->id_lote_mineral)->first();
+                        $loteCorrelativo = $lote ? (string) ($lote->correlativo ?? $lote->numero_correlativo ?? '') : null;
                     }
+                    if ($dd->id_blending) {
+                        $b = DB::table('blending')->where('id', $dd->id_blending)->first();
+                        $blendingCorrelativo = $b ? (string) ($b->correlativo ?? '') : null;
+                    }
+                    $codigoPreliminar = $dd->codigo_preliminar !== null ? (string) $dd->codigo_preliminar : null;
+                    $codigosCliente = DB::table('distribucion_detalle')
+                        ->where('id_despacho_detalle', $dd->id)
+                        ->whereNotNull('codigo_cliente')
+                        ->where('codigo_cliente', '!=', '')
+                        ->orderBy('id')
+                        ->pluck('codigo_cliente')
+                        ->unique()
+                        ->implode('.');
+                }
 
-                    $codigoCliente = $ddt->codigo_cliente !== null ? (string) $ddt->codigo_cliente : null;
+                $leyFinal = 0.0;
+                if ($dd) {
+                    $leyFinal = (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro'
+                        ? $dd->ley_oro_final
+                        : $dd->ley_plata_final);
                 }
 
                 return [
                     'id' => $d->id,
                     'id_valorizacion_venta' => $d->id_valorizacion_venta,
-                    'id_distribucion_detalle' => $d->id_distribucion_detalle,
+                    'id_despacho_detalle' => $d->id_despacho_detalle,
+                    'id_distribucion_detalle' => $d->id_despacho_detalle, // retrocompatibilidad
                     'id_condicion_comercial' => $d->id_condicion_comercial,
                     'id_valor_elemento_quimico' => $d->id_valor_elemento_quimico,
                     'elemento_quimico' => $d->elemento_quimico ? $d->elemento_quimico->value : null,
@@ -126,11 +144,13 @@ class ValorizacionVentaData
                     'despacho_correlativo' => $despachoCorrelativo,
                     'lote_correlativo' => $loteCorrelativo,
                     'blending_correlativo' => $blendingCorrelativo,
-                    'codigo_cliente' => $codigoCliente,
+                    'codigo_preliminar' => $codigoPreliminar,
+                    'codigo_cliente' => !empty($codigosCliente) ? $codigosCliente : $codigoPreliminar,
+                    'codigos_cliente' => !empty($codigosCliente) ? $codigosCliente : null,
                     'tmh' => $pesoNeto,
                     'ley_humedad' => $leyHumedad,
                     'tms' => $tms,
-                    'ley' => $ddt ? (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro' ? $ddt->ley_oro_cliente : $ddt->ley_plata_cliente) : 0,
+                    'ley' => $leyFinal,
                     'inter' => (float) $d->inter,
                     'des_inter' => (float) $d->des_inter,
                     'recuperacion' => (float) $d->recuperacion,
@@ -198,36 +218,38 @@ class ValorizacionVentaData
     }
 
     /**
-     * Buscar una distribucion_detalle con joins mínimos para valorizar (planta, leyes cliente, peso cliente).
+     * Buscar un despacho_detalle con joins mínimos para valorizar (planta, leyes finales, peso tomado, distribuciones).
      */
-    public static function find_distribucion_detalle_con_planta(int $idDistribucionDetalle): ?array
+    public static function find_despacho_detalle_con_planta(int $idDespachoDetalle): ?array
     {
-        $row = DB::table('distribucion_detalle as ddt')
-            ->join('distribucion as d', 'd.id', '=', 'ddt.id_distribucion')
-            ->join('despacho as dsp', 'dsp.id', '=', 'd.id_despacho')
-            ->join('despacho_detalle as dd', 'dd.id', '=', 'ddt.id_despacho_detalle')
+        $row = DB::table('despacho_detalle as dd')
+            ->join('despacho as dsp', 'dsp.id', '=', 'dd.id_despacho')
             ->join('planta_destino as pd', 'pd.id', '=', 'dsp.id_planta_destino')
             ->leftJoin('lote_mineral as lm', 'lm.id', '=', 'dd.id_lote_mineral')
             ->leftJoin('blending as b', 'b.id', '=', 'dd.id_blending')
-            ->where('ddt.id', $idDistribucionDetalle)
+            ->where('dd.id', $idDespachoDetalle)
             ->select([
-                'ddt.id',
-                'ddt.id_distribucion',
-                'ddt.id_despacho_detalle',
-                'ddt.numero_particion',
-                'ddt.peso_neto_cliente',
-                'ddt.ley_oro_cliente',
-                'ddt.ley_plata_cliente',
-                'ddt.ley_humedad_cliente',
-                'ddt.codigo_cliente',
-                'ddt.esta_valorizado_oro',
-                'ddt.esta_valorizado_plata',
-                'd.id_despacho',
+                'dd.id',
+                'dd.id_despacho',
+                'dd.peso_tomado',
+                'dd.codigo_preliminar',
+                'dd.ley_oro_final',
+                'dd.ley_plata_final',
+                'dd.ley_oro_final_confirmada',
+                'dd.ley_plata_final_confirmada',
+                'dd.esta_valorizado_oro',
+                'dd.esta_valorizado_plata',
                 'dsp.correlativo as despacho_correlativo',
                 'pd.id as id_planta',
                 'pd.razon_social as planta_nombre',
                 'lm.correlativo as lote_correlativo',
                 'b.correlativo as blending_correlativo',
+                DB::raw('(SELECT GROUP_CONCAT(DISTINCT ddt.codigo_cliente ORDER BY ddt.id SEPARATOR \'.\') FROM distribucion_detalle ddt WHERE ddt.id_despacho_detalle = dd.id AND ddt.codigo_cliente IS NOT NULL AND TRIM(ddt.codigo_cliente) != \'\') as codigos_cliente'),
+                DB::raw('(SELECT COALESCE(SUM(ddt.peso_tomado), 0) FROM distribucion_detalle ddt WHERE ddt.id_despacho_detalle = dd.id) as peso_distribuido_total'),
+                DB::raw('(SELECT AVG(ddt.ley_humedad_cliente) FROM distribucion_detalle ddt WHERE ddt.id_despacho_detalle = dd.id AND ddt.ley_humedad_cliente IS NOT NULL) as ley_humedad_cliente'),
+                DB::raw('(SELECT COALESCE(SUM(ddt.peso_neto_cliente), 0) FROM distribucion_detalle ddt WHERE ddt.id_despacho_detalle = dd.id) as peso_neto_cliente_total'),
+                DB::raw('(SELECT COUNT(*) FROM distribucion_detalle ddt WHERE ddt.id_despacho_detalle = dd.id) as total_distribuciones'),
+                DB::raw('(SELECT COUNT(*) FROM distribucion_detalle ddt INNER JOIN distribucion di ON di.id = ddt.id_distribucion WHERE ddt.id_despacho_detalle = dd.id AND di.fecha_llegada_cliente IS NOT NULL AND ddt.peso_neto_cliente > 0) as total_distribuciones_validas'),
             ])
             ->first();
 
@@ -238,8 +260,19 @@ class ValorizacionVentaData
         $row->despacho_correlativo = $row->despacho_correlativo !== null ? (string) $row->despacho_correlativo : null;
         $row->lote_correlativo = $row->lote_correlativo !== null ? (string) $row->lote_correlativo : null;
         $row->blending_correlativo = $row->blending_correlativo !== null ? (string) $row->blending_correlativo : null;
+        $row->codigo_cliente = $row->codigos_cliente !== null ? (string) $row->codigos_cliente : null;
+        $row->codigos_cliente = $row->codigos_cliente !== null ? (string) $row->codigos_cliente : null;
+        $row->peso_neto_cliente = (float) $row->peso_tomado;
 
         return (array) $row;
+    }
+
+    /**
+     * Alias de retrocompatibilidad
+     */
+    public static function find_distribucion_detalle_con_planta(int $idDetalle): ?array
+    {
+        return self::find_despacho_detalle_con_planta($idDetalle);
     }
 
     /**

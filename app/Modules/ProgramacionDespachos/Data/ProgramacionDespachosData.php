@@ -146,13 +146,50 @@ class ProgramacionDespachosData
             dd.peso_tomado,
             dd.peso_actual,
             dd.codigo_preliminar,
+            dd.ley_oro_final,
+            dd.ley_plata_final,
+            dd.ley_oro_final_confirmada,
+            dd.ley_plata_final_confirmada,
+            dd.esta_valorizado_oro,
+            dd.esta_valorizado_plata,
+            COALESCE(lm.ley_oro, b.ley_oro, 0) AS ley_oro_fabero,
+            COALESCE(lm.ley_plata, b.ley_plata, 0) AS ley_plata_fabero,
             b.correlativo AS blending_correlativo,
             b.peso_neto AS blending_peso_neto,
             lm.correlativo AS lote_correlativo,
             lm.peso_neto AS lote_peso_neto,
             lm.tipo_producto AS lote_tipo_producto,
             lm.tipo_mineral AS lote_tipo_mineral,
-            pr.razon_social AS proveedor_razon_social
+            pr.razon_social AS proveedor_razon_social,
+            (
+                SELECT AVG(ddt.ley_oro_cliente)
+                FROM distribucion_detalle ddt
+                WHERE ddt.id_despacho_detalle = dd.id AND ddt.ley_oro_cliente IS NOT NULL
+            ) AS ley_oro_cliente_promedio,
+            (
+                SELECT AVG(ddt.ley_plata_cliente)
+                FROM distribucion_detalle ddt
+                WHERE ddt.id_despacho_detalle = dd.id AND ddt.ley_plata_cliente IS NOT NULL
+            ) AS ley_plata_cliente_promedio,
+            (
+                SELECT AVG(ddt.ley_humedad_cliente)
+                FROM distribucion_detalle ddt
+                WHERE ddt.id_despacho_detalle = dd.id AND ddt.ley_humedad_cliente IS NOT NULL
+            ) AS ley_humedad_cliente_promedio,
+            (
+                SELECT COUNT(*)
+                FROM distribucion_detalle ddt
+                WHERE ddt.id_despacho_detalle = dd.id
+            ) AS total_distribuciones,
+            (
+                SELECT COUNT(*)
+                FROM distribucion_detalle ddt
+                INNER JOIN distribucion di ON di.id = ddt.id_distribucion
+                WHERE ddt.id_despacho_detalle = dd.id
+                  AND di.fecha_llegada_cliente IS NOT NULL
+                  AND ddt.ley_oro_cliente IS NOT NULL
+                  AND ddt.ley_plata_cliente IS NOT NULL
+            ) AS total_distribuciones_con_leyes
         FROM despacho_detalle dd
         LEFT JOIN blending b ON b.id = dd.id_blending
         LEFT JOIN lote_mineral lm ON lm.id = dd.id_lote_mineral
@@ -172,6 +209,20 @@ class ProgramacionDespachosData
             $d->codigo_preliminar = $d->codigo_preliminar !== null ? (string) $d->codigo_preliminar : null;
             $d->blending_peso_neto = $d->blending_peso_neto !== null ? (float) $d->blending_peso_neto : null;
             $d->lote_peso_neto = $d->lote_peso_neto !== null ? (float) $d->lote_peso_neto : null;
+            $d->ley_oro_fabero = (float) ($d->ley_oro_fabero ?? 0);
+            $d->ley_plata_fabero = (float) ($d->ley_plata_fabero ?? 0);
+            $d->ley_oro_final = (float) ($d->ley_oro_final ?? 0);
+            $d->ley_plata_final = (float) ($d->ley_plata_final ?? 0);
+            $d->ley_oro_final_confirmada = (bool) ($d->ley_oro_final_confirmada ?? false);
+            $d->ley_plata_final_confirmada = (bool) ($d->ley_plata_final_confirmada ?? false);
+            $d->esta_valorizado_oro = (bool) ($d->esta_valorizado_oro ?? false);
+            $d->esta_valorizado_plata = (bool) ($d->esta_valorizado_plata ?? false);
+            $d->ley_oro_cliente_promedio = $d->ley_oro_cliente_promedio !== null ? round((float) $d->ley_oro_cliente_promedio, 3) : null;
+            $d->ley_plata_cliente_promedio = $d->ley_plata_cliente_promedio !== null ? round((float) $d->ley_plata_cliente_promedio, 3) : null;
+            $d->ley_humedad_cliente_promedio = $d->ley_humedad_cliente_promedio !== null ? round((float) $d->ley_humedad_cliente_promedio, 3) : null;
+            $d->total_distribuciones = (int) ($d->total_distribuciones ?? 0);
+            $d->total_distribuciones_con_leyes = (int) ($d->total_distribuciones_con_leyes ?? 0);
+            $d->puede_confirmar_leyes = $d->total_distribuciones > 0 && ($d->total_distribuciones === $d->total_distribuciones_con_leyes);
         }
 
         $sqlDistribuciones = '
@@ -1141,5 +1192,25 @@ class ProgramacionDespachosData
             'id' => (int) $id,
             'correlativo' => (string) $ticketData['correlativo'],
         ];
+    }
+
+    /**
+     * Actualizar ley final y flag de confirmación de un despacho_detalle.
+     */
+    public static function actualizar_ley_final_despacho_detalle(
+        int $idDetalle,
+        string $elemento,
+        float $leyFinal,
+        bool $confirmada
+    ): bool {
+        $campoLey = strtolower($elemento) === 'oro' ? 'ley_oro_final' : 'ley_plata_final';
+        $campoConf = strtolower($elemento) === 'oro' ? 'ley_oro_final_confirmada' : 'ley_plata_final_confirmada';
+
+        return DB::table('despacho_detalle')
+            ->where('id', $idDetalle)
+            ->update([
+                $campoLey => round($leyFinal, 3),
+                $campoConf => $confirmada,
+            ]) >= 0;
     }
 }

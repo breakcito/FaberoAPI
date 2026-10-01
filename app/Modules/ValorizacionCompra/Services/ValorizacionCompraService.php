@@ -221,10 +221,14 @@ class ValorizacionCompraService
         try {
             $valorizacion = ValorizacionCompraData::find_model($id);
             if (! $valorizacion) {
+                DB::rollBack();
+
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
             if ($valorizacion->estado->value !== EstadoValorizacionCompra::Pendiente->value) {
+                DB::rollBack();
+
                 return ApiResponse::error('Solo se pueden editar valorizaciones en estado Pendiente.');
             }
 
@@ -711,10 +715,14 @@ class ValorizacionCompraService
         try {
             $valorizacion = ValorizacionCompraData::find_model($id);
             if (! $valorizacion) {
+                DB::rollBack();
+
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
             if ($valorizacion->estado->value !== EstadoValorizacionCompra::Pendiente->value) {
+                DB::rollBack();
+
                 return ApiResponse::error('Solo se pueden aprobar valorizaciones que estén en estado Pendiente.');
             }
 
@@ -862,6 +870,8 @@ class ValorizacionCompraService
         try {
             $valorizacion = ValorizacionCompraData::find_model($id);
             if (! $valorizacion) {
+                DB::rollBack();
+
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
@@ -937,6 +947,8 @@ class ValorizacionCompraService
 
             // Eliminación Lógica
             if ($valorizacion->estado->value === EstadoValorizacionCompra::Anulado->value) {
+                DB::rollBack();
+
                 return ApiResponse::error('La valorización ya se encuentra en estado Anulado.');
             }
 
@@ -1106,7 +1118,7 @@ class ValorizacionCompraService
      * Marca los lotes de una valorización como valorizados para su elemento químico.
      * Solo prende el flag, sin verificar otras valorizaciones (apto para aprobar).
      *
-     * @param  array<int,\App\Models\ValorizacionCompraDetalle>  $detalles
+     * @param  iterable<ValorizacionCompraDetalle>  $detalles
      */
     private static function marcarLotesValorizados(iterable $detalles): void
     {
@@ -1135,7 +1147,7 @@ class ValorizacionCompraService
      * Resetea el flag esta_valorizado_X de los lotes de una valorización, siempre que
      * no exista otra valorización viva (no anulada) que valorice el mismo lote+elemento.
      *
-     * @param  iterable<\App\Models\ValorizacionCompraDetalle>  $detalles
+     * @param  iterable<ValorizacionCompraDetalle>  $detalles
      */
     private static function liberarLotesValorizados(int $idValorizacionActual, iterable $detalles): void
     {

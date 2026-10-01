@@ -79,22 +79,54 @@ class ValorizacionVentaService
                 'estado' => EstadoValorizacionVenta::Pendiente->value,
             ]);
 
-            // Guardar Detalles de distribuciones_detalle
+            // Guardar Detalles de despacho_detalle
             $detallesCreados = [];
             foreach ($data['detalles'] as $det) {
-                $ddt = ValorizacionVentaData::find_distribucion_detalle_con_planta((int) $det['id_distribucion_detalle']);
-                if (! $ddt) {
-                    throw new Exception("La distribucion_detalle ID {$det['id_distribucion_detalle']} no fue encontrada.");
+                $idDespachoDetalle = (int) ($det['id_despacho_detalle'] ?? $det['id_distribucion_detalle']);
+                $dd = ValorizacionVentaData::find_despacho_detalle_con_planta($idDespachoDetalle);
+                if (! $dd) {
+                    throw new Exception("El item de despacho ID {$idDespachoDetalle} no fue encontrado.");
                 }
 
-                $pesoNeto = (float) ($ddt['peso_neto_cliente'] ?? 0);
-                $leyHumedad = (float) $ddt['ley_humedad_cliente'];
-                $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
+                $codPreliminar = $dd['codigo_preliminar'] ?? "ID #{$idDespachoDetalle}";
+
+                // Validaciones para poder valorizar:
+                $totalDist = (int) ($dd['total_distribuciones'] ?? 0);
+                $totalValidas = (int) ($dd['total_distribuciones_validas'] ?? 0);
+                if ($totalDist === 0 || $totalDist !== $totalValidas) {
+                    throw new Exception("El item {$codPreliminar} no puede valorizarse: no todas sus distribuciones han llegado al cliente o no tienen peso neto.");
+                }
+
+                $pesoTomado = (float) $dd['peso_tomado'];
+                $pesoDistribuidoTotal = (float) ($dd['peso_distribuido_total'] ?? 0);
+                if (abs($pesoDistribuidoTotal - $pesoTomado) > 0.01) {
+                    throw new Exception("El item {$codPreliminar} no puede valorizarse: no ha sido distribuido en su totalidad (peso distribuido: {$pesoDistribuidoTotal} kg vs peso tomado: {$pesoTomado} kg).");
+                }
 
                 $elementoEnum = ElementoQuimicoValorizacion::tryFrom($det['elemento_quimico']) ?? ElementoQuimicoValorizacion::Oro;
-                $ley = $elementoEnum === ElementoQuimicoValorizacion::Oro
-                    ? (float) $ddt['ley_oro_cliente']
-                    : (float) $ddt['ley_plata_cliente'];
+                $esOro = $elementoEnum === ElementoQuimicoValorizacion::Oro;
+
+                if ($esOro) {
+                    if (empty($dd['ley_oro_final_confirmada'])) {
+                        throw new Exception("La ley final de Oro no está confirmada para el item {$codPreliminar}.");
+                    }
+                    if (! empty($dd['esta_valorizado_oro'])) {
+                        throw new Exception("El item {$codPreliminar} ya se encuentra valorizado para Oro.");
+                    }
+                    $ley = (float) $dd['ley_oro_final'];
+                } else {
+                    if (empty($dd['ley_plata_final_confirmada'])) {
+                        throw new Exception("La ley final de Plata no está confirmada para el item {$codPreliminar}.");
+                    }
+                    if (! empty($dd['esta_valorizado_plata'])) {
+                        throw new Exception("El item {$codPreliminar} ya se encuentra valorizado para Plata.");
+                    }
+                    $ley = (float) $dd['ley_plata_final'];
+                }
+
+                $pesoNeto = $pesoTomado;
+                $leyHumedad = (float) ($dd['ley_humedad_cliente'] ?? 0);
+                $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
 
                 $inter = (float) $det['inter'];
                 $desInter = (float) $det['des_inter'];
@@ -111,7 +143,7 @@ class ValorizacionVentaService
 
                 $detallesCreados[] = ValorizacionVentaDetalle::create([
                     'id_valorizacion_venta' => $valorizacion->id,
-                    'id_distribucion_detalle' => (int) $det['id_distribucion_detalle'],
+                    'id_despacho_detalle' => $idDespachoDetalle,
                     'id_condicion_comercial' => isset($det['id_condicion_comercial']) ? (int) $det['id_condicion_comercial'] : null,
                     'id_valor_elemento_quimico' => isset($det['id_valor_elemento_quimico']) ? (int) $det['id_valor_elemento_quimico'] : null,
                     'elemento_quimico' => $elementoEnum->value,
@@ -127,8 +159,8 @@ class ValorizacionVentaService
                 ]);
             }
 
-            // Prender flags esta_valorizado_X del distribucion_detalle para los detalles recién creados
-            self::marcarDistribucionesValorizadas($detallesCreados);
+            // Prender flags esta_valorizado_X de despacho_detalle para los detalles recién creados
+            self::marcarDespachoDetallesValorizados($detallesCreados);
 
             DB::commit();
 
@@ -154,10 +186,14 @@ class ValorizacionVentaService
         try {
             $valorizacion = ValorizacionVentaData::find_model($id);
             if (! $valorizacion) {
+                DB::rollBack();
+
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
             if ($valorizacion->estado->value !== EstadoValorizacionVenta::Pendiente->value) {
+                DB::rollBack();
+
                 return ApiResponse::error('Solo se pueden editar valorizaciones en estado Pendiente.');
             }
 
@@ -237,30 +273,25 @@ class ValorizacionVentaService
             $oldDetalles = ValorizacionVentaDetalle::where('id_valorizacion_venta', $id)->get();
             $oldDetMap = [];
             foreach ($oldDetalles as $od) {
-                $ddt = ValorizacionVentaData::find_distribucion_detalle_con_planta((int) $od->id_distribucion_detalle);
-                // Identificador más específico para el log: combina código cliente +
-                // correlativo de despacho + número de partición (cuando existe) para
-                // evitar la ambigüedad entre el código cliente y el despacho correlativo.
+                $idDespachoDetalle = (int) $od->id_despacho_detalle;
+                $dd = ValorizacionVentaData::find_despacho_detalle_con_planta($idDespachoDetalle);
                 $partes = [];
-                if (! empty($ddt['codigo_cliente'])) {
-                    $partes[] = "Cód:{$ddt['codigo_cliente']}";
+                if (! empty($dd['codigo_preliminar'])) {
+                    $partes[] = "Cód:{$dd['codigo_preliminar']}";
                 }
-                if (! empty($ddt['despacho_correlativo'])) {
-                    $partes[] = "Despacho:{$ddt['despacho_correlativo']}";
+                if (! empty($dd['despacho_correlativo'])) {
+                    $partes[] = "Despacho:{$dd['despacho_correlativo']}";
                 }
-                if (! empty($ddt['lote_correlativo'])) {
-                    $partes[] = "Lote:{$ddt['lote_correlativo']}";
+                if (! empty($dd['lote_correlativo'])) {
+                    $partes[] = "Lote:{$dd['lote_correlativo']}";
                 }
-                if (! empty($ddt['blending_correlativo'])) {
-                    $partes[] = "Blend:{$ddt['blending_correlativo']}";
-                }
-                if (! empty($ddt['numero_particion'])) {
-                    $partes[] = "Part.#{$ddt['numero_particion']}";
+                if (! empty($dd['blending_correlativo'])) {
+                    $partes[] = "Blend:{$dd['blending_correlativo']}";
                 }
                 $identificador = ! empty($partes)
                     ? implode(' · ', $partes)
-                    : "Det. Distribución #{$od->id_distribucion_detalle}";
-                $key = "{$od->id_distribucion_detalle}_{$od->elemento_quimico->value}";
+                    : "Item Despacho #{$idDespachoDetalle}";
+                $key = "{$idDespachoDetalle}_{$od->elemento_quimico->value}";
                 $oldDetMap[$key] = [
                     'identificador' => $identificador,
                     'elemento' => $od->elemento_quimico->value,
@@ -277,23 +308,48 @@ class ValorizacionVentaService
             }
 
             ValorizacionVentaData::delete_detalles_by_valorizacion($id);
-            self::liberarDistribucionesValorizadas($id, $oldDetalles);
+            self::liberarDespachoDetallesValorizados($id, $oldDetalles);
 
             $detallesCreados = [];
             foreach ($data['detalles'] as $det) {
-                $ddt = ValorizacionVentaData::find_distribucion_detalle_con_planta((int) $det['id_distribucion_detalle']);
-                if (! $ddt) {
-                    throw new Exception("La distribucion_detalle ID {$det['id_distribucion_detalle']} no fue encontrada.");
+                $idDespachoDetalle = (int) ($det['id_despacho_detalle'] ?? $det['id_distribucion_detalle']);
+                $dd = ValorizacionVentaData::find_despacho_detalle_con_planta($idDespachoDetalle);
+                if (! $dd) {
+                    throw new Exception("El item de despacho ID {$idDespachoDetalle} no fue encontrado.");
                 }
 
-                $pesoNeto = (float) ($ddt['peso_neto_cliente'] ?? 0);
-                $leyHumedad = (float) $ddt['ley_humedad_cliente'];
-                $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
+                $codPreliminar = $dd['codigo_preliminar'] ?? "ID #{$idDespachoDetalle}";
+
+                $totalDist = (int) ($dd['total_distribuciones'] ?? 0);
+                $totalValidas = (int) ($dd['total_distribuciones_validas'] ?? 0);
+                if ($totalDist === 0 || $totalDist !== $totalValidas) {
+                    throw new Exception("El item {$codPreliminar} no puede valorizarse: no todas sus distribuciones han llegado al cliente o no tienen peso neto.");
+                }
+
+                $pesoTomado = (float) $dd['peso_tomado'];
+                $pesoDistribuidoTotal = (float) ($dd['peso_distribuido_total'] ?? 0);
+                if (abs($pesoDistribuidoTotal - $pesoTomado) > 0.01) {
+                    throw new Exception("El item {$codPreliminar} no puede valorizarse: no ha sido distribuido en su totalidad (peso distribuido: {$pesoDistribuidoTotal} kg vs peso tomado: {$pesoTomado} kg).");
+                }
 
                 $elementoEnum = ElementoQuimicoValorizacion::tryFrom($det['elemento_quimico']) ?? ElementoQuimicoValorizacion::Oro;
-                $ley = $elementoEnum === ElementoQuimicoValorizacion::Oro
-                    ? (float) $ddt['ley_oro_cliente']
-                    : (float) $ddt['ley_plata_cliente'];
+                $esOro = $elementoEnum === ElementoQuimicoValorizacion::Oro;
+
+                if ($esOro) {
+                    if (empty($dd['ley_oro_final_confirmada'])) {
+                        throw new Exception("La ley final de Oro no está confirmada para el item {$codPreliminar}.");
+                    }
+                    $ley = (float) $dd['ley_oro_final'];
+                } else {
+                    if (empty($dd['ley_plata_final_confirmada'])) {
+                        throw new Exception("La ley final de Plata no está confirmada para el item {$codPreliminar}.");
+                    }
+                    $ley = (float) $dd['ley_plata_final'];
+                }
+
+                $pesoNeto = $pesoTomado;
+                $leyHumedad = (float) ($dd['ley_humedad_cliente'] ?? 0);
+                $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
 
                 $inter = (float) $det['inter'];
                 $desInter = (float) $det['des_inter'];
@@ -306,7 +362,7 @@ class ValorizacionVentaService
                 $subtotal = ($ptn * $pesoSeco) / 1000;
 
                 // Auditoría independiente para el detalle (columna log_cambios SÍ existe en el detalle)
-                $keyDet = "{$det['id_distribucion_detalle']}_{$elementoEnum->value}";
+                $keyDet = "{$idDespachoDetalle}_{$elementoEnum->value}";
                 $logCambiosDetalle = [];
                 if (isset($oldDetMap[$keyDet])) {
                     $oldInfo = $oldDetMap[$keyDet];
@@ -372,7 +428,7 @@ class ValorizacionVentaService
 
                 $detallesCreados[] = ValorizacionVentaDetalle::create([
                     'id_valorizacion_venta' => $valorizacion->id,
-                    'id_distribucion_detalle' => (int) $det['id_distribucion_detalle'],
+                    'id_despacho_detalle' => $idDespachoDetalle,
                     'id_condicion_comercial' => isset($det['id_condicion_comercial']) ? (int) $det['id_condicion_comercial'] : null,
                     'id_valor_elemento_quimico' => isset($det['id_valor_elemento_quimico']) ? (int) $det['id_valor_elemento_quimico'] : null,
                     'elemento_quimico' => $elementoEnum->value,
@@ -388,8 +444,8 @@ class ValorizacionVentaService
                 ]);
             }
 
-            // Prender flags esta_valorizado_X de distribuciones_detalle para los detalles recién creados
-            self::marcarDistribucionesValorizadas($detallesCreados);
+            // Prender flags esta_valorizado_X de despacho_detalle para los detalles recién creados
+            self::marcarDespachoDetallesValorizados($detallesCreados);
 
             // Persistir cabecera-level log_cambios (planta, código, penalidad, flete)
             if (! empty($cambiosCabecera)) {
@@ -430,14 +486,18 @@ class ValorizacionVentaService
         try {
             $valorizacion = ValorizacionVentaData::find_model($id);
             if (! $valorizacion) {
+                DB::rollBack();
+
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
             if ($valorizacion->estado->value !== EstadoValorizacionVenta::Pendiente->value) {
+                DB::rollBack();
+
                 return ApiResponse::error('Solo se pueden aprobar valorizaciones que estén en estado Pendiente.');
             }
 
-            self::marcarDistribucionesValorizadas($valorizacion->detalles);
+            self::marcarDespachoDetallesValorizados($valorizacion->detalles);
 
             $logCambios = $valorizacion->log_cambios ?? [];
             if (! is_array($logCambios)) {
@@ -503,6 +563,8 @@ class ValorizacionVentaService
         try {
             $valorizacion = ValorizacionVentaData::find_model($id);
             if (! $valorizacion) {
+                DB::rollBack();
+
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
@@ -511,7 +573,7 @@ class ValorizacionVentaService
                 ValorizacionVentaData::delete_detalles_by_valorizacion($id);
                 ValorizacionVentaData::delete_model($valorizacion);
 
-                self::liberarDistribucionesValorizadas($id, $detallesParaLiberar);
+                self::liberarDespachoDetallesValorizados($id, $detallesParaLiberar);
 
                 DB::commit();
 
@@ -520,6 +582,8 @@ class ValorizacionVentaService
 
             // Eliminación Lógica
             if ($valorizacion->estado->value === EstadoValorizacionVenta::Anulado->value) {
+                DB::rollBack();
+
                 return ApiResponse::error('La valorización ya se encuentra en estado Anulado.');
             }
 
@@ -553,7 +617,7 @@ class ValorizacionVentaService
                 'log_cambios' => $logCambios,
             ]);
 
-            self::liberarDistribucionesValorizadas($id, $valorizacion->detalles);
+            self::liberarDespachoDetallesValorizados($id, $valorizacion->detalles);
 
             DB::commit();
 
@@ -568,57 +632,65 @@ class ValorizacionVentaService
     }
 
     /**
-     * Marca distribuciones_detalle como valorizadas por su elemento químico (flag independiente).
+     * Marca despacho_detalle como valorizados por su elemento químico (flag independiente).
      *
-     * @param  iterable<\App\Models\ValorizacionVentaDetalle>  $detalles
+     * @param  iterable<ValorizacionVentaDetalle>  $detalles
      */
-    private static function marcarDistribucionesValorizadas(iterable $detalles): void
+    private static function marcarDespachoDetallesValorizados(iterable $detalles): void
     {
         $porElemento = [];
         foreach ($detalles as $det) {
-            $elemento = $det->elemento_quimico?->value;
+            $elemento = $det->elemento_quimico?->value ?? (string) $det->elemento_quimico;
             if (! in_array($elemento, ['Oro', 'Plata'], true)) {
                 continue;
             }
-            $porElemento[$elemento][] = (int) $det->id_distribucion_detalle;
+            $idDespachoDetalle = (int) ($det->id_despacho_detalle ?? 0);
+            if ($idDespachoDetalle > 0) {
+                $porElemento[$elemento][] = $idDespachoDetalle;
+            }
         }
 
         foreach ($porElemento as $elemento => $idsDetalles) {
             $idsDetalles = array_values(array_unique($idsDetalles));
             $columna = $elemento === 'Oro' ? 'esta_valorizado_oro' : 'esta_valorizado_plata';
-            DB::table('distribucion_detalle')->whereIn('id', $idsDetalles)->update([$columna => 1]);
+            DB::table('despacho_detalle')->whereIn('id', $idsDetalles)->update([$columna => 1]);
         }
     }
 
     /**
-     * Resetea flags esta_valorizado_X de las distribuciones_detalle de una valorización,
+     * Resetea flags esta_valorizado_X de los despacho_detalle de una valorización,
      * siempre que no exista OTRA valorización viva (no anulada) valorizando el mismo
-     * par (id_distribucion_detalle, elemento).
+     * par (id_despacho_detalle, elemento).
      *
-     * @param  iterable<\App\Models\ValorizacionVentaDetalle>  $detalles
+     * @param  iterable<ValorizacionVentaDetalle>  $detalles
      */
-    private static function liberarDistribucionesValorizadas(int $idValorizacionActual, iterable $detalles): void
+    private static function liberarDespachoDetallesValorizados(int $idValorizacionActual, iterable $detalles): void
     {
         $estadoAnulado = EstadoValorizacionVenta::Anulado->value;
 
         foreach ($detalles as $det) {
-            $elemento = $det->elemento_quimico?->value;
+            $elemento = $det->elemento_quimico?->value ?? (string) $det->elemento_quimico;
             if (! in_array($elemento, ['Oro', 'Plata'], true)) {
                 continue;
             }
+            $idDespachoDetalle = (int) ($det->id_despacho_detalle ?? 0);
+            if ($idDespachoDetalle <= 0) {
+                continue;
+            }
+
             $columna = $elemento === 'Oro' ? 'esta_valorizado_oro' : 'esta_valorizado_plata';
 
             $existeOtra = DB::table('valorizacion_venta_detalle as vvd')
                 ->join('valorizacion_venta as vv', 'vv.id', '=', 'vvd.id_valorizacion_venta')
-                ->where('vvd.id_distribucion_detalle', (int) $det->id_distribucion_detalle)
+                ->where('vvd.id_despacho_detalle', $idDespachoDetalle)
                 ->where('vv.estado', '!=', $estadoAnulado)
                 ->where('vv.id', '!=', $idValorizacionActual)
                 ->where('vvd.elemento_quimico', $elemento)
                 ->exists();
 
             if (! $existeOtra) {
-                DB::table('distribucion_detalle')
-                    ->where('id', (int) $det->id_distribucion_detalle)
+                DB::table('despacho_detalle')
+                    ->where('id', $idDespachoDetalle)
                     ->update([$columna => 0]);
             }
         }

@@ -22,6 +22,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/distribuciones/{id}/lotes-disponibles', 'get_lotes_disponibles_para_distribucion');
         Route::post('/distribuciones/{id}/detalles', 'agregar_detalle_distribucion');
         Route::post('/distribuciones/{id}/detalles/{idDetalle}/pesar', 'pesar_distribucion_detalle');
+        Route::patch('/detalles/{idDetalle}/ley-final', 'actualizar_ley_final');
     });
 
     // Guia Segundo Tramo (una por distribucion).
