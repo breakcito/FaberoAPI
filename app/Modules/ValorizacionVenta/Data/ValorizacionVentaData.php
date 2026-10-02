@@ -15,6 +15,7 @@ class ValorizacionVentaData
     {
         return ValorizacionVenta::query()->with([
             'planta:id,ruc,razon_social',
+            'empresa:id,ruc,razon_social',
             'empleadoRegistro:id,nombre,apellido',
             'empleadoAprobacion:id,nombre,apellido',
             'empleadoAnulacion:id,nombre,apellido',
@@ -49,6 +50,9 @@ class ValorizacionVentaData
             'id_planta' => $item->id_planta,
             'planta_ruc' => $item->planta ? $item->planta->ruc : null,
             'planta_nombre' => $item->planta ? $item->planta->razon_social : null,
+            'id_empresa' => $item->id_empresa,
+            'empresa_ruc' => $item->empresa ? $item->empresa->ruc : null,
+            'empresa_nombre' => $item->empresa ? $item->empresa->razon_social : null,
             'codigo' => $item->codigo,
             'estado' => $item->estado ? $item->estado->value : null,
             'created_at' => $item->created_at ? $item->created_at->format('Y-m-d H:i:s') : null,

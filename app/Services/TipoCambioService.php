@@ -28,6 +28,9 @@ class TipoCambioService
             return ApiResponse::error("No existe un tipo de cambio registrado para la fecha {$fecha}.");
         }
 
+        $data->valor_compra = (float) $data->valor_compra;
+        $data->valor_venta = (float) $data->valor_venta;
+
         return ApiResponse::success($data, 'Tipo de cambio obtenido correctamente.');
     }
 

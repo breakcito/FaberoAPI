@@ -2,18 +2,21 @@
 
 namespace App\Modules\ValorizacionVenta\Services;
 
+use App\Models\Empresa;
 use App\Models\PlantaDestino;
 use App\Models\ValorizacionVenta;
 use App\Models\ValorizacionVentaDetalle;
 use App\Modules\ValorizacionVenta\Data\ValorizacionVentaData;
 use App\Shared\Enums\_Generic\ElementoQuimicoValorizacion;
 use App\Shared\Enums\_Generic\Periodo;
+use App\Shared\Enums\ContabilidadVenta\EstadoComprobanteVenta;
 use App\Shared\Enums\ValorizacionVenta\EstadoValorizacionVenta;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Helpers\CorrelativoHelper;
 use App\Shared\Responses\ApiResponse;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class ValorizacionVentaService
 {
@@ -65,8 +68,15 @@ class ValorizacionVentaService
                 ? ArchivoHelper::guardarArchivos('valorizaciones_venta', $archivos)
                 : [];
 
+            $idEmpresa = ! empty($data['id_empresa']) ? (int) $data['id_empresa'] : null;
+            if (! $idEmpresa) {
+                $fabero = Empresa::where('razon_social', 'like', '%Fabero%')->first() ?? Empresa::first();
+                $idEmpresa = $fabero ? (int) $fabero->id : null;
+            }
+
             $valorizacion = ValorizacionVenta::create([
                 'id_planta' => (int) $data['id_planta'],
+                'id_empresa' => $idEmpresa,
                 'id_empleado_registro' => (int) $data['id_empleado_registro'],
                 'numero_correlativo' => $numeroCorrelativo,
                 'correlativo' => $correlativoStr,
@@ -216,6 +226,7 @@ class ValorizacionVentaService
 
             $valorizacion->update([
                 'id_planta' => (int) ($data['id_planta'] ?? $valorizacion->id_planta),
+                'id_empresa' => ! empty($data['id_empresa']) ? (int) $data['id_empresa'] : $valorizacion->id_empresa,
                 'codigo' => $data['codigo'] ?? $valorizacion->codigo,
                 'evidencias' => ! empty($vNueEvidencias) ? array_values($vNueEvidencias) : null,
                 'fecha_hora_valorizacion' => $data['fecha_hora_valorizacion'] ?? null,
@@ -568,7 +579,55 @@ class ValorizacionVentaService
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
+            $detallesIds = $valorizacion->detalles->pluck('id')->all();
+
+            // 1. Validar que ningún detalle esté asociado a un Comprobante de Venta activo
+            if (! empty($detallesIds)) {
+                $comprobantesActivos = DB::table('detalle_comprobante_venta as dcv')
+                    ->join('comprobante_venta as cv', 'cv.id', '=', 'dcv.id_comprobante_venta')
+                    ->whereIn('dcv.id_valorizacion_venta_detalle', $detallesIds)
+                    ->where('cv.estado', '!=', EstadoComprobanteVenta::Anulado->value)
+                    ->select('cv.codigo_comprobante')
+                    ->pluck('codigo_comprobante')
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->toArray();
+
+                if (! empty($comprobantesActivos)) {
+                    DB::rollBack();
+                    $codigos = implode(', ', $comprobantesActivos);
+
+                    return ApiResponse::error("No se puede anular ni eliminar la valorización: está vinculada a comprobantes de venta activos ({$codigos}). Debe anular primero los comprobantes en Contabilidad de Venta.");
+                }
+            }
+
             if ($tipoEliminacion === 'fisica') {
+                // 2. En eliminación física, validar que no tenga registros históricos en detalle_comprobante_venta
+                if (! empty($detallesIds)) {
+                    $tieneComprobantesHistoricos = DB::table('detalle_comprobante_venta')
+                        ->whereIn('id_valorizacion_venta_detalle', $detallesIds)
+                        ->exists();
+
+                    if ($tieneComprobantesHistoricos) {
+                        DB::rollBack();
+
+                        return ApiResponse::error('No se puede eliminar físicamente la valorización porque tiene comprobantes de venta vinculados en su historial contable. Utilice la anulación lógica.');
+                    }
+                }
+
+                // Limpiar evidencias del almacenamiento físico
+                $archivosAEliminar = array_merge(
+                    is_array($valorizacion->evidencias) ? $valorizacion->evidencias : [],
+                    is_array($valorizacion->evidencias_anulacion) ? $valorizacion->evidencias_anulacion : []
+                );
+                foreach ($archivosAEliminar as $arc) {
+                    $pathRelativo = is_array($arc) ? ($arc['path_relativo'] ?? null) : null;
+                    if ($pathRelativo) {
+                        Storage::disk('public')->delete((string) $pathRelativo);
+                    }
+                }
+
                 $detallesParaLiberar = $valorizacion->detalles;
                 ValorizacionVentaData::delete_detalles_by_valorizacion($id);
                 ValorizacionVentaData::delete_model($valorizacion);
@@ -589,6 +648,10 @@ class ValorizacionVentaService
 
             $estadoAnterior = $valorizacion->estado->value;
 
+            $evidenciasAnulacionGuardadas = ! empty($archivosEvidencia)
+                ? ArchivoHelper::guardarArchivos('valorizaciones_venta/anulaciones', $archivosEvidencia)
+                : [];
+
             $logCambios = $valorizacion->log_cambios ?? [];
             if (! is_array($logCambios)) {
                 $logCambios = json_decode((string) $logCambios, true) ?? [];
@@ -606,6 +669,12 @@ class ValorizacionVentaService
                         'valor_anterior' => $estadoAnterior,
                         'valor_nuevo' => EstadoValorizacionVenta::Anulado->value,
                     ],
+                    [
+                        'campo_bd' => 'motivo_anulacion',
+                        'campo' => 'Motivo de Anulación',
+                        'valor_anterior' => null,
+                        'valor_nuevo' => $motivoAnulacion,
+                    ],
                 ],
             ];
 
@@ -614,6 +683,7 @@ class ValorizacionVentaService
                 'id_empleado_anulacion' => $idEmpleadoAnulacion,
                 'fecha_hora_anulacion' => now(),
                 'motivo_anulacion' => $motivoAnulacion,
+                'evidencias_anulacion' => ! empty($evidenciasAnulacionGuardadas) ? array_values($evidenciasAnulacionGuardadas) : null,
                 'log_cambios' => $logCambios,
             ]);
 

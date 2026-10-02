@@ -44,6 +44,7 @@ class ValorizacionVentaController
 
         $request->validate([
             'id_planta' => 'required|integer|exists:planta_destino,id',
+            'id_empresa' => 'nullable|integer|exists:empresa,id',
             'detalles' => 'required|array|min:1',
             'detalles.*.id_despacho_detalle' => 'nullable|integer|exists:despacho_detalle,id',
             'detalles.*.id_distribucion_detalle' => 'nullable|integer',
@@ -69,6 +70,7 @@ class ValorizacionVentaController
 
         $payload = [
             'id_planta' => (int) $request->input('id_planta'),
+            'id_empresa' => $request->input('id_empresa') ? (int) $request->input('id_empresa') : null,
             'id_empleado_registro' => (int) $idEmpleado,
             'detalles' => $request->input('detalles'),
             'codigo' => $request->input('codigo') ?: null,
@@ -105,6 +107,7 @@ class ValorizacionVentaController
 
         $request->validate([
             'id_planta' => 'required|integer|exists:planta_destino,id',
+            'id_empresa' => 'nullable|integer|exists:empresa,id',
             'detalles' => 'required|array|min:1',
             'detalles.*.id_despacho_detalle' => 'nullable|integer|exists:despacho_detalle,id',
             'detalles.*.id_distribucion_detalle' => 'nullable|integer',
@@ -131,6 +134,7 @@ class ValorizacionVentaController
 
         $payload = [
             'id_planta' => (int) $request->input('id_planta'),
+            'id_empresa' => $request->input('id_empresa') ? (int) $request->input('id_empresa') : null,
             'id_empleado_edicion' => (int) $idEmpleado,
             'detalles' => $request->input('detalles'),
             'evidencias_existentes' => $request->input('evidencias_existentes'),
@@ -177,6 +181,8 @@ class ValorizacionVentaController
         $request->validate([
             'motivo_anulacion' => 'required|string|min:3',
             'tipo_eliminacion' => 'required|string|in:logica,fisica',
+            'evidencias_anulacion' => 'nullable|array',
+            'evidencias_anulacion.*' => 'file',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
@@ -185,11 +191,20 @@ class ValorizacionVentaController
         $motivoAnulacion = (string) $request->input('motivo_anulacion');
         $tipoEliminacion = (string) $request->input('tipo_eliminacion', 'logica');
 
+        $archivos = [];
+        if ($request->hasFile('evidencias_anulacion')) {
+            $archivos = $request->file('evidencias_anulacion');
+            if (! is_array($archivos)) {
+                $archivos = [$archivos];
+            }
+        }
+
         $res = ValorizacionVentaService::anular_valorizacion(
             $id,
             (int) $idEmpleado,
             $motivoAnulacion,
-            $tipoEliminacion
+            $tipoEliminacion,
+            $archivos
         );
         $status = ($res['success'] ?? false) ? 200 : 400;
 

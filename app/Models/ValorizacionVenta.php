@@ -32,10 +32,12 @@ class ValorizacionVenta extends Model
         'log_cambios',
         'created_at',
         'estado',
+        'id_empresa',
     ];
 
     protected $casts = [
         'id_planta' => 'integer',
+        'id_empresa' => 'integer',
         'id_empleado_registro' => 'integer',
         'id_empleado_aprobacion' => 'integer',
         'id_empleado_anulacion' => 'integer',
@@ -55,6 +57,11 @@ class ValorizacionVenta extends Model
     public function planta(): BelongsTo
     {
         return $this->belongsTo(PlantaDestino::class, 'id_planta');
+    }
+
+    public function empresa(): BelongsTo
+    {
+        return $this->belongsTo(Empresa::class, 'id_empresa');
     }
 
     public function empleadoRegistro(): BelongsTo
