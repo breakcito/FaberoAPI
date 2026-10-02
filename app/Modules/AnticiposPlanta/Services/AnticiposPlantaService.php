@@ -137,4 +137,24 @@ class AnticiposPlantaService
 
         return ApiResponse::success($data, 'Anticipo de planta obtenido correctamente.');
     }
+
+    /**
+     * Obtener transacciones asociadas a un anticipo de planta.
+     */
+    public static function get_transacciones(int $id): array
+    {
+        $data = AnticiposPlantaData::get_transacciones_by_anticipo($id);
+
+        return ApiResponse::success($data, 'Transacciones obtenidas correctamente.');
+    }
+
+    /**
+     * Obtener historial de cambios unificado (cabecera + transacciones).
+     */
+    public static function get_historial_combinado(int $id): array
+    {
+        $data = AnticiposPlantaData::get_historial_cambios_combinado($id);
+
+        return ApiResponse::success($data, 'Historial de cambios obtenido correctamente.');
+    }
 }

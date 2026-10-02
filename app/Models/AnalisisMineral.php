@@ -14,11 +14,13 @@ class AnalisisMineral extends Model
     protected $fillable = [
         'id_grupo_analisis_detalle',
         'id_lote_mineral',
+        'id_muestra_externa',
         'id_empleado_registro',
         'uuid_fila',
         'ley',
         'esta_confirmada',
         'tipo_origen',
+        'sin_lote',
         'created_at',
         'log_cambios',
     ];
@@ -26,6 +28,7 @@ class AnalisisMineral extends Model
     protected $casts = [
         'ley' => 'float',
         'esta_confirmada' => 'boolean',
+        'sin_lote' => 'boolean',
         'log_cambios' => 'array',
     ];
 

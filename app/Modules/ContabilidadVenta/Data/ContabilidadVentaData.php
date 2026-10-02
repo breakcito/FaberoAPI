@@ -370,6 +370,7 @@ class ContabilidadVentaData
             ) dd ON dd.id = vvd.id_despacho_detalle
             WHERE vv.id_planta = :id_planta
               AND vv.estado = "Aprobado"
+              AND (vvd.tiene_comprobante = 0 OR vvd.tiene_comprobante IS NULL)
               AND vvd.id NOT IN (
                   SELECT dcv.id_valorizacion_venta_detalle
                   FROM detalle_comprobante_venta dcv
@@ -429,19 +430,32 @@ class ContabilidadVentaData
      */
     public static function crear_comprobante(array $campos, array $detallesIds, array $anticiposItems, int $idEmpleado): int
     {
+        $montoNeto = (float) ($campos['monto_neto'] ?? 0);
+        $montoDetraccionSoles = (float) ($campos['monto_detraccion_soles'] ?? 0);
+        $netoSaldado = $montoNeto <= 0.01;
+        $detraccionSaldada = $montoDetraccionSoles <= 0.01;
+        $estadoInicial = ($netoSaldado && $detraccionSaldada)
+            ? EstadoComprobanteVenta::Pagado->value
+            : EstadoComprobanteVenta::EnEspera->value;
+
         $idComprobante = (int) ComprobanteVenta::insertGetId($campos + [
             'avance_pago_neto' => 0,
             'avance_pago_detraccion' => 0,
             'created_at' => now(),
-            'estado' => EstadoComprobanteVenta::EnEspera->value,
+            'estado' => $estadoInicial,
         ]);
 
-        // Insertar detalles seleccionados
+        // Insertar detalles seleccionados y marcar tiene_comprobante
         foreach ($detallesIds as $idDetalle) {
             DetalleComprobanteVenta::create([
                 'id_comprobante_venta' => $idComprobante,
                 'id_valorizacion_venta_detalle' => (int) $idDetalle,
             ]);
+        }
+        if (! empty($detallesIds)) {
+            DB::table('valorizacion_venta_detalle')
+                ->whereIn('id', $detallesIds)
+                ->update(['tiene_comprobante' => 1]);
         }
 
         // Aplicar anticipos si existen
@@ -565,6 +579,16 @@ class ContabilidadVentaData
                     'log_cambios' => $logTrans,
                 ]);
             }
+        }
+
+        // Liberar detalles de valorización de venta (revertir tiene_comprobante)
+        $detallesIds = DetalleComprobanteVenta::where('id_comprobante_venta', $id)
+            ->pluck('id_valorizacion_venta_detalle')
+            ->all();
+        if (! empty($detallesIds)) {
+            DB::table('valorizacion_venta_detalle')
+                ->whereIn('id', $detallesIds)
+                ->update(['tiene_comprobante' => 0]);
         }
 
         // Anular pagos asociados activos

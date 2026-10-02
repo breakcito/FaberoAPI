@@ -295,7 +295,8 @@ class RecepcionMineralService
     }
 
     /**
-     * Eliminar un lote vacío o incompleto (Eliminación Lógica)
+     * Eliminar un lote vacío, incompleto o padre particionado (Eliminación Lógica).
+     * También elimina lógicamente todas sus particiones si las tuviera.
      */
     public static function eliminar_lote(int $loteId): array
     {
@@ -307,7 +308,11 @@ class RecepcionMineralService
         $lote->estado = EstadoBase::Eliminado;
         $lote->save();
 
-        return ApiResponse::success(null, 'Lote eliminado correctamente.');
+        ParticionLoteMineral::where('id_lote_mineral', $loteId)
+            ->where('estado', '!=', EstadoBase::Eliminado->value)
+            ->update(['estado' => EstadoBase::Eliminado->value]);
+
+        return ApiResponse::success(null, 'Lote y particiones eliminados correctamente.');
     }
 
     /**

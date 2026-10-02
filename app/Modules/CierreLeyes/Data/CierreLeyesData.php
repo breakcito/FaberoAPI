@@ -235,7 +235,7 @@ class CierreLeyesData
      */
     public static function actualizar_estado_inicio_lote(LoteMineral $lote, int $idEmpleado): void
     {
-        $lote->estado_leyes = EstadoLeyes::EnProceso->value;
+        $lote->estado_leyes = EstadoLeyes::EnProceso;
         $lote->id_empleado_inicio_analisis = $idEmpleado;
         $lote->fecha_hora_inicio_analisis = Carbon::now();
         $lote->save();
@@ -472,10 +472,388 @@ class CierreLeyesData
         $lote->ley_humedad = $leyesValores['ley_humedad'];
         $lote->ley_recuperacion = $leyesValores['ley_recuperacion'];
 
-        $lote->estado_leyes = EstadoLeyes::Confirmado->value;
+        $lote->estado_leyes = EstadoLeyes::Confirmado;
         $lote->con_valor_comercial = $conValorComercial ? 1 : 0;
         $lote->id_empleado_confirmacion_analisis = $idEmpleado;
         $lote->fecha_hora_confirmacion_analisis = Carbon::now();
         $lote->save();
+    }
+
+    // ===== MUESTRAS EXTERNAS =====
+
+    /**
+     * Crear la cabecera de una muestra externa con su correlativo.
+     *
+     * @param  array{id_empleado_registro: int, id_proveedor_minero: int, correlativo: string, numero_correlativo: int}  $datos
+     */
+    public static function crear_muestra_externa(array $datos): int
+    {
+        return (int) DB::table('muestra_externa')->insertGetId([
+            'id_empleado_registro' => $datos['id_empleado_registro'],
+            'id_proveedor_minero' => $datos['id_proveedor_minero'],
+            'correlativo' => $datos['correlativo'],
+            'numero_correlativo' => $datos['numero_correlativo'],
+            'created_at' => Carbon::now(),
+        ]);
+    }
+
+    /**
+     * Crear registros iniciales de analisis_mineral para una muestra externa (sin lote asociado).
+     */
+    public static function crear_registros_vacios_analisis_muestra(int $idMuestra, string $uuidFila, int $idEmpleado): void
+    {
+        $detallesActivos = self::get_detalles_activos_analisis();
+
+        foreach ($detallesActivos as $detalle) {
+            AnalisisMineral::create([
+                'id_lote_mineral' => null,
+                'id_muestra_externa' => $idMuestra,
+                'id_grupo_analisis_detalle' => $detalle->detalle_id,
+                'tipo_origen' => null,
+                'uuid_fila' => $uuidFila,
+                'ley' => 0.0,
+                'esta_confirmada' => 0,
+                'id_empleado_registro' => $idEmpleado,
+                'sin_lote' => 1,
+            ]);
+        }
+    }
+
+    /**
+     * Obtener una muestra externa por ID con cabecera, proveedor y análisis asociados.
+     */
+    public static function get_muestra_externa_by_id(int $idMuestra): ?array
+    {
+        $row = DB::selectOne('
+            SELECT
+                me.id,
+                me.id_empleado_registro,
+                me.id_proveedor_minero,
+                me.correlativo,
+                me.numero_correlativo,
+                me.created_at,
+                p.razon_social AS proveedor_razon_social,
+                CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
+            FROM muestra_externa me
+            LEFT JOIN proveedor p ON me.id_proveedor_minero = p.id
+            LEFT JOIN empleado emp ON me.id_empleado_registro = emp.id
+            WHERE me.id = :id
+        ', ['id' => $idMuestra]);
+
+        if (! $row) {
+            return null;
+        }
+
+        $row->id = (int) $row->id;
+        $row->id_empleado_registro = (int) $row->id_empleado_registro;
+        $row->id_proveedor_minero = (int) $row->id_proveedor_minero;
+        $row->numero_correlativo = (int) $row->numero_correlativo;
+
+        $row->analisis = DB::select('
+            SELECT
+                am.id,
+                am.id_grupo_analisis_detalle,
+                gad.id_grupo_analisis AS id_grupo_analisis,
+                gad.id_analito AS id_analito,
+                am.uuid_fila,
+                am.ley,
+                am.esta_confirmada,
+                am.tipo_origen,
+                am.log_cambios,
+                am.created_at
+            FROM analisis_mineral am
+            INNER JOIN grupo_analisis_detalle gad ON am.id_grupo_analisis_detalle = gad.id
+            WHERE am.id_muestra_externa = :id
+            ORDER BY am.id ASC
+        ', ['id' => $idMuestra]);
+
+        foreach ($row->analisis as $a) {
+            $a->id = (int) $a->id;
+            $a->id_grupo_analisis_detalle = (int) $a->id_grupo_analisis_detalle;
+            $a->id_grupo_analisis = (int) $a->id_grupo_analisis;
+            $a->id_analito = (int) $a->id_analito;
+            $a->ley = (float) $a->ley;
+            $a->esta_confirmada = (bool) $a->esta_confirmada;
+            $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
+        }
+
+        return (array) $row;
+    }
+
+    /**
+     * Listar las muestras externas activas: las que aún tienen al menos un análisis
+     * con sin_lote=1 (todavía no migrado a lote). Si se borraron todos los análisis
+     * o se migraron todos, la muestra NO aparece (se considera "consumida").
+     */
+    public static function get_muestras_externas_activas(): array
+    {
+        $rows = DB::select('
+            SELECT
+                me.id,
+                me.id_empleado_registro,
+                me.id_proveedor_minero,
+                me.correlativo,
+                me.numero_correlativo,
+                me.created_at,
+                p.razon_social AS proveedor_razon_social,
+                CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
+            FROM muestra_externa me
+            LEFT JOIN proveedor p ON me.id_proveedor_minero = p.id
+            LEFT JOIN empleado emp ON me.id_empleado_registro = emp.id
+            WHERE EXISTS (
+                SELECT 1 FROM analisis_mineral am
+                WHERE am.id_muestra_externa = me.id
+                  AND am.sin_lote = 1
+            )
+            ORDER BY me.id DESC
+        ');
+
+        foreach ($rows as $row) {
+            $row->id = (int) $row->id;
+            $row->id_empleado_registro = (int) $row->id_empleado_registro;
+            $row->id_proveedor_minero = (int) $row->id_proveedor_minero;
+            $row->numero_correlativo = (int) $row->numero_correlativo;
+
+            $row->analisis = DB::select('
+                SELECT
+                    am.id,
+                    am.id_grupo_analisis_detalle,
+                    gad.id_grupo_analisis AS id_grupo_analisis,
+                    gad.id_analito AS id_analito,
+                    am.uuid_fila,
+                    am.ley,
+                    am.esta_confirmada,
+                    am.tipo_origen,
+                    am.log_cambios,
+                    am.created_at
+                FROM analisis_mineral am
+                INNER JOIN grupo_analisis_detalle gad ON am.id_grupo_analisis_detalle = gad.id
+                WHERE am.id_muestra_externa = :id
+                ORDER BY am.id ASC
+            ', ['id' => $row->id]);
+
+            foreach ($row->analisis as $a) {
+                $a->id = (int) $a->id;
+                $a->id_grupo_analisis_detalle = (int) $a->id_grupo_analisis_detalle;
+                $a->id_grupo_analisis = (int) $a->id_grupo_analisis;
+                $a->id_analito = (int) $a->id_analito;
+                $a->ley = (float) $a->ley;
+                $a->esta_confirmada = (bool) $a->esta_confirmada;
+                $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Listar las muestras externas que fueron asociadas a un lote específico
+     * (sus analisis_mineral tienen id_lote_mineral = X y sin_lote = 0, id_muestra_externa IS NULL).
+     */
+    public static function get_muestras_asociadas_por_lote(int $idLoteMineral): array
+    {
+        $rows = DB::select('
+            SELECT
+                me.id,
+                me.id_empleado_registro,
+                me.id_proveedor_minero,
+                me.correlativo,
+                me.numero_correlativo,
+                me.created_at,
+                p.razon_social AS proveedor_razon_social,
+                CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
+            FROM muestra_externa me
+            INNER JOIN analisis_mineral am ON (
+                am.id_muestra_externa = me.id
+                OR (am.id_muestra_externa IS NULL AND am.log_cambios LIKE CONCAT("%", me.correlativo, "%"))
+            )
+            LEFT JOIN proveedor p ON me.id_proveedor_minero = p.id
+            LEFT JOIN empleado emp ON me.id_empleado_registro = emp.id
+            WHERE am.id_lote_mineral = :id_lote
+              AND am.sin_lote = 0
+            GROUP BY me.id
+            ORDER BY me.id DESC
+        ', ['id_lote' => $idLoteMineral]);
+
+        foreach ($rows as $row) {
+            $row->id = (int) $row->id;
+            $row->id_empleado_registro = (int) $row->id_empleado_registro;
+            $row->id_proveedor_minero = (int) $row->id_proveedor_minero;
+            $row->numero_correlativo = (int) $row->numero_correlativo;
+
+            // Curar registros previos donde id_muestra_externa quedó null
+            AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
+                ->whereNull('id_muestra_externa')
+                ->where('log_cambios', 'like', "%{$row->correlativo}%")
+                ->update(['id_muestra_externa' => $row->id]);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Crear un nuevo analisis_mineral asociado a una muestra externa.
+     *
+     * @param  array{id_muestra_externa: int, id_grupo_analisis_detalle: int, tipo_origen: string|null, uuid_fila: string, ley: float, esta_confirmada: int, id_empleado_registro: int}  $datos
+     */
+    public static function crear_analisis_mineral_muestra(array $datos): AnalisisMineral
+    {
+        $ley = isset($datos['ley']) ? (float) $datos['ley'] : 0.0;
+        $estaConfirmada = isset($datos['esta_confirmada']) ? (bool) $datos['esta_confirmada'] : false;
+        $tipoOrigen = $datos['tipo_origen'] ?? null;
+        $idEmpleado = $datos['id_empleado_registro'] ?? 1;
+
+        $cambios = [];
+
+        if ($ley > 0) {
+            $cambios[] = [
+                'campo_bd' => 'ley',
+                'campo' => 'Ley',
+                'valor_anterior' => 0.0,
+                'valor_nuevo' => $ley,
+            ];
+        }
+
+        if ($estaConfirmada) {
+            $cambios[] = [
+                'campo_bd' => 'esta_confirmada',
+                'campo' => 'Estado Confirmado',
+                'valor_anterior' => false,
+                'valor_nuevo' => true,
+            ];
+        }
+
+        if ($tipoOrigen !== null) {
+            $cambios[] = [
+                'campo_bd' => 'tipo_origen',
+                'campo' => 'Tipo de origen',
+                'valor_anterior' => '—',
+                'valor_nuevo' => $tipoOrigen,
+            ];
+        }
+
+        if (! empty($cambios)) {
+            $datos['log_cambios'] = [
+                [
+                    'id_empleado' => $idEmpleado,
+                    'motivo' => null,
+                    'update_at' => Carbon::now()->toDateTimeString(),
+                    'cambios' => $cambios,
+                ],
+            ];
+        }
+
+        // Marca la fila como "sin lote" porque pertenece a una muestra externa.
+        $datos['id_lote_mineral'] = null;
+        $datos['sin_lote'] = 1;
+
+        return AnalisisMineral::create($datos);
+    }
+
+    /**
+     * Actualizar las filas no-desplegables de una muestra externa para un detalle específico
+     * (mismo uuid_fila). Para muestras externas, cada corrida tiene su propio uuid_fila, así que
+     * NUNCA actualizamos otras corridas — solo la indicada.
+     */
+    public static function actualizar_leyes_no_desplegables_muestra(
+        int $idMuestraExterna,
+        int $idGrupoAnalisisDetalle,
+        float $ley,
+        bool $estaConfirmada,
+        int $idEmpleadoRegistro,
+        string $uuidFila
+    ): int {
+        $registros = AnalisisMineral::where('id_muestra_externa', $idMuestraExterna)
+            ->where('id_grupo_analisis_detalle', $idGrupoAnalisisDetalle)
+            ->where('uuid_fila', $uuidFila)
+            ->get();
+
+        if ($registros->isEmpty()) {
+            return 0;
+        }
+
+        foreach ($registros as $registro) {
+            self::generar_log_cambio($registro, $ley, $estaConfirmada, null, $idEmpleadoRegistro);
+            $registro->ley = $ley;
+            $registro->esta_confirmada = $estaConfirmada ? 1 : 0;
+            $registro->id_empleado_registro = $idEmpleadoRegistro;
+            $registro->save();
+        }
+
+        return $registros->count();
+    }
+
+    /**
+     * Eliminar todas las celdas de análisis de una corrida de una muestra externa.
+     */
+    public static function eliminar_fila_analisis_muestra(int $idMuestraExterna, string $uuidFila): void
+    {
+        AnalisisMineral::where('id_muestra_externa', $idMuestraExterna)
+            ->where('uuid_fila', $uuidFila)
+            ->delete();
+    }
+
+    /**
+     * Contar cuántos análisis quedan en la muestra (sin importar estado).
+     */
+    public static function count_analisis_by_muestra(int $idMuestraExterna): int
+    {
+        return (int) DB::table('analisis_mineral')
+            ->where('id_muestra_externa', $idMuestraExterna)
+            ->count();
+    }
+
+    /**
+     * Eliminar la cabecera de una muestra externa. Útil como cascade cuando ya no tiene análisis.
+     */
+    public static function eliminar_muestra_externa(int $idMuestra): void
+    {
+        DB::table('muestra_externa')->where('id', $idMuestra)->delete();
+    }
+
+    /**
+     * Actualizar el tipo de origen de una corrida de análisis de una muestra externa.
+     */
+    public static function actualizar_origen_fila_muestra(int $idMuestraExterna, string $uuidFila, ?string $tipoOrigen, int $idEmpleado = 1): void
+    {
+        $registros = AnalisisMineral::where('id_muestra_externa', $idMuestraExterna)
+            ->where('uuid_fila', $uuidFila)
+            ->get();
+
+        foreach ($registros as $registro) {
+            self::generar_log_cambio($registro, null, null, $tipoOrigen, $idEmpleado);
+            $registro->tipo_origen = $tipoOrigen;
+            $registro->save();
+        }
+    }
+
+    /**
+     * Migrar los analisis_mineral de una muestra externa al lote destino:
+     *  - id_lote_mineral = idLoteDestino
+     *  - id_muestra_externa = NULL
+     *  - sin_lote = 0
+     *  - uuid_fila se conserva
+     *  - Se agrega una entrada a log_cambios indicando la migración desde la muestra externa.
+     *
+     * @param  array  $muestra  Cabecera de muestra_externa con al menos 'correlativo'
+     * @return int  Cantidad de analisis_mineral actualizados.
+     */
+    public static function asociar_analisis_muestra_a_lote(int $idMuestraExterna, int $idLoteDestino, int $idEmpleado, array $muestra): int
+    {
+        $registros = AnalisisMineral::where('id_muestra_externa', $idMuestraExterna)
+            ->where('sin_lote', 1)
+            ->get();
+
+        foreach ($registros as $registro) {
+            // Mantenemos id_muestra_externa (no la nuleamos) para preservar la trazabilidad
+            // y permitir que get_muestras_asociadas_por_lote() siga relacionando las muestras
+            // con sus análisis. La distinción "activa vs asociada" se hace por sin_lote.
+            // NO se registra este cambio en log_cambios por requerimiento.
+            $registro->id_lote_mineral = $idLoteDestino;
+            $registro->sin_lote = 0;
+            $registro->save();
+        }
+
+        return $registros->count();
     }
 }

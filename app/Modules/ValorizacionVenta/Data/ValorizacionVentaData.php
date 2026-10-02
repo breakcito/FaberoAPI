@@ -163,6 +163,7 @@ class ValorizacionVentaData
                     'factor' => (float) $d->factor,
                     'precio_por_tonelada' => (float) $d->precio_por_tonelada,
                     'subtotal' => (float) $d->subtotal,
+                    'tiene_comprobante' => (bool) $d->tiene_comprobante,
                     'log_cambios' => $d->log_cambios ?? [],
                 ];
             })->toArray(),

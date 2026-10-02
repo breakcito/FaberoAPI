@@ -10,5 +10,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/{id}', 'get_anticipo_by_id');
         Route::post('/', 'crear_anticipo');
         Route::patch('/{id}/anular', 'anular_anticipo');
+        Route::get('/{id}/transacciones', 'get_transacciones');
+        Route::get('/{id}/historial-cambios', 'get_historial_cambios');
     });
 });

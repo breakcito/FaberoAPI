@@ -26,6 +26,7 @@ class ValorizacionVentaDetalle extends Model
         'factor',
         'precio_por_tonelada',
         'subtotal',
+        'tiene_comprobante',
         'log_cambios',
     ];
 
@@ -42,6 +43,7 @@ class ValorizacionVentaDetalle extends Model
         'factor' => 'float',
         'precio_por_tonelada' => 'float',
         'subtotal' => 'float',
+        'tiene_comprobante' => 'boolean',
         'log_cambios' => 'array',
         'elemento_quimico' => ElementoQuimicoValorizacion::class,
     ];
