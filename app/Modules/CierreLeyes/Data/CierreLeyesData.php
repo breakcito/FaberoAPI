@@ -31,9 +31,12 @@ class CierreLeyesData
                 COALESCE(lm.peso_neto_oficial, lm.peso_neto) AS peso_neto,
                 lm.tipo_mineral,
                 lm.estado_leyes,
+                lm.id_proveedor_minero,
+                pr.razon_social AS proveedor_razon_social,
                 lm.created_at
             FROM lote_mineral lm
             LEFT JOIN recepcion_unidad ru ON lm.id_recepcion_unidad = ru.id
+            LEFT JOIN proveedor pr ON pr.id = lm.id_proveedor_minero
             WHERE (
                 -- Lote regular: tiene unidad y está pesado.
                 (lm.id_recepcion_unidad IS NOT NULL
@@ -58,6 +61,7 @@ class CierreLeyesData
             $row->peso_final = $row->peso_final !== null ? (float) $row->peso_final : null;
             $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
             $row->estado_leyes = $row->estado_leyes !== null ? (string) $row->estado_leyes : null;
+            $row->id_proveedor_minero = $row->id_proveedor_minero !== null ? (int) $row->id_proveedor_minero : null;
         }
 
         return $results;
@@ -94,11 +98,19 @@ class CierreLeyesData
                 lm.con_valor_comercial,
                 lm.fecha_hora_inicio_analisis,
                 lm.fecha_hora_confirmacion_analisis,
+                lm.ley_oro,
+                lm.ley_plata,
+                lm.ley_humedad,
+                lm.ley_recuperacion,
+                lm.id_proveedor_minero,
+                lm.created_at,
+                pr.razon_social AS proveedor_razon_social,
                 CONCAT(emp_ini.nombre, " ", emp_ini.apellido) AS empleado_inicio_nombre,
                 CONCAT(emp_conf.nombre, " ", emp_conf.apellido) AS empleado_confirmacion_nombre
             FROM lote_mineral lm
             LEFT JOIN empleado emp_ini ON lm.id_empleado_inicio_analisis = emp_ini.id
             LEFT JOIN empleado emp_conf ON lm.id_empleado_confirmacion_analisis = emp_conf.id
+            LEFT JOIN proveedor pr ON pr.id = lm.id_proveedor_minero
             WHERE lm.estado_leyes IN ('.implode(',', $placeholdersEstado).')
         ';
 
@@ -156,6 +168,12 @@ class CierreLeyesData
             $lote->numero_correlativo = (int) $lote->numero_correlativo;
             $lote->peso_neto = $lote->peso_neto !== null ? (float) $lote->peso_neto : null;
             $lote->con_valor_comercial = $lote->con_valor_comercial !== null ? (bool) $lote->con_valor_comercial : null;
+            $lote->ley_oro = $lote->ley_oro !== null ? (float) $lote->ley_oro : null;
+            $lote->ley_plata = $lote->ley_plata !== null ? (float) $lote->ley_plata : null;
+            $lote->ley_humedad = $lote->ley_humedad !== null ? (float) $lote->ley_humedad : null;
+            $lote->ley_recuperacion = $lote->ley_recuperacion !== null ? (float) $lote->ley_recuperacion : null;
+            $lote->id_proveedor_minero = $lote->id_proveedor_minero !== null ? (int) $lote->id_proveedor_minero : null;
+            $lote->created_at = $lote->created_at !== null ? (string) $lote->created_at : null;
         }
 
         return $lotes;
@@ -457,6 +475,29 @@ class CierreLeyesData
     }
 
     /**
+     * Obtener TODAS las filas de humedad y recuperación de un lote con `ley` definido
+     * (cualquier valor, incluyendo 0). NO filtra por `esta_confirmada` porque las filas
+     * migradas desde muestras externas siempre llegan con `esta_confirmada=0` (la tabla
+     * de muestra no tiene check de confirmar). Usado en `asociar_muestra_a_lote`
+     * para mantener `lote.ley_humedad` / `lote.ley_recuperacion` sincronizados con
+     * el promedio de las filas reales del lote después de cada asociación.
+     */
+    public static function get_humedad_recuperacion_rows_for_lote(int $idLote): Collection
+    {
+        $detallesIds = DB::table('grupo_analisis_detalle')
+            ->where(function ($q) {
+                $q->where('para_valorizacion_humedad', 1)
+                    ->orWhere('para_valorizacion_recuperacion', 1);
+            })
+            ->pluck('id');
+
+        return AnalisisMineral::where('id_lote_mineral', $idLote)
+            ->whereIn('id_grupo_analisis_detalle', $detallesIds)
+            ->whereNotNull('ley')
+            ->get();
+    }
+
+    /**
      * Actualizar el lote mineral al confirmar y cerrar las leyes.
      *
      * @param  array{ley_oro: float, ley_plata: float, ley_humedad: float, ley_recuperacion: float}  $leyesValores
@@ -477,6 +518,68 @@ class CierreLeyesData
         $lote->id_empleado_confirmacion_analisis = $idEmpleado;
         $lote->fecha_hora_confirmacion_analisis = Carbon::now();
         $lote->save();
+    }
+
+    /**
+     * Actualizar SOLO las leyes de humedad/recuperacion del lote. NO toca estado,
+     * con_valor_comercial, ni los datos de confirmación. Usado tras asociar muestras
+     * para mantener el promedio parcial visible en la UI sin alterar el ciclo de vida
+     * del lote (sigue En Proceso o Pendiente). Acepta un mapa parcial: solo se aplican
+     * las claves presentes (verificadas con array_key_exists).
+     *
+     * @param  array{ley_humedad?: float, ley_recuperacion?: float}  $leyesValores
+     */
+    public static function actualizar_leyes_lote(
+        LoteMineral $lote,
+        array $leyesValores
+    ): void {
+        if (array_key_exists('ley_humedad', $leyesValores)) {
+            $lote->ley_humedad = $leyesValores['ley_humedad'];
+        }
+        if (array_key_exists('ley_recuperacion', $leyesValores)) {
+            $lote->ley_recuperacion = $leyesValores['ley_recuperacion'];
+        }
+        $lote->save();
+    }
+
+    /**
+     * Reemplazar el `ley` de TODAS las filas de humedad y recuperación del lote por el
+     * valor consolidado calculado. Se ejecuta tras asociar una muestra para que las
+     * filas que aún tienen 0 (recién creadas al iniciar la muestra) adopten el promedio
+     * del lote, manteniendo el grupo sincronizado.
+     *
+     * Solo aplica a detalles marcados con `para_valorizacion_humedad` o
+     * `para_valorizacion_recuperacion`. No toca oro/plata.
+     *
+     * @param  float  $leyHumedad        Promedio calculado para humedad
+     * @param  float  $leyRecuperacion   Promedio calculado para recuperación
+     */
+    public static function actualizar_filas_humedad_recuperacion_a_promedio(
+        int $idLote,
+        float $leyHumedad,
+        float $leyRecuperacion
+    ): void {
+        $detallesHumedad = DB::table('grupo_analisis_detalle')
+            ->where('para_valorizacion_humedad', 1)
+            ->pluck('id')
+            ->all();
+
+        $detallesRecuperacion = DB::table('grupo_analisis_detalle')
+            ->where('para_valorizacion_recuperacion', 1)
+            ->pluck('id')
+            ->all();
+
+        if (! empty($detallesHumedad)) {
+            AnalisisMineral::where('id_lote_mineral', $idLote)
+                ->whereIn('id_grupo_analisis_detalle', $detallesHumedad)
+                ->update(['ley' => $leyHumedad]);
+        }
+
+        if (! empty($detallesRecuperacion)) {
+            AnalisisMineral::where('id_lote_mineral', $idLote)
+                ->whereIn('id_grupo_analisis_detalle', $detallesRecuperacion)
+                ->update(['ley' => $leyRecuperacion]);
+        }
     }
 
     // ===== MUESTRAS EXTERNAS =====
