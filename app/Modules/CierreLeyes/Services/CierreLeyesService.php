@@ -325,6 +325,38 @@ class CierreLeyesService
     }
 
     /**
+     * Calcular el promedio de humedad y recuperación del lote considerando TODAS las filas
+     * con `ley` definido (incluye 0 y filas migradas desde muestras con `esta_confirmada=0`).
+     * Usado al asociar muestras para que el valor consolidado del lote se mantenga en
+     * sincronía con las filas reales, sin esperar a la confirmación formal del lote.
+     *
+     * @return array{ley_humedad: float, ley_recuperacion: float}
+     */
+    private static function consolidar_humedad_recuperacion(int $idLote): array
+    {
+        $rows = CierreLeyesData::get_humedad_recuperacion_rows_for_lote($idLote);
+
+        $detalles = DB::table('grupo_analisis_detalle')
+            ->select('id', 'para_valorizacion_humedad', 'para_valorizacion_recuperacion')
+            ->where(function ($q) {
+                $q->where('para_valorizacion_humedad', 1)
+                    ->orWhere('para_valorizacion_recuperacion', 1);
+            })
+            ->get();
+
+        $humedadIds = $detalles->where('para_valorizacion_humedad', 1)->pluck('id')->all();
+        $recuperacionIds = $detalles->where('para_valorizacion_recuperacion', 1)->pluck('id')->all();
+
+        $humVals = $rows->whereIn('id_grupo_analisis_detalle', $humedadIds);
+        $recVals = $rows->whereIn('id_grupo_analisis_detalle', $recuperacionIds);
+
+        return [
+            'ley_humedad' => $humVals->count() > 0 ? (float) $humVals->avg('ley') : 0.0,
+            'ley_recuperacion' => $recVals->count() > 0 ? (float) $recVals->avg('ley') : 0.0,
+        ];
+    }
+
+    /**
      * Confirmar y cerrar el lote de leyes.
      *
      * @param  array<int,float>|null  $leyesManuales  Map id_detalle → ley cuando el front envia override; si null, consolidar automaticamente
@@ -613,6 +645,18 @@ class CierreLeyesService
             }
 
             $migrados = CierreLeyesData::asociar_analisis_muestra_a_lote($idMuestraExterna, $idLoteMineral, $idEmpleado, $muestra);
+
+            // Recalcular humedad/recuperacion con TODAS las filas (incluye las migradas,
+            // que vienen con esta_confirmada=0) para que el consolidado del lote refleje
+            // el promedio real de las filas tras la asociación. No toca oro/plata ni el
+            // estado de confirmación del lote.
+            $hr = self::consolidar_humedad_recuperacion($idLoteMineral);
+            CierreLeyesData::actualizar_leyes_lote($lote, $hr);
+            CierreLeyesData::actualizar_filas_humedad_recuperacion_a_promedio(
+                $idLoteMineral,
+                $hr['ley_humedad'],
+                $hr['ley_recuperacion'],
+            );
 
             DB::commit();
 
