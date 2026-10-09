@@ -255,100 +255,6 @@ class GuiasPrimerTramoService
     }
 
     /**
-     * Aplicar los pesos oficiales reportados por el frontend a cada lote sin
-     * particiones incluido en la guia. Si peso_neto_oficial difiere del
-     * peso_neto original del lote, sobrescribe peso_actual.
-     *
-     * Esta funcion NO toca las particiones: las particiones mantienen sus
-     * propios pesos originales (los *_oficial solo aplican al LOTE).
-     *
-     * Para lotes con particiones, los *_oficial se asignan automaticamente
-     * desde peso_neto al crearse una guia para una de sus particiones
-     * (ver aplicar_oficiales_por_particion()). Aqui se ignoran.
-     *
-     * @param  array<int, array{id_lote_mineral: int, peso_inicial_oficial: float, peso_final_oficial: float, peso_neto_oficial: float}>  $pesosOficiales
-     * @param  int|null  $idEmpleado  Reservado para compatibilidad; ya no se usa dentro.
-     */
-    private static function aplicar_pesos_oficiales_lotes(array $pesosOficiales, ?int $idEmpleado): void
-    {
-        foreach ($pesosOficiales as $item) {
-            $idLote = (int) ($item['id_lote_mineral'] ?? 0);
-            if ($idLote <= 0) {
-                continue;
-            }
-
-            $loteActual = DB::table('lote_mineral')->where('id', $idLote)->first();
-            if (! $loteActual) {
-                continue;
-            }
-
-            // Para lotes con particiones, *_oficial los asigna el metodo
-            // aplicar_oficiales_por_particion() automaticamente. Aqui no se procesan.
-            if ((int) ($loteActual->tiene_particion ?? 0) === 1) {
-                continue;
-            }
-
-            $pesoInicialOficial = round((float) ($item['peso_inicial_oficial'] ?? 0), 2);
-            $pesoFinalOficial = round((float) ($item['peso_final_oficial'] ?? 0), 2);
-            $pesoNetoOficial = round((float) ($item['peso_neto_oficial'] ?? 0), 2);
-
-            $updateFields = [
-                'peso_inicial_oficial' => $pesoInicialOficial,
-                'peso_final_oficial' => $pesoFinalOficial,
-                'peso_neto_oficial' => $pesoNetoOficial,
-            ];
-
-            // Si el peso neto oficial difiere del peso neto original del lote,
-            // sobrescribir peso_actual (sin registrar en log_cambios del lote).
-            $pesoNetoOriginal = (float) ($loteActual->peso_neto ?? 0);
-            if (abs($pesoNetoOficial - $pesoNetoOriginal) > 0.01) {
-                $updateFields['peso_actual'] = $pesoNetoOficial;
-            }
-
-            DB::table('lote_mineral')->where('id', $idLote)->update($updateFields);
-        }
-    }
-
-    /**
-     * Para lotes con particiones: cuando se crea (o actualiza) una guia para
-     * al menos una de sus particiones, copiar peso_neto -> peso_neto_oficial.
-     * El oficial representa la suma validada de las particiones.
-     *
-     * Idempotente: solo asigna si *_oficial esta NULL. No sobrescribe valores
-     * ya presentes (auditoria).
-     *
-     * @param  array<int, int>  $idLotesPadres
-     */
-    private static function aplicar_oficiales_por_particion(array $idLotesPadres): void
-    {
-        $ids = array_values(array_unique(array_filter(
-            array_map('intval', $idLotesPadres),
-            fn ($v) => $v > 0
-        )));
-        if (empty($ids)) {
-            return;
-        }
-
-        foreach ($ids as $idLote) {
-            $lote = DB::table('lote_mineral')->where('id', $idLote)->first();
-            if (! $lote || ! (int) ($lote->tiene_particion ?? 0)) {
-                continue;
-            }
-            // El cast a (float) cubre null, "0", "0.00", "0.0", 0, 0.0 — todos evalúan
-            // a 0.0 y la guarda deja pasar el UPDATE. Solo saltamos si hay un valor
-            // real (>0) ya seteado (auditoría / idempotencia).
-            if ((float) $lote->peso_neto_oficial > 0) {
-                continue;
-            }
-            DB::table('lote_mineral')->where('id', $idLote)->update([
-                'peso_inicial_oficial' => $lote->peso_inicial,
-                'peso_final_oficial' => $lote->peso_final,
-                'peso_neto_oficial' => $lote->peso_neto,
-            ]);
-        }
-    }
-
-    /**
      * Crear una nueva guía de primer tramo con sus items.
      *
      * @param  array  $data  Cabecera validada.
@@ -441,32 +347,19 @@ class GuiasPrimerTramoService
                     'id_particion_lote_mineral' => isset($item['id_particion_lote_mineral']) && $item['id_particion_lote_mineral'] !== null
                         ? (int) $item['id_particion_lote_mineral']
                         : null,
+                    'peso_inicial' => isset($item['peso_inicial']) && $item['peso_inicial'] !== null
+                        ? round((float) $item['peso_inicial'], 2)
+                        : null,
+                    'peso_final' => isset($item['peso_final']) && $item['peso_final'] !== null
+                        ? round((float) $item['peso_final'], 2)
+                        : null,
+                    'peso_neto' => isset($item['peso_neto']) && $item['peso_neto'] !== null
+                        ? round((float) $item['peso_neto'], 2)
+                        : null,
                     'created_at' => $now,
                 ];
             }
             DB::table('lote_guia')->insert($rows);
-
-            // Aplicar pesos oficiales a los lotes sin particiones (si los hay).
-            $pesosOficiales = $data['pesos_oficiales_lotes'] ?? [];
-            if (! empty($pesosOficiales) && is_array($pesosOficiales)) {
-                self::aplicar_pesos_oficiales_lotes($pesosOficiales, $idEmpleadoRegistro);
-            }
-
-            // Auto-asignar *_oficial para lotes con particiones (si los items
-            // apuntan a particiones).
-            $lotesPadresConParticion = [];
-            foreach ($items as $item) {
-                $idPart = $item['id_particion_lote_mineral'] ?? null;
-                if ($idPart !== null) {
-                    $part = DB::table('particion_lote_mineral')->where('id', (int) $idPart)->first();
-                    if ($part) {
-                        $lotesPadresConParticion[] = (int) $part->id_lote_mineral;
-                    }
-                }
-            }
-            if (! empty($lotesPadresConParticion)) {
-                self::aplicar_oficiales_por_particion($lotesPadresConParticion);
-            }
 
             DB::commit();
         } catch (\Throwable $e) {
@@ -800,40 +693,59 @@ class GuiasPrimerTramoService
                 }
             }
 
-            // --- AUDITORÍA DE PESOS OFICIALES DE LOTES ---
-            // Compara los pesos_*_oficial enviados por el frontend contra
-            // los valores actuales en lote_mineral. Solo registra cuando
-            // difieren (tolerancia 0.01, igual que aplicar_pesos_oficiales_lotes).
-            $pesosOficiales = $data['pesos_oficiales_lotes'] ?? [];
-            if (! empty($pesosOficiales) && is_array($pesosOficiales)) {
-                foreach ($pesosOficiales as $po) {
-                    $idLote = (int) ($po['id_lote_mineral'] ?? 0);
-                    if ($idLote <= 0) {
-                        continue;
-                    }
-                    $loteActual = DB::table('lote_mineral')->where('id', $idLote)->first();
-                    if (! $loteActual) {
-                        continue;
-                    }
-                    $correlativo = $loteActual->correlativo ?? "Lote #{$idLote}";
-                    $prefijo = "{$correlativo} — ";
+            // --- AUDITORÍA DE PESOS DOCUMENTARIOS EN LOTE_GUIA ---
+            // Compara los pesos documentarios enviados para cada item contra
+            // los valores actuales en lote_guia si ya existía.
+            foreach ($items as $item) {
+                $idLoteMineral = isset($item['id_lote_mineral']) && $item['id_lote_mineral'] !== null
+                    ? (int) $item['id_lote_mineral']
+                    : null;
+                $idParticion = isset($item['id_particion_lote_mineral']) && $item['id_particion_lote_mineral'] !== null
+                    ? (int) $item['id_particion_lote_mineral']
+                    : null;
 
-                    $checks = [
-                        'peso_inicial_oficial' => 'Peso inicial oficial',
-                        'peso_final_oficial' => 'Peso final oficial',
-                        'peso_neto_oficial' => 'Peso neto oficial',
-                    ];
-                    foreach ($checks as $field => $label) {
-                        $valAnt = $loteActual->$field !== null ? (float) $loteActual->$field : 0.0;
-                        $valNue = round((float) ($po[$field] ?? 0), 2);
-                        if (abs($valAnt - $valNue) > 0.01) {
-                            $cambios[] = [
-                                'campo_bd' => "lote_mineral.{$field}",
-                                'campo' => $prefijo.$label,
-                                'valor_anterior' => round($valAnt, 2),
-                                'valor_nuevo' => $valNue,
-                            ];
+                $existente = DB::table('lote_guia')
+                    ->where('id_guia_primer_tramo', $id)
+                    ->where(function ($q) use ($idLoteMineral, $idParticion) {
+                        if ($idParticion !== null) {
+                            $q->where('id_particion_lote_mineral', $idParticion);
+                        } else {
+                            $q->where('id_lote_mineral', $idLoteMineral)
+                                ->whereNull('id_particion_lote_mineral');
                         }
+                    })
+                    ->first();
+
+                if (! $existente) {
+                    continue;
+                }
+
+                $correlativo = 'Item';
+                if ($idParticion !== null) {
+                    $part = DB::table('particion_lote_mineral')->where('id', $idParticion)->first();
+                    $correlativo = $part->correlativo ?? "Partición #{$idParticion}";
+                } elseif ($idLoteMineral !== null) {
+                    $lote = DB::table('lote_mineral')->where('id', $idLoteMineral)->first();
+                    $correlativo = $lote->correlativo ?? "Lote #{$idLoteMineral}";
+                }
+                $prefijo = "{$correlativo} — ";
+
+                $pesoChecks = [
+                    'peso_inicial' => 'Peso inicial (guía)',
+                    'peso_final' => 'Peso final (guía)',
+                    'peso_neto' => 'Peso neto (guía)',
+                ];
+
+                foreach ($pesoChecks as $field => $label) {
+                    $valAnt = $existente->$field !== null ? (float) $existente->$field : 0.0;
+                    $valNue = isset($item[$field]) && $item[$field] !== null ? round((float) $item[$field], 2) : 0.0;
+                    if (abs($valAnt - $valNue) > 0.01) {
+                        $cambios[] = [
+                            'campo_bd' => "lote_guia.{$field}",
+                            'campo' => $prefijo.$label,
+                            'valor_anterior' => round($valAnt, 2),
+                            'valor_nuevo' => $valNue,
+                        ];
                     }
                 }
             }
@@ -873,13 +785,7 @@ class GuiasPrimerTramoService
                 'log_cambios' => json_encode($logActual),
             ]);
 
-            // Aplicar pesos oficiales a los lotes sin particiones (si los hay).
-            $pesosOficiales = $data['pesos_oficiales_lotes'] ?? [];
-            if (! empty($pesosOficiales) && is_array($pesosOficiales)) {
-                self::aplicar_pesos_oficiales_lotes($pesosOficiales, $idEmpleado);
-            }
-
-            // Sincronizar items (lote o partición)
+            // Sincronizar items (lote o partición) y sus pesos documentarios
             $now = now()->toDateTimeString();
             foreach ($items as $item) {
                 $idLoteMineral = isset($item['id_lote_mineral']) && $item['id_lote_mineral'] !== null
@@ -888,6 +794,10 @@ class GuiasPrimerTramoService
                 $idParticion = isset($item['id_particion_lote_mineral']) && $item['id_particion_lote_mineral'] !== null
                     ? (int) $item['id_particion_lote_mineral']
                     : null;
+
+                $pesoInicial = isset($item['peso_inicial']) && $item['peso_inicial'] !== null ? round((float) $item['peso_inicial'], 2) : 0.00;
+                $pesoFinal = isset($item['peso_final']) && $item['peso_final'] !== null ? round((float) $item['peso_final'], 2) : 0.00;
+                $pesoNeto = isset($item['peso_neto']) && $item['peso_neto'] !== null ? round((float) $item['peso_neto'], 2) : 0.00;
 
                 $existente = DB::table('lote_guia')
                     ->where('id_guia_primer_tramo', $id)
@@ -906,8 +816,19 @@ class GuiasPrimerTramoService
                         'id_guia_primer_tramo' => $id,
                         'id_lote_mineral' => $idLoteMineral,
                         'id_particion_lote_mineral' => $idParticion,
+                        'peso_inicial' => $pesoInicial,
+                        'peso_final' => $pesoFinal,
+                        'peso_neto' => $pesoNeto,
                         'created_at' => $now,
                     ]);
+                } else {
+                    DB::table('lote_guia')
+                        ->where('id', $existente->id)
+                        ->update([
+                            'peso_inicial' => $pesoInicial,
+                            'peso_final' => $pesoFinal,
+                            'peso_neto' => $pesoNeto,
+                        ]);
                 }
             }
 
@@ -944,21 +865,6 @@ class GuiasPrimerTramoService
                 }
             }
 
-            // Auto-asignar *_oficial para lotes con particiones (si los items
-            // apuntan a particiones).
-            $lotesPadresConParticion = [];
-            foreach ($items as $item) {
-                $idPart = $item['id_particion_lote_mineral'] ?? null;
-                if ($idPart !== null) {
-                    $part = DB::table('particion_lote_mineral')->where('id', (int) $idPart)->first();
-                    if ($part) {
-                        $lotesPadresConParticion[] = (int) $part->id_lote_mineral;
-                    }
-                }
-            }
-            if (! empty($lotesPadresConParticion)) {
-                self::aplicar_oficiales_por_particion($lotesPadresConParticion);
-            }
 
             DB::commit();
         } catch (\Throwable $e) {

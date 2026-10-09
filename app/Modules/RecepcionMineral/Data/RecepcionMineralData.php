@@ -501,11 +501,7 @@ class RecepcionMineralData
             lm.fecha_hora_peso_inicial,
                         lm.peso_final,
             lm.fecha_hora_peso_final,
-                        -- Para lotes padre finalizados, el peso consolidado vive en
-                        -- `peso_neto_oficial`; `peso_neto` queda en null porque la
-                        -- finalización nunca lo asigna. COALESCE mantiene el alias
-                        -- genérico que consume el frontend.
-                        COALESCE(lm.peso_neto_oficial, lm.peso_neto) AS peso_neto,
+            lm.peso_neto                               AS peso_neto,
             -- Aliases canónicos: para RECEPCIÓN el camión llega cargado (BRUTO = inicial)
             -- y retorna vacío (TARA = final).
             lm.peso_inicial                            AS peso_bruto,
@@ -574,7 +570,7 @@ class RecepcionMineralData
               (lm.particionado_desde_balanza = 1
                  AND lm.particion_finalizada = 1
                  AND lm.id_recepcion_unidad IS NULL
-                 AND lm.peso_neto_oficial IS NOT NULL
+                 AND lm.peso_neto IS NOT NULL
                  AND EXISTS (
                      SELECT 1
                      FROM particion_lote_mineral p

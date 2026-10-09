@@ -1422,7 +1422,7 @@ class RecepcionMineralService
             error_log("[finalizar_particion_lote] totalNeto={$totalNeto}");
 
             $now = now()->toDateTimeString();
-            $lote->peso_neto_oficial = round($totalNeto, 2);
+            $lote->peso_neto = round($totalNeto, 2);
             $lote->peso_actual = round($totalNeto, 2);
             $lote->particion_finalizada = true;
             $lote->id_empleado_fin_particion = $idEmpleado;

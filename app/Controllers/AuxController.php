@@ -438,9 +438,6 @@ class AuxController extends Controller
             lm.peso_inicial,
             lm.peso_final,
             lm.peso_neto,
-            lm.peso_inicial_oficial,
-            lm.peso_final_oficial,
-            lm.peso_neto_oficial,
             lm.created_at,
             p.razon_social AS proveedor_nombre,
             v.placa AS vehiculo_placa,
@@ -498,9 +495,6 @@ class AuxController extends Controller
             $row->peso_inicial = $row->peso_inicial !== null ? (float) $row->peso_inicial : null;
             $row->peso_final = $row->peso_final !== null ? (float) $row->peso_final : null;
             $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
-            $row->peso_inicial_oficial = $row->peso_inicial_oficial !== null ? (float) $row->peso_inicial_oficial : null;
-            $row->peso_final_oficial = $row->peso_final_oficial !== null ? (float) $row->peso_final_oficial : null;
-            $row->peso_neto_oficial = $row->peso_neto_oficial !== null ? (float) $row->peso_neto_oficial : null;
             $row->id_recepcion_unidad_padre = $row->id_recepcion_unidad_padre !== null
                 ? (int) $row->id_recepcion_unidad_padre
                 : null;
@@ -564,7 +558,7 @@ class AuxController extends Controller
                 WHERE plm2.id_lote_mineral = lm.id
                   AND plm2.peso_neto > 0
                   AND plm2.estado = :estado_particion_activo_suma
-            ), 0) = COALESCE(lm.peso_neto, lm.peso_neto_oficial, 0)
+            ), 0) = COALESCE(lm.peso_neto, 0)
         ';
 
         $params2 = [

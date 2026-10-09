@@ -103,7 +103,7 @@ class ValorizacionCompraService
                 if (! $loteGuia || ! $lote) {
                     throw new Exception("El lote guía ID {$det['id_lote_guia']} no fue encontrado.");
                 }
-                $pesoNeto = (float) ($lote->peso_neto_oficial ?? 0);
+                $pesoNeto = (float) ($lote->peso_neto ?? 0);
                 $leyHumedad = (float) $lote->ley_humedad;
                 $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
 
@@ -371,7 +371,7 @@ class ValorizacionCompraService
                 if (! $loteGuia || ! $lote) {
                     throw new Exception("El lote guía ID {$det['id_lote_guia']} no fue encontrado.");
                 }
-                $pesoNeto = (float) ($lote->peso_neto_oficial ?? 0);
+                $pesoNeto = (float) ($lote->peso_neto ?? 0);
                 $leyHumedad = (float) $lote->ley_humedad;
                 $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
 
@@ -1066,7 +1066,7 @@ class ValorizacionCompraService
 
             if ($lg && $lg->loteMineral) {
                 $lote = $lg->loteMineral;
-                $pesoNeto = (float) ($lote->peso_neto_oficial ?? 0);
+                $pesoNeto = (float) ($lote->peso_neto ?? 0);
                 $pesoSeco = $pesoNeto * (1 - ((float) $lote->ley_humedad / 100));
                 $elementoEnumTmp = ElementoQuimicoValorizacion::tryFrom($elem) ?? ElementoQuimicoValorizacion::Oro;
                 $leyTmp = $elementoEnumTmp === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;

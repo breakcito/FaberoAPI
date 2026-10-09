@@ -26,9 +26,9 @@ class CierreLeyesData
                 lm.correlativo,
                 lm.numero_correlativo,
                 lm.condicion_ingreso,
-                COALESCE(lm.peso_inicial_oficial, lm.peso_inicial) AS peso_inicial,
-                COALESCE(lm.peso_final_oficial, lm.peso_final) AS peso_final,
-                COALESCE(lm.peso_neto_oficial, lm.peso_neto) AS peso_neto,
+                lm.peso_inicial,
+                lm.peso_final,
+                lm.peso_neto,
                 lm.tipo_mineral,
                 lm.estado_leyes,
                 lm.id_proveedor_minero,
@@ -47,7 +47,7 @@ class CierreLeyesData
                 (lm.particionado_desde_balanza = 1
                  AND lm.particion_finalizada = 1
                  AND lm.id_recepcion_unidad IS NULL
-                 AND lm.peso_neto_oficial IS NOT NULL)
+                 AND lm.peso_neto IS NOT NULL)
             )
               AND lm.condicion_ingreso = "'.CondicionIngreso::Comercializacion->value.'"
               AND (lm.estado_leyes = "'.EstadoLeyes::Pendiente->value.'" OR lm.estado_leyes IS NULL OR lm.estado_leyes = "")
@@ -92,7 +92,7 @@ class CierreLeyesData
                 lm.correlativo,
                 lm.numero_correlativo,
                 lm.condicion_ingreso,
-                COALESCE(lm.peso_neto_oficial, lm.peso_neto) AS peso_neto,
+                lm.peso_neto,
                 lm.tipo_mineral,
                 lm.estado_leyes,
                 lm.con_valor_comercial,

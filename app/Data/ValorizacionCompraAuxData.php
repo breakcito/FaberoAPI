@@ -203,9 +203,9 @@ class ValorizacionCompraAuxData
                     gpt.guia_remitente AS grr,
                     CASE WHEN gpt.sin_guia_transportista = 1 OR gpt.guia_transportista IS NULL OR gpt.guia_transportista = \'\' THEN NULL ELSE gpt.guia_transportista END AS grt,
                     gpt.fecha_en_planta,
-                    COALESCE(lm.peso_neto_oficial, 0) AS tmh,
+                    COALESCE(lm.peso_neto, 0) AS tmh,
                     COALESCE(lm.ley_humedad, 0) AS ley_humedad,
-                    COALESCE(lm.peso_neto_oficial, 0) * (1 - (COALESCE(lm.ley_humedad, 0) / 100)) AS tms,
+                    COALESCE(lm.peso_neto, 0) * (1 - (COALESCE(lm.ley_humedad, 0) / 100)) AS tms,
                     COALESCE(lm.ley_oro, 0) AS ley_oro,
                     COALESCE(lm.ley_plata, 0) AS ley_plata,
                     lm.esta_valorizado_oro AS es_valorizado_oro,
@@ -219,7 +219,7 @@ class ValorizacionCompraAuxData
                 LEFT JOIN guia_primer_tramo gpt ON gpt.id = lg.id_guia_primer_tramo
                 WHERE COALESCE(gpt.id_proveedor, lm.id_proveedor_minero) = :id_proveedor
                   AND lm.con_valor_comercial = 1
-                  AND COALESCE(lm.peso_neto_oficial, lm.peso_neto, 0) > 0
+                  AND COALESCE(lm.peso_neto, 0) > 0
                   -- El lote padre debe estar validado.
                   AND lm.esta_validado = 1
                   -- Si el lote tiene particiones activas, TODAS deben estar validadas.
@@ -258,7 +258,7 @@ class ValorizacionCompraAuxData
                                 AND plm.peso_neto > 0
                           ),
                           0
-                      ) = COALESCE(lm.peso_neto_oficial, lm.peso_neto, 0)
+                      ) = COALESCE(lm.peso_neto, 0)
                   )
                   -- Excluir el lote completo si ya tiene AMBOS elementos (Oro y Plata) valorizados.
                   AND NOT (lm.esta_valorizado_oro = 1 AND lm.esta_valorizado_plata = 1)
