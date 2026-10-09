@@ -152,6 +152,8 @@ class CierreLeyesController
     {
         $request->validate([
             'id_proveedor_minero' => 'required|integer',
+            'codigo_cliente' => 'nullable|string|max:20',
+            'fecha_hora_ingreso' => 'nullable|date',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
@@ -161,7 +163,9 @@ class CierreLeyesController
 
         return response()->json(CierreLeyesService::iniciar_muestra_externa(
             (int) $request->input('id_proveedor_minero'),
-            (int) $authUser->id_empleado
+            (int) $authUser->id_empleado,
+            $request->input('codigo_cliente'),
+            $request->input('fecha_hora_ingreso')
         ));
     }
 

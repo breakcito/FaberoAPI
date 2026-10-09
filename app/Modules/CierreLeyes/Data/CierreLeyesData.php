@@ -596,6 +596,8 @@ class CierreLeyesData
             'id_proveedor_minero' => $datos['id_proveedor_minero'],
             'correlativo' => $datos['correlativo'],
             'numero_correlativo' => $datos['numero_correlativo'],
+            'codigo_cliente' => $datos['codigo_cliente'] ?? null,
+            'fecha_hora_ingreso' => $datos['fecha_hora_ingreso'] ?? Carbon::now(),
             'created_at' => Carbon::now(),
         ]);
     }
@@ -634,6 +636,8 @@ class CierreLeyesData
                 me.id_proveedor_minero,
                 me.correlativo,
                 me.numero_correlativo,
+                me.codigo_cliente,
+                me.fecha_hora_ingreso,
                 me.created_at,
                 p.razon_social AS proveedor_razon_social,
                 CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
@@ -697,6 +701,8 @@ class CierreLeyesData
                 me.id_proveedor_minero,
                 me.correlativo,
                 me.numero_correlativo,
+                me.codigo_cliente,
+                me.fecha_hora_ingreso,
                 me.created_at,
                 p.razon_social AS proveedor_razon_social,
                 CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
@@ -762,6 +768,8 @@ class CierreLeyesData
                 me.id_proveedor_minero,
                 me.correlativo,
                 me.numero_correlativo,
+                me.codigo_cliente,
+                me.fecha_hora_ingreso,
                 me.created_at,
                 p.razon_social AS proveedor_razon_social,
                 CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
