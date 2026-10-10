@@ -54,12 +54,16 @@ class RecepcionUnidadesData
             CONCAT(emp_rec.nombre, " ", emp_rec.apellido) AS empleado_recepcion_nombre,
             ru.es_programacion,
             ru.fecha_estimada_llegada,
-ru.guia_remitente,
+            ru.guia_remitente,
             ru.guia_transportista,
             ru.documentos_programacion,
-            ru.es_recepcion_ficticia
+            ru.es_recepcion_ficticia,
+            ru.id_ticket_recepcion_unidades,
+            tru.correlativo AS ticket_correlativo,
+            tru.numero_correlativo AS ticket_numero_correlativo
         FROM
             recepcion_unidad ru
+        LEFT JOIN ticket_recepcion_unidades tru ON tru.id = ru.id_ticket_recepcion_unidades
         LEFT JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_recepcion
         LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
@@ -172,9 +176,13 @@ ru.guia_remitente,
             ru.fecha_estimada_llegada,
             ru.guia_remitente,
             ru.guia_transportista,
-            ru.es_recepcion_ficticia
+            ru.es_recepcion_ficticia,
+            ru.id_ticket_recepcion_unidades,
+            tru.correlativo AS ticket_correlativo,
+            tru.numero_correlativo AS ticket_numero_correlativo
         FROM
             recepcion_unidad ru
+        LEFT JOIN ticket_recepcion_unidades tru ON tru.id = ru.id_ticket_recepcion_unidades
         LEFT JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_recepcion
         LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
@@ -316,10 +324,68 @@ ru.guia_remitente,
     }
 
     /**
+     * Generar ticket en ticket_recepcion_unidades con reinicio anual.
+     * Correlativo formato: FAB-<año><numero correlativo> (ej. FAB-2026100)
+     */
+    public static function generar_ticket_recepcion_unidad(): array
+    {
+        $now = now();
+        $siguienteNumero = (DB::table('ticket_recepcion_unidades')
+            ->whereYear('created_at', $now->year)
+            ->max('numero_correlativo') ?? 0) + 1;
+
+        $correlativo = 'FAB-'.$now->year.$siguienteNumero;
+
+        $ticketId = DB::table('ticket_recepcion_unidades')->insertGetId([
+            'correlativo' => $correlativo,
+            'numero_correlativo' => $siguienteNumero,
+            'created_at' => $now,
+        ]);
+
+        return [
+            'id' => (int) $ticketId,
+            'correlativo' => $correlativo,
+            'numero_correlativo' => $siguienteNumero,
+        ];
+    }
+
+    /**
+     * Asegura que una recepción de unidad tenga su ticket asignado.
+     * Si ya tiene, lo devuelve. Si no tiene, lo genera y actualiza la recepción.
+     */
+    public static function asegurar_ticket_recepcion_unidad(int $idRecepcionUnidad): ?array
+    {
+        $recepcion = DB::table('recepcion_unidad')->where('id', $idRecepcionUnidad)->first();
+        if (! $recepcion) {
+            return null;
+        }
+
+        if (! empty($recepcion->id_ticket_recepcion_unidades)) {
+            $ticket = DB::table('ticket_recepcion_unidades')->where('id', $recepcion->id_ticket_recepcion_unidades)->first();
+            if ($ticket) {
+                return [
+                    'id' => (int) $ticket->id,
+                    'correlativo' => (string) $ticket->correlativo,
+                    'numero_correlativo' => (int) $ticket->numero_correlativo,
+                ];
+            }
+        }
+
+        $nuevoTicket = self::generar_ticket_recepcion_unidad();
+        DB::table('recepcion_unidad')
+            ->where('id', $idRecepcionUnidad)
+            ->update(['id_ticket_recepcion_unidades' => $nuevoTicket['id']]);
+
+        return $nuevoTicket;
+    }
+
+    /**
      * Crear un registro de recepción.
      */
     public static function crear_recepcion(array $data): int
     {
+        $ticket = self::generar_ticket_recepcion_unidad();
+
         $recepcion = RecepcionUnidad::create([
             'id_empleado_recepcion' => $data['id_empleado_registro'],
             'id_vehiculo' => $data['id_vehiculo'] ?? null,
@@ -340,6 +406,7 @@ ru.guia_remitente,
             'documentos_programacion' => isset($data['documentos_programacion']) && is_array($data['documentos_programacion'])
                 ? json_encode($data['documentos_programacion'])
                 : null,
+            'id_ticket_recepcion_unidades' => $ticket['id'],
         ]);
 
         return $recepcion->id;
@@ -440,5 +507,249 @@ ru.guia_remitente,
         $lote->delete();
 
         return true;
+    }
+
+    /**
+     * Obtener toda la información estructurada para el Ticket de Ingreso de Vehículos con Carga.
+     */
+    public static function get_ticket_ingreso_info(int $idRecepcionUnidad): ?array
+    {
+        $ticket = self::asegurar_ticket_recepcion_unidad($idRecepcionUnidad);
+        if (! $ticket) {
+            return null;
+        }
+
+        $sql = <<<'SQL'
+            SELECT
+                ru.id                                AS recepcion_id,
+                ru.tipo_ingreso                      AS tipo_ingreso,
+                ru.id_distribucion                   AS id_distribucion,
+                ru.id_ticket_recepcion_unidades      AS id_ticket_recepcion_unidades,
+                tru.correlativo                      AS ticket_correlativo,
+                tru.numero_correlativo               AS ticket_numero_correlativo,
+
+                -- Fabero
+                emp_fabero.razon_social              AS fabero_razon_social,
+                emp_fabero.ruc                       AS fabero_ruc,
+                emp_fabero.domicilio_fiscal          AS fabero_domicilio_fiscal,
+                s_dir.direccion                      AS fabero_sede_productiva,
+
+                -- Proveedor
+                pr.id                                AS id_proveedor,
+                pr.razon_social                      AS proveedor_razon_social,
+                pr.ruc                               AS proveedor_ruc,
+                pr.direccion                         AS proveedor_direccion,
+
+                -- Concesion minera del proveedor
+                cns_origen.nombre                    AS concesion_nombre,
+                dep_cori.nombre                      AS concesion_departamento,
+                prv_cori.nombre                      AS concesion_provincia,
+                dis_cori.nombre                      AS concesion_distrito,
+
+                -- Despacho si aplica
+                pd.razon_social                      AS planta_destino_razon_social,
+                pd.ruc                               AS planta_destino_ruc,
+                pd.direccion                         AS planta_destino_direccion,
+
+                -- Vehiculo y Carreta
+                v.placa                              AS vehiculo_placa,
+                mv.nombre                            AS vehiculo_marca,
+                vc.placa                             AS carreta_placa,
+                mc.nombre                            AS carreta_marca,
+
+                -- Transportista y Conductor
+                et.razon_social                      AS transportista_razon_social,
+                et.ruc                               AS transportista_ruc,
+                ru.guia_transportista                AS guia_transportista,
+                CONCAT(COALESCE(c.nombre, ''), ' ', COALESCE(c.apellido, '')) AS conductor_nombre,
+                c.numero_licencia                    AS conductor_licencia,
+
+                -- Guias, fechas, producto y observaciones
+                ru.guia_remitente                    AS guia_remitente,
+                ru.fecha_hora_ingreso                AS fecha_hora_ingreso,
+                ru.fecha_hora_salida                 AS fecha_hora_salida,
+                ru.observacion                       AS observacion,
+
+                -- Lote / producto
+                lm.tipo_producto                     AS lote_tipo_producto,
+                lm.correlativo                       AS lote_correlativo
+            FROM recepcion_unidad ru
+            LEFT JOIN ticket_recepcion_unidades tru ON tru.id = ru.id_ticket_recepcion_unidades
+            LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
+            LEFT JOIN marca mv ON mv.id = v.id_marca
+            LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
+            LEFT JOIN marca mc ON mc.id = vc.id_marca
+            LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte
+            LEFT JOIN conductor c ON c.id = ru.id_conductor
+            LEFT JOIN proveedor pr ON pr.id = ru.id_proveedor_minero
+            LEFT JOIN distribucion dist ON dist.id = ru.id_distribucion
+            LEFT JOIN despacho desp ON desp.id = dist.id_despacho
+            LEFT JOIN planta_destino pd ON pd.id = desp.id_planta_destino
+            LEFT JOIN empresa emp_fabero ON emp_fabero.ruc = '20604623007'
+            LEFT JOIN (
+                SELECT
+                    s.id AS id_sucursal,
+                    CONCAT_WS(' - ', s.direccion, d2.nombre, p2.nombre, di.nombre) AS direccion
+                FROM sucursal s
+                LEFT JOIN departamento d2 ON d2.id = s.id_departamento
+                LEFT JOIN provincia p2 ON p2.id = s.id_provincia
+                LEFT JOIN distrito di ON di.id = s.id_distrito
+            ) s_dir ON s_dir.id_sucursal = ru.id_sucursal
+            LEFT JOIN (
+                SELECT id_proveedor, MIN(id_concesion) AS min_concesion_id
+                FROM concesion_proveedor
+                GROUP BY id_proveedor
+            ) cp_min ON cp_min.id_proveedor = pr.id
+            LEFT JOIN concesion cns_origen ON cns_origen.id = cp_min.min_concesion_id
+            LEFT JOIN departamento dep_cori ON dep_cori.id = cns_origen.id_departamento
+            LEFT JOIN provincia prv_cori ON prv_cori.id = cns_origen.id_provincia
+            LEFT JOIN distrito dis_cori ON dis_cori.id = cns_origen.id_distrito
+            LEFT JOIN (
+                SELECT id_recepcion_unidad, MIN(id) AS id_primer_lote
+                FROM lote_mineral
+                GROUP BY id_recepcion_unidad
+            ) lm_first ON lm_first.id_recepcion_unidad = ru.id
+            LEFT JOIN lote_mineral lm ON lm.id = lm_first.id_primer_lote
+            WHERE ru.id = :id
+            LIMIT 1
+        SQL;
+
+        $row = DB::selectOne($sql, ['id' => $idRecepcionUnidad]);
+        if (! $row) {
+            return null;
+        }
+
+        return self::hydrate_ticket_ingreso($row);
+    }
+
+    /**
+     * Convierte el row crudo al shape que requiere el PDF Ticket de Ingreso.
+     */
+    private static function hydrate_ticket_ingreso(object $row): array
+    {
+        $esDespacho = ($row->tipo_ingreso === 'Despacho de Mineral');
+
+        // Fabero datos
+        $faberoSedeProductiva = self::strOrDash(
+            $row->fabero_sede_productiva ?? 'KM. 573 OTR. PANAMERICANA NORTE (B083464-13-01) LA LIBERTAD - TRUJILLO - HUANCHACO'
+        );
+        $faberoDomicilioFiscal = self::strOrDash(
+            $row->fabero_domicilio_fiscal ?? 'CAL. ESTAMBUL NRO. 178 URB. SANTA ISABEL LA LIBERTAD - TRUJILLO - TRUJILLO'
+        );
+        $faberoRazonSocial = self::strOrDash($row->fabero_razon_social ?? 'FABRICACIONES FABERO S.A.C.');
+        $faberoRuc = self::strOrDash($row->fabero_ruc ?? '20604623007');
+
+        // Fechas y horas
+        $fechaHoraIngreso = ! empty($row->fecha_hora_ingreso) ? \Carbon\Carbon::parse($row->fecha_hora_ingreso) : null;
+        $fechaHoraSalida = ! empty($row->fecha_hora_salida) ? \Carbon\Carbon::parse($row->fecha_hora_salida) : null;
+
+        $formatHora = function (?\Carbon\Carbon $c): string {
+            if (! $c) {
+                return '—';
+            }
+            $time = $c->format('h:i:s');
+            $meridiem = strtolower($c->format('a')) === 'pm' ? 'p.m.' : 'a.m.';
+
+            return "{$time} {$meridiem}";
+        };
+
+        $fechaIngreso = $fechaHoraIngreso ? $fechaHoraIngreso->format('d/m/Y') : '—';
+        $horaIngreso = $formatHora($fechaHoraIngreso);
+        $fechaSalida = $fechaHoraSalida ? $fechaHoraSalida->format('d/m/Y') : '—';
+        $horaSalida = $formatHora($fechaHoraSalida);
+
+        if ($esDespacho) {
+            $remitenteRazonSocial = $faberoRazonSocial;
+            $remitenteRuc = $faberoRuc;
+            $procedencia = $faberoSedeProductiva;
+            $destino = self::strOrDash($row->planta_destino_direccion ?? $row->planta_destino_razon_social ?? null);
+            $producto = 'MINERAL AURIFERO EN BRUTO SIN PROCESAR';
+        } else {
+            $remitenteRazonSocial = self::strOrDash($row->proveedor_razon_social ?? null);
+            $remitenteRuc = self::strOrDash($row->proveedor_ruc ?? null);
+
+            $ubicacionConcesion = implode('-', array_filter([
+                $row->concesion_distrito ?? null,
+                $row->concesion_provincia ?? null,
+                $row->concesion_departamento ?? null,
+            ], fn ($p) => ! empty($p)));
+
+            if (! empty($row->concesion_nombre)) {
+                $procedencia = 'CONCESION MINERA: '.$row->concesion_nombre;
+                if ($ubicacionConcesion !== '') {
+                    $procedencia .= ' UBICADA EN '.$ubicacionConcesion;
+                }
+            } else {
+                $procedencia = self::strOrDash($row->proveedor_direccion ?? null);
+            }
+
+            $destino = $faberoSedeProductiva;
+            $producto = 'MINERAL AURIFERO EN BRUTO SIN PROCESAR';
+        }
+
+        // Por el momento estos datos van con raya (—)
+        $pesoGuiaTm = null;
+        $pesoVehicularTotalTm = null;
+
+        return [
+            'id' => (int) $row->recepcion_id,
+            'correlativo' => self::strOrDash($row->ticket_correlativo ?? null),
+            'tiv' => self::strOrDash($row->ticket_correlativo ?? null),
+            'numero_correlativo' => $row->ticket_numero_correlativo !== null ? (int) $row->ticket_numero_correlativo : null,
+            'tipo_ingreso' => $row->tipo_ingreso,
+
+            'empresa_fabero' => [
+                'razon_social' => $faberoRazonSocial,
+                'ruc' => $faberoRuc,
+                'domicilio_fiscal' => $faberoDomicilioFiscal,
+                'sede_productiva' => $faberoSedeProductiva,
+            ],
+
+            'remitente' => [
+                'razon_social' => $remitenteRazonSocial,
+                'ruc' => $remitenteRuc,
+                'procedencia' => $procedencia,
+                'destino' => $destino,
+                'guia_remitente' => self::strOrDash($row->guia_remitente ?? null),
+                'producto' => $producto,
+            ],
+
+            'vehiculo' => [
+                'placa' => self::strOrDash($row->vehiculo_placa ?? null),
+                'marca_tracto' => self::strOrDash($row->vehiculo_marca ?? null),
+                'placa_carreta' => self::strOrDash($row->carreta_placa ?? null),
+                'marca_carreta' => self::strOrDash($row->carreta_marca ?? null),
+                'subcontratista' => '—',
+            ],
+
+            'transportista' => [
+                'razon_social' => self::strOrDash($row->transportista_razon_social ?? null),
+                'ruc' => self::strOrDash($row->transportista_ruc ?? null),
+                'guia_transportista' => self::strOrDash($row->guia_transportista ?? null),
+                'conductor_nombre' => self::strOrDash($row->conductor_nombre ?? null),
+                'licencia' => self::strOrDash($row->conductor_licencia ?? null),
+            ],
+
+            'generales' => [
+                'fecha_ingreso' => $fechaIngreso,
+                'hora_ingreso' => $horaIngreso,
+                'fecha_salida' => $fechaSalida,
+                'hora_salida' => $horaSalida,
+                'peso_guia_tm' => $pesoGuiaTm,
+                'peso_vehicular_total_tm' => $pesoVehicularTotalTm,
+            ],
+
+            'observaciones' => self::strOrDash($row->observacion ?? null),
+        ];
+    }
+
+    private static function strOrDash(?string $v): string
+    {
+        if ($v === null) {
+            return '—';
+        }
+        $trimmed = trim($v);
+
+        return $trimmed === '' ? '—' : $trimmed;
     }
 }

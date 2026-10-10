@@ -3,6 +3,7 @@
 namespace App\Modules\ProgramacionDespachos\Services;
 
 use App\Modules\ProgramacionDespachos\Data\ProgramacionDespachosData;
+use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
 use App\Services\EmpresasService;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoSalida;
@@ -601,11 +602,17 @@ class ProgramacionDespachosService
 
                 $recepcionId = self::get_recepcion_unidad_id_para_distribucion($id);
                 if ($recepcionId !== null) {
-                    ProgramacionDespachosData::update_recepcion_unidad($recepcionId, [
+                    $updateRec = [
                         'id_empleado_recepcion' => $idEmpleadoRecepcion,
                         'fecha_hora_ingreso' => now()->toDateTimeString(),
                         'estado' => EstadoDistribucion::EnPlanta->value,
-                    ]);
+                    ];
+                    $recRow = DB::table('recepcion_unidad')->where('id', $recepcionId)->first();
+                    if ($recRow && empty($recRow->id_ticket_recepcion_unidades)) {
+                        $tkt = RecepcionUnidadesData::generar_ticket_recepcion_unidad();
+                        $updateRec['id_ticket_recepcion_unidades'] = $tkt['id'];
+                    }
+                    ProgramacionDespachosData::update_recepcion_unidad($recepcionId, $updateRec);
                 }
             });
         } catch (\Throwable $e) {

@@ -38,6 +38,14 @@ class RecepcionUnidadesController extends Controller
     }
 
     /**
+     * Obtener datos estructurados para imprimir el Ticket de Ingreso de Vehículos con Carga.
+     */
+    public function get_ticket_ingreso(int $id): JsonResponse
+    {
+        return response()->json(RecepcionUnidadesService::get_ticket_ingreso($id));
+    }
+
+    /**
      * Registrar un nuevo ingreso/recepción de unidad.
      */
     public function crear_recepcion(Request $request): JsonResponse

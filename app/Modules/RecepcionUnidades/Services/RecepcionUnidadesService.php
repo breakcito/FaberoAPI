@@ -44,6 +44,19 @@ class RecepcionUnidadesService
     }
 
     /**
+     * Obtener los datos estructurados para el Ticket de Ingreso de Vehículos con Carga.
+     */
+    public static function get_ticket_ingreso(int $id): array
+    {
+        $ticketInfo = RecepcionUnidadesData::get_ticket_ingreso_info($id);
+        if (! $ticketInfo) {
+            return ApiResponse::error('No se encontró la recepción de unidad o no se pudo generar el ticket.', 404);
+        }
+
+        return ApiResponse::success($ticketInfo, 'Ticket de ingreso obtenido correctamente');
+    }
+
+    /**
      * Guardar archivos de evidencias y crear el registro de recepción.
      *
      * @param  array  $data  Datos básicos. Claves opcionales para archivos de guías:
