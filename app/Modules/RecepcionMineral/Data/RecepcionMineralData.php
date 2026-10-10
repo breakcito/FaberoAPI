@@ -488,6 +488,8 @@ class RecepcionMineralData
             CONCAT('L-', lm.id)                         AS id_row,
 
             lm.id                                      AS id_lote,
+            lm.particionado_desde_balanza,
+            lm.particion_finalizada,
             lm.correlativo                             AS lote_correlativo,
             lm.numero_correlativo                      AS lote_numero_correlativo,
             lm.numero_contacto                         AS lote_numero_contacto,
@@ -511,7 +513,7 @@ class RecepcionMineralData
             lm.id_ticket_balanza,
             COALESCE(lm.fecha_hora_fin_particion, lm.created_at) AS fecha_pesaje,
 
-            ru.tipo_ingreso,
+            COALESCE(ru.tipo_ingreso, 'Recepción de Mineral') AS tipo_ingreso,
             ru.id                                      AS id_recepcion_unidad,
             ru.fecha_hora_ingreso,
             ru.fecha_hora_salida,
@@ -637,6 +639,8 @@ class RecepcionMineralData
             CONCAT('D-', ddt.id)                       AS id_row,
 
             NULL                                       AS id_lote,
+            0                                          AS particionado_desde_balanza,
+            0                                          AS particion_finalizada,
             NULL                                       AS lote_correlativo,
             NULL                                       AS lote_numero_correlativo,
             NULL                                       AS lote_numero_contacto,
@@ -755,6 +759,67 @@ class RecepcionMineralData
 
         $results = DB::select($sql, $params);
 
+        // Cargar particiones en bloque para los lotes particionados desde balanza
+        $lotesParticionadosIds = [];
+        foreach ($results as $item) {
+            if ($item->tipo_pesaje === 'LOTE_RECEPCION' && !empty($item->particionado_desde_balanza) && !empty($item->id_lote)) {
+                $lotesParticionadosIds[] = (int) $item->id_lote;
+            }
+        }
+
+        $particionesPorLote = [];
+        if (!empty($lotesParticionadosIds)) {
+            $particionesRows = DB::table('particion_lote_mineral as p')
+                ->leftJoin('ticket_balanza as tb', 'tb.id', '=', 'p.id_ticket_balanza')
+                ->leftJoin('recepcion_unidad as ru', 'ru.id', '=', 'p.id_recepcion_unidad')
+                ->leftJoin('vehiculo as v', 'v.id', '=', 'ru.id_vehiculo')
+                ->leftJoin('vehiculo as vc', 'vc.id', '=', 'ru.id_vehiculo_carreta')
+                ->leftJoin('empresa_transporte as et', 'et.id', '=', 'ru.id_empresa_transporte')
+                ->leftJoin('conductor as c', 'c.id', '=', 'ru.id_conductor')
+                ->whereIn('p.id_lote_mineral', $lotesParticionadosIds)
+                ->where('p.estado', 'Activo')
+                ->select([
+                    'p.id',
+                    'p.id_lote_mineral',
+                    'p.id_ticket_balanza',
+                    'tb.correlativo as ticket_correlativo',
+                    'p.id_recepcion_unidad',
+                    'ru.estado_pesaje as recepcion_estado_pesaje',
+                    'v.placa as vehiculo_placa',
+                    'vc.placa as vehiculo_carreta_placa',
+                    'et.razon_social as empresa_transporte_razon_social',
+                    'c.nombre as conductor_nombre',
+                    'c.apellido as conductor_apellido',
+                    'c.dni as conductor_dni',
+                    'c.numero_licencia as conductor_licencia',
+                    'p.correlativo',
+                    'p.particion',
+                    'p.peso_inicial',
+                    'p.fecha_hora_peso_inicial',
+                    'p.peso_final',
+                    'p.fecha_hora_peso_final',
+                    'p.peso_neto',
+                    'p.evidencias',
+                ])
+                ->orderBy('p.particion', 'asc')
+                ->get();
+
+            foreach ($particionesRows as $pRow) {
+                $pRow->id = (int) $pRow->id;
+                $pRow->id_lote_mineral = (int) $pRow->id_lote_mineral;
+                $pRow->id_ticket_balanza = $pRow->id_ticket_balanza !== null ? (int) $pRow->id_ticket_balanza : null;
+                $pRow->id_recepcion_unidad = $pRow->id_recepcion_unidad !== null ? (int) $pRow->id_recepcion_unidad : null;
+                $pRow->peso_inicial = $pRow->peso_inicial !== null ? (float) $pRow->peso_inicial : null;
+                $pRow->peso_final = $pRow->peso_final !== null ? (float) $pRow->peso_final : null;
+                $pRow->peso_neto = $pRow->peso_neto !== null ? (float) $pRow->peso_neto : null;
+                $pRow->conductor_nombre_completo = trim(($pRow->conductor_nombre ?? '').' '.($pRow->conductor_apellido ?? ''));
+                if (isset($pRow->evidencias) && is_string($pRow->evidencias)) {
+                    $pRow->evidencias = json_decode($pRow->evidencias, true) ?? [];
+                }
+                $particionesPorLote[$pRow->id_lote_mineral][] = $pRow;
+            }
+        }
+
         foreach ($results as $item) {
             // JSON decode condicional
             if (isset($item->lote_evidencias) && is_string($item->lote_evidencias)) {
@@ -783,6 +848,12 @@ class RecepcionMineralData
             $item->id_lote_origen = $item->id_lote_origen !== null ? (int) $item->id_lote_origen : null;
             $item->id_blending_origen = $item->id_blending_origen !== null ? (int) $item->id_blending_origen : null;
             $item->numero_particion = $item->numero_particion !== null ? (int) $item->numero_particion : null;
+            $item->particionado_desde_balanza = !empty($item->particionado_desde_balanza);
+            $item->particion_finalizada = !empty($item->particion_finalizada);
+            $item->particiones = $particionesPorLote[(int) $item->id_lote] ?? [];
+            if ($item->particionado_desde_balanza) {
+                $item->tipo_ingreso = 'Recepción de Mineral';
+            }
         }
 
         return $results;

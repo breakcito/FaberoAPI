@@ -12,11 +12,11 @@ class ValorizacionCompraData
     private static function queryBase()
     {
         return ValorizacionCompra::query()->with([
-            'proveedor:id,razon_social,ruc',
-            'concesion:id,nombre,codigo_reinfo',
-            'cuentaBancaria:id,numero_cuenta,moneda,id_banco',
+            'proveedor:id,razon_social,ruc,direccion',
+            'concesion:id,nombre,codigo_reinfo,id_departamento,id_provincia,id_distrito',
+            'cuentaBancaria:id,numero_cuenta,moneda,id_banco,cci',
             'cuentaBancaria.banco:id,nombre',
-            'cuentaDetraccion:id,numero_cuenta,moneda,id_banco',
+            'cuentaDetraccion:id,numero_cuenta,moneda,id_banco,cci',
             'cuentaDetraccion.banco:id,nombre',
             'empleadoRegistro:id,nombre,apellido',
             'empleadoAprobacion:id,nombre,apellido',
@@ -36,12 +36,58 @@ class ValorizacionCompraData
      */
     public static function format_valorizacion(ValorizacionCompra $item): array
     {
-        $totalSubtotal = $item->detalles->sum('subtotal');
-        $totalAnticipos = $item->transaccionesAnticipo->sum('monto_retirado');
+        $totalSubtotal = (float) $item->detalles->sum('subtotal');
+        $totalAnticipos = (float) $item->transaccionesAnticipo->sum('monto_retirado');
         $montoTransferencia = max(0, $totalSubtotal - $totalAnticipos);
 
         $anio = $item->created_at ? $item->created_at->format('y') : date('y');
         $correlativoCalculado = $item->correlativo ?? "{$anio}-VAL-".str_pad((string) $item->numero_correlativo, 5, '0', STR_PAD_LEFT);
+
+        // Ubicación de concesión
+        $ubicacionConcesion = '—';
+        if ($item->concesion) {
+            $distrito = $item->concesion->id_distrito ? \Illuminate\Support\Facades\DB::table('distrito')->where('id', $item->concesion->id_distrito)->value('nombre') : null;
+            $provincia = $item->concesion->id_provincia ? \Illuminate\Support\Facades\DB::table('provincia')->where('id', $item->concesion->id_provincia)->value('nombre') : null;
+            $departamento = $item->concesion->id_departamento ? \Illuminate\Support\Facades\DB::table('departamento')->where('id', $item->concesion->id_departamento)->value('nombre') : null;
+            $partesUbi = array_filter([$distrito, $provincia, $departamento]);
+            if (! empty($partesUbi)) {
+                $ubicacionConcesion = implode(' - ', $partesUbi);
+            }
+        }
+
+        // Guías de remisión del primer tramo
+        $guiasRemitente = [];
+        $guiasTransportista = [];
+        $lotesVistos = [];
+        $tmhTotalBalanza = 0.0;
+
+        foreach ($item->detalles as $d) {
+            $lg = $d->loteGuia;
+            $lm = $lg ? ($lg->loteMineral ?? $lg->particionLoteMineral?->loteMineral) : null;
+            if ($lm && ! isset($lotesVistos[$lm->id])) {
+                $lotesVistos[$lm->id] = true;
+                $tmhTotalBalanza += (float) ($lm->peso_neto ?? 0);
+            }
+
+            $gpt = $lg ? $lg->guiaPrimerTramo : null;
+            if ($gpt) {
+                if (! empty($gpt->guia_remitente)) {
+                    $guiasRemitente[] = trim((string) $gpt->guia_remitente);
+                }
+                if (! $gpt->sin_guia_transportista && ! empty($gpt->guia_transportista)) {
+                    $guiasTransportista[] = trim((string) $gpt->guia_transportista);
+                }
+            }
+        }
+
+        $guiaRemitenteStr = ! empty($guiasRemitente) ? implode(', ', array_unique($guiasRemitente)) : '—';
+        $guiaTransportistaStr = ! empty($guiasTransportista) ? implode(', ', array_unique($guiasTransportista)) : '—';
+
+        // Cálculos económicos para el reporte de liquidación
+        $igv = round($totalSubtotal * 0.18, 2);
+        $totalConIgv = round($totalSubtotal + $igv, 2);
+        $detraccion = round($totalConIgv * 0.10, 2);
+        $netoAPagar = round($totalConIgv - $detraccion - $totalAnticipos, 2);
 
         return [
             'id' => $item->id,
@@ -50,14 +96,30 @@ class ValorizacionCompraData
             'id_proveedor_minero' => $item->id_proveedor_minero,
             'proveedor_nombre' => $item->proveedor ? $item->proveedor->razon_social : null,
             'proveedor_ruc' => $item->proveedor ? $item->proveedor->ruc : null,
+            'proveedor_direccion' => $item->proveedor ? $item->proveedor->direccion : null,
             'id_concesion' => $item->id_concesion,
             'concesion_nombre' => $item->concesion ? $item->concesion->nombre : null,
+            'concesion_codigo_reinfo' => $item->concesion ? $item->concesion->codigo_reinfo : null,
+            'concesion_ubicacion' => $ubicacionConcesion,
             'id_cuenta_bancaria' => $item->id_cuenta_bancaria,
             'cuenta_bancaria_info' => $item->cuentaBancaria ? ($item->cuentaBancaria->banco ? $item->cuentaBancaria->banco->nombre : '').' - '.$item->cuentaBancaria->numero_cuenta : null,
+            'cuenta_bancaria_banco' => $item->cuentaBancaria?->banco?->nombre,
+            'cuenta_bancaria_numero' => $item->cuentaBancaria?->numero_cuenta,
+            'cuenta_bancaria_cci' => $item->cuentaBancaria?->cci,
             'id_cuenta_detraccion' => $item->id_cuenta_detraccion,
             'cuenta_detraccion_info' => $item->cuentaDetraccion ? $item->cuentaDetraccion->numero_cuenta : null,
             'tipo_pago' => $item->tipo_pago ? $item->tipo_pago->value : null,
             'estado' => $item->estado ? $item->estado->value : null,
+            'guia_remitente' => $guiaRemitenteStr,
+            'guia_transportista' => $guiaTransportistaStr,
+            'lugar_compra' => 'KM. 573 OTR. PANAMERICANA NORTE (B083464-13-01) LA LIBERTAD - TRUJILLO - HUANCHACO',
+            'tmh_total_gr' => '—',
+            'tmh_total_balanza' => round($tmhTotalBalanza, 3),
+            'factura_asociada' => '—',
+            'igv' => $igv,
+            'total_con_igv' => $totalConIgv,
+            'monto_detraccion' => $detraccion,
+            'neto_a_pagar' => $netoAPagar,
             'created_at' => $item->created_at ? $item->created_at->format('Y-m-d H:i:s') : null,
             'fecha_hora_aprobacion' => $item->fecha_hora_aprobacion ? $item->fecha_hora_aprobacion->format('Y-m-d H:i:s') : null,
             'fecha_hora_anulacion' => $item->fecha_hora_anulacion ? ($item->fecha_hora_anulacion instanceof \DateTimeInterface ? $item->fecha_hora_anulacion->format('Y-m-d H:i:s') : date('Y-m-d H:i:s', (int) $item->fecha_hora_anulacion)) : null,
@@ -95,7 +157,7 @@ class ValorizacionCompraData
                     'lote_correlativo' => $lm ? $lm->correlativo : null,
                     'grr' => $gpt ? $gpt->guia_remitente : null,
                     'grt' => $gpt && ! $gpt->sin_guia_transportista ? $gpt->guia_transportista : null,
-                    'fecha_ingreso' => $gpt ? ($gpt->fecha_en_planta ? $gpt->fecha_en_planta->format('Y-m-d') : null) : null,
+                    'fecha_ingreso' => $gpt?->fecha_en_planta ? $gpt->fecha_en_planta->format('Y-m-d') : ($lm?->created_at ? $lm->created_at->format('Y-m-d') : null),
                     'tmh' => $tmh,
                     'ley_humedad' => $leyHumedad,
                     'tms' => $tms,
