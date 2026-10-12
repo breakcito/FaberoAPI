@@ -137,42 +137,89 @@ class ValorizacionCompraData
             'monto_transferencia' => round($montoTransferencia, 2),
             'evidencias' => isset($item->evidencias) ? (is_array($item->evidencias) ? $item->evidencias : (json_decode((string) $item->evidencias, true) ?? [])) : [],
             'log_cambios' => $item->log_cambios ?? [],
-            'detalles' => $item->detalles->map(function ($d) {
-                $lg = $d->loteGuia;
-                $lm = $lg ? ($lg->loteMineral ?? $lg->particionLoteMineral?->loteMineral) : null;
-                $gpt = $lg ? $lg->guiaPrimerTramo : null;
+            'detalles' => (function () use ($item) {
+                // Pre-calcular peso contabilizado por lote_mineral según regla de negocio:
+                // Si el lote tiene particiones: suma de lote_guia.peso_neto de sus particiones
+                // Si no tiene: lote_guia.peso_neto del lote
+                $loteIds = [];
+                foreach ($item->detalles as $d) {
+                    $lg = $d->loteGuia;
+                    $lm = $lg ? ($lg->loteMineral ?? $lg->particionLoteMineral?->loteMineral) : null;
+                    if ($lm) {
+                        $loteIds[$lm->id] = true;
+                    }
+                }
 
-                $tmh = $lm ? (float) ($lm->peso_neto ?? 0) : 0;
-                $leyHumedad = $lm ? (float) $lm->ley_humedad : 0;
-                $tms = round($tmh * (1 - ($leyHumedad / 100)), 4);
+                $pesosContabilizadosMap = [];
+                foreach (array_keys($loteIds) as $idLote) {
+                    $tieneParticiones = \Illuminate\Support\Facades\DB::table('particion_lote_mineral')
+                        ->where('id_lote_mineral', $idLote)
+                        ->exists();
 
-                return [
-                    'id' => $d->id,
-                    'id_valorizacion_compra' => $d->id_valorizacion_compra,
-                    'id_lote_guia' => $d->id_lote_guia,
-                    'id_condicion_comercial' => $d->id_condicion_comercial,
-                    'id_valor_elemento_quimico' => $d->id_valor_elemento_quimico,
-                    'elemento_quimico' => $d->elemento_quimico ? $d->elemento_quimico->value : null,
-                    'numero_correlativo' => $lm ? $lm->numero_correlativo : null,
-                    'lote_correlativo' => $lm ? $lm->correlativo : null,
-                    'grr' => $gpt ? $gpt->guia_remitente : null,
-                    'grt' => $gpt && ! $gpt->sin_guia_transportista ? $gpt->guia_transportista : null,
-                    'fecha_ingreso' => $gpt?->fecha_en_planta ? $gpt->fecha_en_planta->format('Y-m-d') : ($lm?->created_at ? $lm->created_at->format('Y-m-d') : null),
-                    'tmh' => $tmh,
-                    'ley_humedad' => $leyHumedad,
-                    'tms' => $tms,
-                    'ley' => $lm ? (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro' ? $lm->ley_oro : $lm->ley_plata) : 0,
-                    'inter' => (float) $d->inter,
-                    'des_inter' => (float) $d->des_inter,
-                    'recuperacion' => (float) $d->recuperacion,
-                    'maquila' => (float) $d->maquila,
-                    'consumo' => (float) $d->consumo,
-                    'factor' => (float) $d->factor,
-                    'precio_por_tonelada' => (float) $d->precio_por_tonelada,
-                    'subtotal' => (float) $d->subtotal,
-                    'log_cambios' => $d->log_cambios ?? [],
-                ];
-            })->toArray(),
+                    if ($tieneParticiones) {
+                        $suma = (float) \Illuminate\Support\Facades\DB::table('lote_guia')
+                            ->whereIn('id_particion_lote_mineral', function ($q) use ($idLote) {
+                                $q->select('id')
+                                    ->from('particion_lote_mineral')
+                                    ->where('id_lote_mineral', $idLote);
+                            })
+                            ->sum('peso_neto');
+                        $pesosContabilizadosMap[$idLote] = $suma;
+                    } else {
+                        $peso = (float) \Illuminate\Support\Facades\DB::table('lote_guia')
+                            ->where('id_lote_mineral', $idLote)
+                            ->value('peso_neto');
+                        $pesosContabilizadosMap[$idLote] = $peso;
+                    }
+                }
+
+                return $item->detalles->map(function ($d) use ($pesosContabilizadosMap) {
+                    $lg = $d->loteGuia;
+                    $lm = $lg ? ($lg->loteMineral ?? $lg->particionLoteMineral?->loteMineral) : null;
+                    $gpt = $lg ? $lg->guiaPrimerTramo : null;
+
+                    $tmh = $lm ? (float) ($lm->peso_neto ?? 0) : 0;
+                    $leyHumedad = $lm ? (float) $lm->ley_humedad : 0;
+                    $tms = round($tmh * (1 - ($leyHumedad / 100)), 4);
+
+                    $idLote = $lm ? (int) $lm->id : null;
+                    $pesoContab = $idLote && isset($pesosContabilizadosMap[$idLote]) && $pesosContabilizadosMap[$idLote] > 0
+                        ? $pesosContabilizadosMap[$idLote]
+                        : ($lg && $lg->peso_neto ? (float) $lg->peso_neto : $tmh);
+
+                    return [
+                        'id' => $d->id,
+                        'id_valorizacion_compra' => $d->id_valorizacion_compra,
+                        'id_lote_guia' => $d->id_lote_guia,
+                        'id_condicion_comercial' => $d->id_condicion_comercial,
+                        'id_valor_elemento_quimico' => $d->id_valor_elemento_quimico,
+                        'elemento_quimico' => $d->elemento_quimico ? $d->elemento_quimico->value : null,
+                        'numero_correlativo' => $lm ? $lm->numero_correlativo : null,
+                        'lote_correlativo' => $lm ? $lm->correlativo : null,
+                        'grr' => $gpt ? $gpt->guia_remitente : null,
+                        'grt' => $gpt && ! $gpt->sin_guia_transportista ? $gpt->guia_transportista : null,
+                        'fecha_ingreso' => $gpt?->fecha_en_planta ? $gpt->fecha_en_planta->format('Y-m-d') : ($lm?->created_at ? $lm->created_at->format('Y-m-d') : null),
+                        'tmh' => $tmh,
+                        'peso_neto_lote' => $tmh,
+                        'peso_neto_guia' => $lg ? (float) ($lg->peso_neto ?? 0) : 0,
+                        'peso_contabilizado' => $pesoContab,
+                        'id_lote_mineral' => $idLote,
+                        'id_particion_lote_mineral' => $lg && $lg->id_particion_lote_mineral ? (int) $lg->id_particion_lote_mineral : null,
+                        'ley_humedad' => $leyHumedad,
+                        'tms' => $tms,
+                        'ley' => $lm ? (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro' ? $lm->ley_oro : $lm->ley_plata) : 0,
+                        'inter' => (float) $d->inter,
+                        'des_inter' => (float) $d->des_inter,
+                        'recuperacion' => (float) $d->recuperacion,
+                        'maquila' => (float) $d->maquila,
+                        'consumo' => (float) $d->consumo,
+                        'factor' => (float) $d->factor,
+                        'precio_por_tonelada' => (float) $d->precio_por_tonelada,
+                        'subtotal' => (float) $d->subtotal,
+                        'log_cambios' => $d->log_cambios ?? [],
+                    ];
+                })->toArray();
+            })(),
             'transacciones_anticipo' => $item->transaccionesAnticipo->map(function ($t) {
                 $ant = $t->anticipo;
 
