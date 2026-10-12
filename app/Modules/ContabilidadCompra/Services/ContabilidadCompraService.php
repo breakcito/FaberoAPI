@@ -115,13 +115,22 @@ class ContabilidadCompraService
                 'porcentaje_detraccion' => $porcentajeDetraccion,
             ] + $importes;
 
-            $idComprobante = ContabilidadCompraData::crear_comprobante($campos, $aprobacionesIniciales);
+            $esSinValorComercial = ($importes['total_dolares'] <= 0.0001);
+            $estadoInicial = $esSinValorComercial
+                ? EstadoComprobanteCompra::Pagado
+                : EstadoComprobanteCompra::EnEspera;
+
+            $idComprobante = ContabilidadCompraData::crear_comprobante($campos, $aprobacionesIniciales, $estadoInicial);
 
             DB::commit();
 
             $detalle = ContabilidadCompraData::get_comprobante_by_id($idComprobante);
 
-            return ApiResponse::success($detalle, 'Comprobante creado correctamente en estado En Espera.');
+            $mensajeExito = $esSinValorComercial
+                ? 'Comprobante creado correctamente en estado Pagado (sin valor comercial).'
+                : 'Comprobante creado correctamente en estado En Espera.';
+
+            return ApiResponse::success($detalle, $mensajeExito);
         } catch (Exception $e) {
             DB::rollBack();
 
