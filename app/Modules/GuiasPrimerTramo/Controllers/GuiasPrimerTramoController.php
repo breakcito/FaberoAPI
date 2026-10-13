@@ -220,12 +220,7 @@ class GuiasPrimerTramoController extends Controller
             'guia_transportista' => 'nullable|string|max:20',
             'sin_guia_transportista' => 'nullable|boolean',
             'documento_guia_remitente' => 'nullable|file',
-            'documento_guia_transportista' => 'nullable|file',
             'pesos_oficiales_lotes' => 'nullable|array',
-            'pesos_oficiales_lotes.*.id_lote_mineral' => 'required_with:pesos_oficiales_lotes|integer|exists:lote_mineral,id',
-            'pesos_oficiales_lotes.*.peso_inicial_oficial' => 'required_with:pesos_oficiales_lotes|numeric|min:0',
-            'pesos_oficiales_lotes.*.peso_final_oficial' => 'required_with:pesos_oficiales_lotes|numeric|min:0',
-            'pesos_oficiales_lotes.*.peso_neto_oficial' => 'required_with:pesos_oficiales_lotes|numeric|min:0',
         ]);
 
         $lotesRaw = $request->input('lotes');
@@ -357,10 +352,6 @@ class GuiasPrimerTramoController extends Controller
             'documento_guia_transportista' => 'nullable|file',
             'motivo' => 'nullable|string',
             'pesos_oficiales_lotes' => 'nullable|array',
-            'pesos_oficiales_lotes.*.id_lote_mineral' => 'required_with:pesos_oficiales_lotes|integer|exists:lote_mineral,id',
-            'pesos_oficiales_lotes.*.peso_inicial_oficial' => 'required_with:pesos_oficiales_lotes|numeric|min:0',
-            'pesos_oficiales_lotes.*.peso_final_oficial' => 'required_with:pesos_oficiales_lotes|numeric|min:0',
-            'pesos_oficiales_lotes.*.peso_neto_oficial' => 'required_with:pesos_oficiales_lotes|numeric|min:0',
         ]);
 
         $lotesRaw = $request->input('lotes');

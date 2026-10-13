@@ -476,7 +476,7 @@ class ProgramacionDespachosData
             lm.numero_correlativo,
             lm.tipo_producto,
             lm.tipo_mineral,
-            lm.peso_neto_oficial AS peso_neto,
+            lm.peso_neto AS peso_neto,
             lm.peso_actual,
             lm.created_at,
             pr.razon_social AS proveedor_razon_social
@@ -496,8 +496,8 @@ class ProgramacionDespachosData
           AND lm.estado = :estado_activo_lote
           AND COALESCE(gpt.estado, :estado_activo_gpt) <> :estado_anulado
           AND cc.estado <> :estado_anulado_comprobante
-          AND lm.peso_neto_oficial IS NOT NULL
-          AND lm.peso_neto_oficial > 0
+          AND lm.peso_neto IS NOT NULL
+          AND lm.peso_neto > 0
           AND NOT EXISTS (
               SELECT 1
               FROM valorizacion_compramineral_detalle vcd2
@@ -521,7 +521,7 @@ class ProgramacionDespachosData
             lm.numero_correlativo,
             lm.tipo_producto,
             lm.tipo_mineral,
-            lm.peso_neto_oficial AS peso_neto,
+            lm.peso_neto AS peso_neto,
             lm.peso_actual,
             lm.created_at,
             pr.razon_social AS proveedor_razon_social
@@ -546,8 +546,8 @@ class ProgramacionDespachosData
           AND lm.estado = :estado_activo_lote
           AND COALESCE(gpt.estado, :estado_activo_gpt) <> :estado_anulado
           AND cc.estado <> :estado_anulado_comprobante
-          AND lm.peso_neto_oficial IS NOT NULL
-          AND lm.peso_neto_oficial > 0
+          AND lm.peso_neto IS NOT NULL
+          AND lm.peso_neto > 0
           -- (1) TODAS las particiones activas deben tener al menos una lote_guia
           --     con guia_primer_tramo no anulada.
           AND NOT EXISTS (

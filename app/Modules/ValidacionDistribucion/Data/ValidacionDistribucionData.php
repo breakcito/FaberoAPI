@@ -20,10 +20,7 @@ class ValidacionDistribucionData
             SELECT
                 lm.id AS id_lote_mineral,
                 lm.correlativo AS lote_correlativo,
-                -- NULLIF(..., 0) trata el peso "0.00" como NULL para que el
-                -- COALESCE no lo prefiera sobre peso_neto real de los lotes
-                -- regulares (cuyo peso_neto_oficial queda en 0).
-                COALESCE(NULLIF(lm.peso_neto_oficial, 0), lm.peso_neto) AS lote_peso_neto,
+                lm.peso_neto AS lote_peso_neto,
                 COALESCE(
                     lm.peso_final,
                     (SELECT SUM(p.peso_final) FROM particion_lote_mineral p
@@ -52,7 +49,7 @@ class ValidacionDistribucionData
                 v.id AS id_vehiculo,
                 v.placa AS vehiculo_placa,
                 v.capacidad AS vehiculo_capacidad,
-                (COALESCE(NULLIF(lm.peso_neto_oficial, 0), lm.peso_neto) - v.capacidad) AS excedente,
+                (lm.peso_neto - v.capacidad) AS excedente,
                 tb.correlativo AS ticket_correlativo,
                 lm.created_at AS lote_fecha_creacion
             FROM lote_mineral lm
@@ -61,7 +58,7 @@ class ValidacionDistribucionData
             LEFT JOIN vehiculo v          ON v.id = ru.id_vehiculo
             LEFT JOIN ticket_balanza tb   ON tb.id = lm.id_ticket_balanza
             WHERE (lm.estado IS NULL OR lm.estado != "Eliminado")
-              AND COALESCE(NULLIF(lm.peso_neto_oficial, 0), lm.peso_neto) > 0
+              AND lm.peso_neto > 0
               AND (
                   -- (1) Lote regular pesado asignado a una unidad de la sucursal.
                   (lm.id_recepcion_unidad IS NOT NULL

@@ -41,6 +41,7 @@ class RecepcionUnidad extends Model
         'guia_remitente',
         'guia_transportista',
         'es_recepcion_ficticia',
+        'id_ticket_recepcion_unidades',
     ];
 
     protected $casts = [

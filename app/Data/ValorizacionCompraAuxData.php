@@ -38,9 +38,7 @@ class ValorizacionCompraAuxData
                     (SELECT id_lote_mineral FROM particion_lote_mineral WHERE id = lg.id_particion_lote_mineral)
                 ) AND (lm.estado IS NULL OR lm.estado <> :estado_lote_no_eliminado)
                 LEFT JOIN guia_primer_tramo gpt ON gpt.id = lg.id_guia_primer_tramo
-                WHERE lm.con_valor_comercial = 1
-                  -- El lote padre debe estar validado.
-                  AND lm.esta_validado = 1
+                WHERE lm.esta_validado = 1
                   -- Si el lote tiene particiones activas, TODAS deben estar validadas.
                   AND NOT EXISTS (
                       SELECT 1
@@ -68,7 +66,6 @@ class ValorizacionCompraAuxData
                   -- Excluir el lote completo si ya tiene AMBOS elementos (Oro y Plata) valorizados.
                   AND NOT (lm.esta_valorizado_oro = 1 AND lm.esta_valorizado_plata = 1)
             ) t ON t.id_proveedor = p.id
-            WHERE t.con_valor_comercial = 1
             ORDER BY p.razon_social ASC;
         ';
 
@@ -182,6 +179,7 @@ class ValorizacionCompraAuxData
             SELECT
                 id_lote_guia,
                 id_lote_mineral,
+                con_valor_comercial,
                 numero_correlativo,
                 correlativo_lote,
                 grr,
@@ -198,6 +196,7 @@ class ValorizacionCompraAuxData
                 SELECT
                     lg.id AS id_lote_guia,
                     lm.id AS id_lote_mineral,
+                    COALESCE(lm.con_valor_comercial, 1) AS con_valor_comercial,
                     lm.numero_correlativo AS numero_correlativo,
                     lm.correlativo AS correlativo_lote,
                     gpt.guia_remitente AS grr,
@@ -218,8 +217,7 @@ class ValorizacionCompraAuxData
                 ) AND (lm.estado IS NULL OR lm.estado <> :estado_lote_no_eliminado)
                 LEFT JOIN guia_primer_tramo gpt ON gpt.id = lg.id_guia_primer_tramo
                 WHERE COALESCE(gpt.id_proveedor, lm.id_proveedor_minero) = :id_proveedor
-                  AND lm.con_valor_comercial = 1
-                  AND COALESCE(lm.peso_neto, lm.peso_neto, 0) > 0
+                  AND COALESCE(lm.peso_neto, 0) > 0
                   -- El lote padre debe estar validado.
                   AND lm.esta_validado = 1
                   -- Si el lote tiene particiones activas, TODAS deben estar validadas.
@@ -258,7 +256,7 @@ class ValorizacionCompraAuxData
                                 AND plm.peso_neto > 0
                           ),
                           0
-                      ) = COALESCE(lm.peso_neto, lm.peso_neto, 0)
+                      ) = COALESCE(lm.peso_neto, 0)
                   )
                   -- Excluir el lote completo si ya tiene AMBOS elementos (Oro y Plata) valorizados.
                   AND NOT (lm.esta_valorizado_oro = 1 AND lm.esta_valorizado_plata = 1)
@@ -286,6 +284,7 @@ class ValorizacionCompraAuxData
             $lote->ley_plata = (float) $lote->ley_plata;
             $lote->es_valorizado_oro = (bool) $lote->es_valorizado_oro;
             $lote->es_valorizado_plata = (bool) $lote->es_valorizado_plata;
+            $lote->con_valor_comercial = (bool) ($lote->con_valor_comercial ?? 1);
 
             // Buscar condición comercial para Oro
             $condOro = $condiciones->first(function ($c) use ($lote) {

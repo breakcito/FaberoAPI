@@ -493,14 +493,16 @@ class ContabilidadCompraData
      *
      * @param  array<string,mixed>  $aprobaciones
      */
-    public static function crear_comprobante(array $campos, array $aprobaciones): int
+    public static function crear_comprobante(array $campos, array $aprobaciones, ?EstadoComprobanteCompra $estadoInicial = null): int
     {
+        $estado = $estadoInicial ?? EstadoComprobanteCompra::EnEspera;
+
         return ComprobanteCompra::insertGetId($campos + [
             'aprobaciones' => json_encode($aprobaciones),
             'avance_pago_neto' => 0,
             'avance_pago_detraccion' => 0,
             'created_at' => now(),
-            'estado' => EstadoComprobanteCompra::EnEspera->value,
+            'estado' => $estado->value,
         ]);
     }
 

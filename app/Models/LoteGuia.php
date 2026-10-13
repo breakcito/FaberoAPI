@@ -15,6 +15,9 @@ class LoteGuia extends Model
         'id_guia_primer_tramo',
         'id_lote_mineral',
         'id_particion_lote_mineral',
+        'peso_inicial',
+        'peso_final',
+        'peso_neto',
         'created_at',
     ];
 
@@ -22,6 +25,9 @@ class LoteGuia extends Model
         'id_guia_primer_tramo' => 'integer',
         'id_lote_mineral' => 'integer',
         'id_particion_lote_mineral' => 'integer',
+        'peso_inicial' => 'float',
+        'peso_final' => 'float',
+        'peso_neto' => 'float',
     ];
 
     public function loteMineral(): BelongsTo

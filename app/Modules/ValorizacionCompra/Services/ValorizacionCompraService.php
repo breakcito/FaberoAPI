@@ -68,7 +68,25 @@ class ValorizacionCompraService
             // Obtener nombre de concesion para auditoria inicial
             $concesionNombre = ValorizacionCompraData::get_nombre_concesion((int) $data['id_concesion']);
 
-            $tipoPagoEnum = TipoPagoValorizacionCompra::tryFrom($data['tipo_pago']) ?? TipoPagoValorizacionCompra::Transferencia;
+            // Verificar si todos los lotes incluidos carecen de valor comercial
+            $todosSinValorComercial = ! empty($data['detalles']);
+            foreach ($data['detalles'] as $dCheck) {
+                $lgCheck = ValorizacionCompraData::find_lote_guia_con_mineral((int) $dCheck['id_lote_guia']);
+                $lCheck = $lgCheck?->loteMineral ?? $lgCheck?->particionLoteMineral?->loteMineral;
+                if (! self::loteEsSinValorComercial($lCheck)) {
+                    $todosSinValorComercial = false;
+                    break;
+                }
+            }
+
+            if ($todosSinValorComercial) {
+                $data['monto_penalidad'] = 0;
+                $data['monto_flete'] = 0;
+                $data['anticipos'] = [];
+                $tipoPagoEnum = TipoPagoValorizacionCompra::Transferencia;
+            } else {
+                $tipoPagoEnum = TipoPagoValorizacionCompra::tryFrom($data['tipo_pago']) ?? TipoPagoValorizacionCompra::Transferencia;
+            }
 
             $evidenciasGuardadas = ! empty($archivos)
                 ? ArchivoHelper::guardarArchivos('valorizaciones', $archivos)
@@ -103,31 +121,44 @@ class ValorizacionCompraService
                 if (! $loteGuia || ! $lote) {
                     throw new Exception("El lote guía ID {$det['id_lote_guia']} no fue encontrado.");
                 }
-                $pesoNeto = (float) ($lote->peso_neto_oficial ?? 0);
+                $pesoNeto = (float) ($lote->peso_neto ?? 0);
                 $leyHumedad = (float) $lote->ley_humedad;
                 $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
 
                 $elementoEnum = ElementoQuimicoValorizacion::tryFrom($det['elemento_quimico']) ?? ElementoQuimicoValorizacion::Oro;
                 $ley = $elementoEnum === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
 
-                $inter = (float) $det['inter'];
-                $desInter = (float) $det['des_inter'];
-                $recuperacion = (float) $det['recuperacion'];
-                $maquila = (float) $det['maquila'];
-                $consumo = (float) $det['consumo'];
-                $factor = (float) ($det['factor'] ?? 1.0);
+                $esSinValor = self::loteEsSinValorComercial($lote);
 
-                // Formula: ptn = ((inter - desInter) * ley * (rec / 100) - maquila - consumo) * factor
-                $ptn = (($inter - $desInter) * $ley * ($recuperacion / 100) - $maquila - $consumo) * $factor;
+                if ($esSinValor) {
+                    $inter = 0.0;
+                    $desInter = 0.0;
+                    $recuperacion = 0.0;
+                    $maquila = 0.0;
+                    $consumo = 0.0;
+                    $factor = 1.0;
+                    $ptn = 0.0;
+                    $subtotal = 0.0;
+                } else {
+                    $inter = (float) $det['inter'];
+                    $desInter = (float) $det['des_inter'];
+                    $recuperacion = (float) $det['recuperacion'];
+                    $maquila = (float) $det['maquila'];
+                    $consumo = (float) $det['consumo'];
+                    $factor = (float) ($det['factor'] ?? 1.0);
 
-                // Formula: subtotal = ptn * pesoSeco / 1000
-                $subtotal = ($ptn * $pesoSeco) / 1000;
+                    // Formula: ptn = ((inter - desInter) * ley * (rec / 100) - maquila - consumo) * factor
+                    $ptn = (($inter - $desInter) * $ley * ($recuperacion / 100) - $maquila - $consumo) * $factor;
+
+                    // Formula: subtotal = ptn * pesoSeco / 1000
+                    $subtotal = ($ptn * $pesoSeco) / 1000;
+                }
 
                 $detallesCreados[] = ValorizacionCompraDetalle::create([
                     'id_valorizacion_compra' => $valorizacion->id,
                     'id_lote_guia' => $det['id_lote_guia'],
-                    'id_condicion_comercial' => $det['id_condicion_comercial'] ?? null,
-                    'id_valor_elemento_quimico' => isset($det['id_valor_elemento_quimico']) ? (int) $det['id_valor_elemento_quimico'] : null,
+                    'id_condicion_comercial' => $esSinValor ? null : ($det['id_condicion_comercial'] ?? null),
+                    'id_valor_elemento_quimico' => $esSinValor ? null : (isset($det['id_valor_elemento_quimico']) ? (int) $det['id_valor_elemento_quimico'] : null),
                     'elemento_quimico' => $elementoEnum->value,
                     'inter' => $inter,
                     'des_inter' => $desInter,
@@ -232,7 +263,25 @@ class ValorizacionCompraService
                 return ApiResponse::error('Solo se pueden editar valorizaciones en estado Pendiente.');
             }
 
-            $tipoPagoEnum = TipoPagoValorizacionCompra::tryFrom($data['tipo_pago']) ?? TipoPagoValorizacionCompra::Transferencia;
+            // Verificar si todos los lotes incluidos carecen de valor comercial
+            $todosSinValorComercial = ! empty($data['detalles']);
+            foreach ($data['detalles'] ?? [] as $dCheck) {
+                $lgCheck = ValorizacionCompraData::find_lote_guia_con_mineral((int) $dCheck['id_lote_guia']);
+                $lCheck = $lgCheck?->loteMineral ?? $lgCheck?->particionLoteMineral?->loteMineral;
+                if (! self::loteEsSinValorComercial($lCheck)) {
+                    $todosSinValorComercial = false;
+                    break;
+                }
+            }
+
+            if ($todosSinValorComercial) {
+                $data['monto_penalidad'] = 0;
+                $data['monto_flete'] = 0;
+                $data['anticipos'] = [];
+                $tipoPagoEnum = TipoPagoValorizacionCompra::Transferencia;
+            } else {
+                $tipoPagoEnum = TipoPagoValorizacionCompra::tryFrom($data['tipo_pago']) ?? TipoPagoValorizacionCompra::Transferencia;
+            }
 
             $cambios = [];
 
@@ -371,22 +420,35 @@ class ValorizacionCompraService
                 if (! $loteGuia || ! $lote) {
                     throw new Exception("El lote guía ID {$det['id_lote_guia']} no fue encontrado.");
                 }
-                $pesoNeto = (float) ($lote->peso_neto_oficial ?? 0);
+                $pesoNeto = (float) ($lote->peso_neto ?? 0);
                 $leyHumedad = (float) $lote->ley_humedad;
                 $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
 
                 $elementoEnum = ElementoQuimicoValorizacion::tryFrom($det['elemento_quimico']) ?? ElementoQuimicoValorizacion::Oro;
                 $ley = $elementoEnum === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
 
-                $inter = (float) $det['inter'];
-                $desInter = (float) $det['des_inter'];
-                $recuperacion = (float) $det['recuperacion'];
-                $maquila = (float) $det['maquila'];
-                $consumo = (float) $det['consumo'];
-                $factor = (float) ($det['factor'] ?? 1.0);
+                $esSinValor = self::loteEsSinValorComercial($lote);
 
-                $ptn = (($inter - $desInter) * $ley * ($recuperacion / 100) - $maquila - $consumo) * $factor;
-                $subtotal = ($ptn * $pesoSeco) / 1000;
+                if ($esSinValor) {
+                    $inter = 0.0;
+                    $desInter = 0.0;
+                    $recuperacion = 0.0;
+                    $maquila = 0.0;
+                    $consumo = 0.0;
+                    $factor = 1.0;
+                    $ptn = 0.0;
+                    $subtotal = 0.0;
+                } else {
+                    $inter = (float) $det['inter'];
+                    $desInter = (float) $det['des_inter'];
+                    $recuperacion = (float) $det['recuperacion'];
+                    $maquila = (float) $det['maquila'];
+                    $consumo = (float) $det['consumo'];
+                    $factor = (float) ($det['factor'] ?? 1.0);
+
+                    $ptn = (($inter - $desInter) * $ley * ($recuperacion / 100) - $maquila - $consumo) * $factor;
+                    $subtotal = ($ptn * $pesoSeco) / 1000;
+                }
 
                 // Auditoría independiente para el detalle del lote
                 $keyDet = "{$det['id_lote_guia']}_{$elementoEnum->value}";
@@ -499,8 +561,8 @@ class ValorizacionCompraService
                 $detallesCreados[] = ValorizacionCompraDetalle::create([
                     'id_valorizacion_compra' => $valorizacion->id,
                     'id_lote_guia' => $det['id_lote_guia'],
-                    'id_condicion_comercial' => $det['id_condicion_comercial'] ?? null,
-                    'id_valor_elemento_quimico' => isset($det['id_valor_elemento_quimico']) ? (int) $det['id_valor_elemento_quimico'] : null,
+                    'id_condicion_comercial' => $esSinValor ? null : ($det['id_condicion_comercial'] ?? null),
+                    'id_valor_elemento_quimico' => $esSinValor ? null : (isset($det['id_valor_elemento_quimico']) ? (int) $det['id_valor_elemento_quimico'] : null),
                     'elemento_quimico' => $elementoEnum->value,
                     'inter' => $inter,
                     'des_inter' => $desInter,
@@ -1066,12 +1128,16 @@ class ValorizacionCompraService
 
             if ($lg && $lg->loteMineral) {
                 $lote = $lg->loteMineral;
-                $pesoNeto = (float) ($lote->peso_neto_oficial ?? 0);
-                $pesoSeco = $pesoNeto * (1 - ((float) $lote->ley_humedad / 100));
-                $elementoEnumTmp = ElementoQuimicoValorizacion::tryFrom($elem) ?? ElementoQuimicoValorizacion::Oro;
-                $leyTmp = $elementoEnumTmp === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
-                $ptnTmp = (((float) ($det['inter'] ?? 0) - (float) ($det['des_inter'] ?? 0)) * $leyTmp * ((float) ($det['recuperacion'] ?? 0) / 100) - (float) ($det['maquila'] ?? 0) - (float) ($det['consumo'] ?? 0)) * (float) ($det['factor'] ?? 1.0);
-                $subtotalTmp = ($ptnTmp * $pesoSeco) / 1000;
+                if (self::loteEsSinValorComercial($lote)) {
+                    $subtotalTmp = 0.0;
+                } else {
+                    $pesoNeto = (float) ($lote->peso_neto ?? 0);
+                    $pesoSeco = $pesoNeto * (1 - ((float) $lote->ley_humedad / 100));
+                    $elementoEnumTmp = ElementoQuimicoValorizacion::tryFrom($elem) ?? ElementoQuimicoValorizacion::Oro;
+                    $leyTmp = $elementoEnumTmp === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
+                    $ptnTmp = (((float) ($det['inter'] ?? 0) - (float) ($det['des_inter'] ?? 0)) * $leyTmp * ((float) ($det['recuperacion'] ?? 0) / 100) - (float) ($det['maquila'] ?? 0) - (float) ($det['consumo'] ?? 0)) * (float) ($det['factor'] ?? 1.0);
+                    $subtotalTmp = ($ptnTmp * $pesoSeco) / 1000;
+                }
                 $newTotalSubtotal += round($subtotalTmp, 2);
             }
         }
@@ -1179,5 +1245,17 @@ class ValorizacionCompraService
                 LoteMineral::where('id', $lote->id)->update([$columna => 0]);
             }
         }
+    }
+
+    /**
+     * Determinar si un lote de mineral fue cerrado sin valor comercial
+     */
+    private static function loteEsSinValorComercial(?LoteMineral $lote): bool
+    {
+        if (! $lote) {
+            return false;
+        }
+
+        return $lote->con_valor_comercial === 0 || $lote->con_valor_comercial === false || $lote->con_valor_comercial === '0';
     }
 }

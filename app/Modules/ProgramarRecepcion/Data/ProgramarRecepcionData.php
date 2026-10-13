@@ -266,6 +266,12 @@ class ProgramarRecepcionData
         }
 
         return DB::transaction(function () use ($recepcion, $id, $idEmpleadoRecepcion, $overrides, $observacion, $archivosEvidencias) {
+            $ticketId = $recepcion['id_ticket_recepcion_unidades'] ?? null;
+            if (empty($ticketId)) {
+                $ticket = RecepcionUnidadesData::generar_ticket_recepcion_unidad();
+                $overrides['id_ticket_recepcion_unidades'] = $ticket['id'];
+            }
+
             $update = array_merge([
                 'id_empleado_recepcion' => $idEmpleadoRecepcion,
                 'fecha_hora_ingreso' => now()->toDateTimeString(),

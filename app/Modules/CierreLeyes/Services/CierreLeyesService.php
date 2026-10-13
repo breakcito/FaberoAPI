@@ -5,6 +5,7 @@ namespace App\Modules\CierreLeyes\Services;
 use App\Modules\CierreLeyes\Data\CierreLeyesData;
 use App\Shared\Enums\_Generic\EstadoLeyes;
 use App\Shared\Responses\ApiResponse;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -416,7 +417,7 @@ class CierreLeyesService
      *
      * @return array{data?: array, success?: bool, message?: string}
      */
-    public static function iniciar_muestra_externa(int $idProveedorMinero, int $idEmpleado): array
+    public static function iniciar_muestra_externa(int $idProveedorMinero, int $idEmpleado, ?string $codigoCliente = null, ?string $fechaHoraIngreso = null): array
     {
         DB::beginTransaction();
         try {
@@ -429,6 +430,8 @@ class CierreLeyesService
                 'id_proveedor_minero' => $idProveedorMinero,
                 'correlativo' => $correlativo,
                 'numero_correlativo' => $siguienteNumero,
+                'codigo_cliente' => $codigoCliente,
+                'fecha_hora_ingreso' => $fechaHoraIngreso ?: Carbon::now(),
             ]);
 
             $uuidFila = Str::uuid()->toString();

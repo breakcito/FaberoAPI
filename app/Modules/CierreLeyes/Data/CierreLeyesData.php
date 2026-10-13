@@ -26,9 +26,9 @@ class CierreLeyesData
                 lm.correlativo,
                 lm.numero_correlativo,
                 lm.condicion_ingreso,
-                COALESCE(lm.peso_inicial_oficial, lm.peso_inicial) AS peso_inicial,
-                COALESCE(lm.peso_final_oficial, lm.peso_final) AS peso_final,
-                COALESCE(lm.peso_neto_oficial, lm.peso_neto) AS peso_neto,
+                lm.peso_inicial,
+                lm.peso_final,
+                lm.peso_neto,
                 lm.tipo_mineral,
                 lm.estado_leyes,
                 lm.id_proveedor_minero,
@@ -47,7 +47,7 @@ class CierreLeyesData
                 (lm.particionado_desde_balanza = 1
                  AND lm.particion_finalizada = 1
                  AND lm.id_recepcion_unidad IS NULL
-                 AND lm.peso_neto_oficial IS NOT NULL)
+                 AND lm.peso_neto IS NOT NULL)
             )
               AND lm.condicion_ingreso = "'.CondicionIngreso::Comercializacion->value.'"
               AND (lm.estado_leyes = "'.EstadoLeyes::Pendiente->value.'" OR lm.estado_leyes IS NULL OR lm.estado_leyes = "")
@@ -92,7 +92,7 @@ class CierreLeyesData
                 lm.correlativo,
                 lm.numero_correlativo,
                 lm.condicion_ingreso,
-                COALESCE(lm.peso_neto_oficial, lm.peso_neto) AS peso_neto,
+                lm.peso_neto,
                 lm.tipo_mineral,
                 lm.estado_leyes,
                 lm.con_valor_comercial,
@@ -596,6 +596,8 @@ class CierreLeyesData
             'id_proveedor_minero' => $datos['id_proveedor_minero'],
             'correlativo' => $datos['correlativo'],
             'numero_correlativo' => $datos['numero_correlativo'],
+            'codigo_cliente' => $datos['codigo_cliente'] ?? null,
+            'fecha_hora_ingreso' => $datos['fecha_hora_ingreso'] ?? Carbon::now(),
             'created_at' => Carbon::now(),
         ]);
     }
@@ -634,6 +636,8 @@ class CierreLeyesData
                 me.id_proveedor_minero,
                 me.correlativo,
                 me.numero_correlativo,
+                me.codigo_cliente,
+                me.fecha_hora_ingreso,
                 me.created_at,
                 p.razon_social AS proveedor_razon_social,
                 CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
@@ -697,6 +701,8 @@ class CierreLeyesData
                 me.id_proveedor_minero,
                 me.correlativo,
                 me.numero_correlativo,
+                me.codigo_cliente,
+                me.fecha_hora_ingreso,
                 me.created_at,
                 p.razon_social AS proveedor_razon_social,
                 CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
@@ -762,6 +768,8 @@ class CierreLeyesData
                 me.id_proveedor_minero,
                 me.correlativo,
                 me.numero_correlativo,
+                me.codigo_cliente,
+                me.fecha_hora_ingreso,
                 me.created_at,
                 p.razon_social AS proveedor_razon_social,
                 CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
