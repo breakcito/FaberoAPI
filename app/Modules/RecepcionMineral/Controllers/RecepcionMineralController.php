@@ -105,6 +105,7 @@ class RecepcionMineralController extends Controller
             'tipo_producto' => 'nullable|string|max:100',
             'tipo_mineral' => 'nullable|string|max:100',
             'peso_inicial' => 'required|numeric|gt:0',
+            'observaciones' => 'nullable|string',
             'observacion_peso_inicial' => 'nullable|string',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
@@ -117,6 +118,7 @@ class RecepcionMineralController extends Controller
             'tipo_producto' => $request->input('tipo_producto'),
             'tipo_mineral' => $request->input('tipo_mineral'),
             'peso_inicial' => $request->input('peso_inicial'),
+            'observaciones' => $request->input('observaciones', $request->input('observacion_peso_inicial')),
             'observacion_peso_inicial' => $request->input('observacion_peso_inicial'),
         ];
 
@@ -138,6 +140,7 @@ class RecepcionMineralController extends Controller
     {
         $request->validate([
             'peso_final' => 'required|numeric|gt:0',
+            'observaciones' => 'nullable|string',
             'observacion_peso_final' => 'nullable|string',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
@@ -157,6 +160,7 @@ class RecepcionMineralController extends Controller
 
         $data = [
             'peso_final' => $request->input('peso_final'),
+            'observaciones' => $request->input('observaciones', $request->input('observacion_peso_final')),
             'observacion_peso_final' => $request->input('observacion_peso_final'),
             'evidencias_existentes' => $request->input('evidencias_existentes'),
             'id_proveedor_minero' => $request->input('id_proveedor_minero'),
@@ -397,6 +401,7 @@ class RecepcionMineralController extends Controller
     {
         $request->validate([
             'peso_inicial' => 'required|numeric|gt:0',
+            'observaciones' => 'nullable|string',
             'observacion_peso_inicial' => 'nullable|string',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
@@ -415,6 +420,7 @@ class RecepcionMineralController extends Controller
 
         $data = [
             'peso_inicial' => $pesoInicial,
+            'observaciones' => $request->input('observaciones', $request->input('observacion_peso_inicial')),
             'observacion_peso_inicial' => $request->input('observacion_peso_inicial'),
             'evidencias_existentes' => $request->input('evidencias_existentes'),
             'id_proveedor_minero' => $request->input('id_proveedor_minero'),
@@ -446,6 +452,7 @@ class RecepcionMineralController extends Controller
     {
         $request->validate([
             'peso_final' => 'required|numeric|gt:0',
+            'observaciones' => 'nullable|string',
             'observacion_peso_final' => 'nullable|string',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
@@ -464,6 +471,7 @@ class RecepcionMineralController extends Controller
 
         $data = [
             'peso_final' => $pesoFinal,
+            'observaciones' => $request->input('observaciones', $request->input('observacion_peso_final')),
             'observacion_peso_final' => $request->input('observacion_peso_final'),
             'evidencias_existentes' => $request->input('evidencias_existentes'),
             'id_proveedor_minero' => $request->input('id_proveedor_minero'),

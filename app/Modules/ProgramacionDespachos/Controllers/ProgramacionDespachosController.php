@@ -236,6 +236,7 @@ class ProgramacionDespachosController extends Controller
             'peso_bruto' => 'nullable|numeric|gt:0',
             'confirmar_tara' => 'nullable|boolean',
             'confirmar_bruto' => 'nullable|boolean',
+            'observaciones' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -249,8 +250,10 @@ class ProgramacionDespachosController extends Controller
 
         $validated = $validator->validated();
         $payload = [];
-        foreach (['peso_tara', 'peso_bruto', 'confirmar_tara', 'confirmar_bruto'] as $key) {
-            $payload[$key] = array_key_exists($key, $validated) ? $validated[$key] : null;
+        foreach (['peso_tara', 'peso_bruto', 'confirmar_tara', 'confirmar_bruto', 'observaciones'] as $key) {
+            if (array_key_exists($key, $validated)) {
+                $payload[$key] = $validated[$key];
+            }
         }
 
         return response()->json(
@@ -324,5 +327,24 @@ class ProgramacionDespachosController extends Controller
         $result = ProgramacionDespachosService::actualizar_ley_final($idDetalle, $elemento, $leyFinal, $confirmada);
 
         return response()->json($result, $result['success'] ? 200 : ($result['errors'] ?? 422));
+    }
+
+    public function actualizar_observaciones(Request $request, int $id, int $idDetalle): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'observaciones' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()), 400);
+        }
+
+        return response()->json(
+            ProgramacionDespachosService::actualizar_observaciones_detalle(
+                $id,
+                $idDetalle,
+                $request->input('observaciones')
+            )
+        );
     }
 }

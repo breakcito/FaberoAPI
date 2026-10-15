@@ -134,6 +134,7 @@ class RecepcionMineralData
                 ddt.peso_neto,
                 ddt.peso_tara_confirmado,
                 ddt.peso_bruto_confirmado,
+                ddt.observaciones,
                 ru.id AS recepcion_unidad_id,
                 dd.id_lote_mineral AS detalle_id_lote_mineral,
                 dd.id_blending AS detalle_id_blending,
@@ -180,6 +181,7 @@ class RecepcionMineralData
             $r->despacho_es_anulado = (bool) $r->despacho_es_anulado;
             $r->detalle_id_lote_mineral = $r->detalle_id_lote_mineral !== null ? (int) $r->detalle_id_lote_mineral : null;
             $r->detalle_id_blending = $r->detalle_id_blending !== null ? (int) $r->detalle_id_blending : null;
+            $r->observaciones = $r->observaciones !== null ? (string) $r->observaciones : null;
             $r->recepcion_unidad_id = (int) $r->recepcion_unidad_id;
 
             $out[$r->recepcion_unidad_id][] = $r;
@@ -213,6 +215,7 @@ class RecepcionMineralData
             lm.numero_contacto,
             lm.tipo_producto,
             lm.tipo_mineral,
+            lm.observaciones,
             lm.condicion_ingreso,
             lm.log_cambios,
             lm.evidencias,
@@ -308,6 +311,7 @@ class RecepcionMineralData
             lm.numero_contacto,
             lm.tipo_producto,
             lm.tipo_mineral,
+            lm.observaciones,
             lm.condicion_ingreso,
             lm.log_cambios,
             lm.evidencias,
@@ -546,6 +550,7 @@ class RecepcionMineralData
 
             CONCAT(emp_reg.nombre, ' ', emp_reg.apellido) AS empleado_registro_nombre,
 
+            lm.observaciones                           AS observaciones,
             NULL                                       AS observacion_peso_inicial,
             NULL                                       AS observacion_peso_final
         FROM lote_mineral lm
@@ -697,6 +702,7 @@ class RecepcionMineralData
 
             CONCAT(emp_reg.nombre, ' ', emp_reg.apellido) AS empleado_registro_nombre,
 
+            ddt.observaciones                          AS observaciones,
             NULL                                       AS observacion_peso_inicial,
             NULL                                       AS observacion_peso_final
         FROM distribucion_detalle ddt
@@ -973,6 +979,7 @@ class RecepcionMineralData
             zo.nombre AS zona_origen_nombre,
 
             -- observaciones
+            COALESCE(ddt.observaciones, lot.observaciones) AS observaciones,
             NULL AS observacion_peso_inicial,
             NULL AS observacion_peso_final,
 
@@ -1024,7 +1031,7 @@ class RecepcionMineralData
             LEFT JOIN zona_origen zo ON zo.id = lot.id_zona_origen
         -- Último pesaje con ticket del lote (de distribución si existe)
         LEFT JOIN (
-            SELECT dd.id_lote_mineral, ddt.peso_tara, ddt.fecha_hora_peso_tara, ddt.peso_bruto, ddt.fecha_hora_peso_bruto, ddt.peso_neto
+            SELECT dd.id_lote_mineral, ddt.peso_tara, ddt.fecha_hora_peso_tara, ddt.peso_bruto, ddt.fecha_hora_peso_bruto, ddt.peso_neto, ddt.observaciones
             FROM distribucion_detalle ddt
             INNER JOIN despacho_detalle dd ON dd.id = ddt.id_despacho_detalle
             WHERE dd.id_lote_mineral = ? AND ddt.id_ticket_balanza IS NOT NULL
@@ -1138,6 +1145,7 @@ class RecepcionMineralData
             dis_cori.nombre            AS distrito_concesion,
             zo.nombre AS zona_origen_nombre,
 
+            ddt.observaciones AS observaciones,
             NULL AS observacion_peso_inicial,
             NULL AS observacion_peso_final,
 
@@ -1246,7 +1254,8 @@ class RecepcionMineralData
             lm.numero_contacto AS lote_numero_contacto,
             lm.tipo_producto AS lote_tipo_producto,
             lm.tipo_mineral AS lote_tipo_mineral,
-            lm.correlativo AS lote_correlativo
+            lm.correlativo AS lote_correlativo,
+            lm.observaciones AS lote_observaciones
         FROM particion_lote_mineral p
         LEFT JOIN ticket_balanza tb ON tb.id = p.id_ticket_balanza
         LEFT JOIN recepcion_unidad ru ON ru.id = p.id_recepcion_unidad
@@ -1288,6 +1297,7 @@ class RecepcionMineralData
             $r->tipo_producto = $r->lote_tipo_producto !== null ? (string) $r->lote_tipo_producto : null;
             $r->tipo_mineral = $r->lote_tipo_mineral !== null ? (string) $r->lote_tipo_mineral : null;
             $r->lote_correlativo = $r->lote_correlativo !== null ? (string) $r->lote_correlativo : null;
+            $r->observaciones = $r->lote_observaciones !== null ? (string) $r->lote_observaciones : null;
         }
 
         return $rows;
@@ -1323,14 +1333,15 @@ class RecepcionMineralData
             lm.zona_origen_legacy AS zona_origen_nombre,
             lm.numero_contacto,
             lm.tipo_producto,
-            lm.tipo_mineral
+            lm.tipo_mineral,
+            lm.observaciones
         FROM particion_lote_mineral p
         LEFT JOIN ticket_balanza tb ON tb.id = p.id_ticket_balanza
         LEFT JOIN (
             SELECT
                 l.id, l.id_proveedor_minero, p.razon_social AS proveedor_legacy,
                 l.id_zona_origen, z.nombre AS zona_origen_legacy,
-                l.numero_contacto, l.tipo_producto, l.tipo_mineral
+                l.numero_contacto, l.tipo_producto, l.tipo_mineral, l.observaciones
             FROM lote_mineral l
             LEFT JOIN proveedor p ON p.id = l.id_proveedor_minero
             LEFT JOIN zona_origen z ON z.id = l.id_zona_origen
@@ -1356,6 +1367,7 @@ class RecepcionMineralData
         $item->id_proveedor_minero = $item->id_proveedor_minero !== null ? (int) $item->id_proveedor_minero : null;
         $item->id_zona_origen = $item->id_zona_origen !== null ? (int) $item->id_zona_origen : null;
         $item->ticket_correlativo = $item->ticket_correlativo !== null ? (string) $item->ticket_correlativo : null;
+        $item->observaciones = isset($item->observaciones) && $item->observaciones !== null ? (string) $item->observaciones : null;
         if (isset($item->evidencias) && is_string($item->evidencias)) {
             $item->evidencias = json_decode($item->evidencias, true) ?? [];
         } else {
@@ -1425,6 +1437,7 @@ class RecepcionMineralData
             dis_cori.nombre            AS distrito_concesion,
             zo.nombre AS zona_origen_nombre,
 
+            lot.observaciones AS observaciones,
             NULL AS observacion_peso_inicial,
             NULL AS observacion_peso_final,
 

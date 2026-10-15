@@ -53,6 +53,7 @@ class LoteMineral extends Model
         'fecha_hora_confirmacion_analisis',
         'esta_valorizado_oro',
         'esta_valorizado_plata',
+        'observaciones',
     ];
 
     protected $casts = [

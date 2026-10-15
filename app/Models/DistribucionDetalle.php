@@ -28,6 +28,7 @@ class DistribucionDetalle extends Model
         'ley_humedad_cliente',
         'esta_valorizado_oro',
         'esta_valorizado_plata',
+        'observaciones',
     ];
 
     protected $casts = [
@@ -45,5 +46,6 @@ class DistribucionDetalle extends Model
         'ley_humedad_cliente' => 'float',
         'esta_valorizado_oro' => 'boolean',
         'esta_valorizado_plata' => 'boolean',
+        'observaciones' => 'string',
     ];
 }

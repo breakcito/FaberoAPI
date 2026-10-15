@@ -993,7 +993,7 @@ class ProgramacionDespachosService
         $pesoNeto = null;
 
         try {
-            DB::transaction(function () use ($idDistribucion, $idDetalle, $pesoTaraInput, $pesoBrutoInput, $confirmarTaraInput, $confirmarBrutoInput, &$idTicket, &$pesoNeto, &$advertencias) {
+            DB::transaction(function () use ($idDistribucion, $idDetalle, $data, $pesoTaraInput, $pesoBrutoInput, $confirmarTaraInput, $confirmarBrutoInput, &$idTicket, &$pesoNeto, &$advertencias) {
                 $detalle = ProgramacionDespachosData::get_detalle_by_id_with_lote($idDetalle);
                 if (! $detalle) {
                     throw new \RuntimeException('Detalle de distribución no encontrado.');
@@ -1037,6 +1037,10 @@ class ProgramacionDespachosService
                     $confirmarTaraInput,    // null = no tocar flag
                     $confirmarBrutoInput    // null = no tocar flag
                 );
+
+                if (array_key_exists('observaciones', $data)) {
+                    ProgramacionDespachosData::update_detalle_observaciones($idDetalle, $data['observaciones']);
+                }
 
                 // Calcular merma solo si peso_neto disponible y humedad > 0.
                 // La humedad viene del origen del detalle:
@@ -1139,5 +1143,31 @@ class ProgramacionDespachosService
             $despachoActualizado,
             $confirmada ? "Ley final de {$elemento} confirmada correctamente." : "Ley final de {$elemento} desbloqueada."
         );
+    }
+
+    /**
+     * Actualiza las observaciones de un detalle de distribución.
+     *
+     * @return array<string, mixed>
+     */
+    public static function actualizar_observaciones_detalle(
+        int $idDistribucion,
+        int $idDetalle,
+        ?string $observaciones
+    ): array {
+        $detalle = ProgramacionDespachosData::get_detalle_by_id_with_lote($idDetalle);
+        if (! $detalle) {
+            return ApiResponse::error('Detalle de distribución no encontrado.', 404);
+        }
+        if ((int) $detalle['id_distribucion'] !== $idDistribucion) {
+            return ApiResponse::error('El detalle no pertenece a la distribución indicada.', 400);
+        }
+
+        ProgramacionDespachosData::update_detalle_observaciones($idDetalle, $observaciones);
+        $detalleActualizado = ProgramacionDespachosData::get_detalle_by_id_with_lote($idDetalle);
+
+        return ApiResponse::success([
+            'detalle' => $detalleActualizado,
+        ], 'Observaciones actualizadas correctamente.');
     }
 }

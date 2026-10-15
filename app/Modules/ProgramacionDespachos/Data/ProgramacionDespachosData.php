@@ -1057,6 +1057,7 @@ class ProgramacionDespachosData
                 ddt.peso_neto,
                 ddt.peso_tara_confirmado,
                 ddt.peso_bruto_confirmado,
+                ddt.observaciones,
                 ddt.peso_neto_cliente,
                 ddt.codigo_cliente,
                 ddt.ley_oro_cliente,
@@ -1212,5 +1213,12 @@ class ProgramacionDespachosData
                 $campoLey => round($leyFinal, 3),
                 $campoConf => $confirmada,
             ]) >= 0;
+    }
+
+    public static function update_detalle_observaciones(int $idDetalle, ?string $observaciones): bool
+    {
+        return DB::table('distribucion_detalle')
+            ->where('id', $idDetalle)
+            ->update(['observaciones' => $observaciones]) >= 0;
     }
 }

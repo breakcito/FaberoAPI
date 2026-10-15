@@ -16,6 +16,7 @@ use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Helpers\CorrelativoHelper;
 use App\Shared\Responses\ApiResponse;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class RecepcionMineralService
@@ -344,6 +345,9 @@ class RecepcionMineralService
         $lote->numero_contacto = $data['numero_contacto'];
         $lote->tipo_producto = $data['tipo_producto'];
         $lote->tipo_mineral = $data['tipo_mineral'];
+        if (array_key_exists('observaciones', $data)) {
+            $lote->observaciones = $data['observaciones'];
+        }
         $lote->peso_inicial = $pesoInicialInput;
         $lote->fecha_hora_peso_inicial = now()->toDateTimeString();
         $lote->evidencias = $evidenciasGuardadas;
@@ -456,6 +460,9 @@ class RecepcionMineralService
         }
         if (array_key_exists('tipo_mineral', $data)) {
             $lote->tipo_mineral = $data['tipo_mineral'];
+        }
+        if (array_key_exists('observaciones', $data)) {
+            $lote->observaciones = $data['observaciones'];
         }
         if (array_key_exists('peso_inicial', $data) && $data['peso_inicial'] !== null) {
             $lote->peso_inicial = (float) $data['peso_inicial'];
@@ -1242,8 +1249,9 @@ class RecepcionMineralService
      * padre (mismo criterio que `registrar_peso_inicial_particion`).
      *
      * @param  array{peso_final: float, fecha_hora_peso_final?: string|null, observacion_peso_final?: string|null, evidencias_existentes?: array<int, mixed>|null, id_proveedor_minero?: int|null, id_zona_origen?: int|null, numero_contacto?: string|null, tipo_producto?: string|null, tipo_mineral?: string|null}  $data
+     * @param  array<\Illuminate\Http\UploadedFile>  $archivos
      */
-    public static function registrar_peso_final_particion(int $idParticion, array $data): array
+    public static function registrar_peso_final_particion(int $idParticion, array $data, array $archivos = []): array
     {
         $particion = ParticionLoteMineral::find($idParticion);
         if (! $particion) {
@@ -1264,9 +1272,22 @@ class RecepcionMineralService
 
         $pesoNeto = round(((float) $particion->peso_inicial) - $pesoFinal, 2);
 
+        // Evidencias: merge con existentes + archivos nuevos (si se enviaron).
+        $evidenciasActuales = $particion->evidencias ?? [];
+        if (isset($data['evidencias_existentes'])) {
+            $evidenciasActuales = is_array($data['evidencias_existentes'])
+                ? $data['evidencias_existentes']
+                : (json_decode($data['evidencias_existentes'], true) ?? []);
+        }
+        if (! empty($archivos)) {
+            $nuevosArchivos = ArchivoHelper::guardarArchivos('particiones_lotes', $archivos);
+            $evidenciasActuales = array_merge($evidenciasActuales, $nuevosArchivos);
+        }
+
         $particion->peso_final = $pesoFinal;
         $particion->fecha_hora_peso_final = now()->toDateTimeString();
         $particion->peso_neto = $pesoNeto;
+        $particion->evidencias = $evidenciasActuales;
         $particion->save();
 
         // Cascada de campos no-peso al lote padre (si vienen en la request).
@@ -1293,6 +1314,7 @@ class RecepcionMineralService
             'numero_contacto',
             'tipo_producto',
             'tipo_mineral',
+            'observaciones',
         ];
 
         $hayCambios = false;
@@ -1319,7 +1341,7 @@ class RecepcionMineralService
             // Normalizar '' → null para strings opcionales (numero_contacto,
             // tipo_producto, tipo_mineral) para mantener consistencia con
             // cómo se persisten desde otras rutas.
-            if (in_array($campo, ['numero_contacto', 'tipo_producto', 'tipo_mineral'], true) && $valor === '') {
+            if (in_array($campo, ['numero_contacto', 'tipo_producto', 'tipo_mineral', 'observaciones'], true) && $valor === '') {
                 $valor = null;
             }
             $lote->{$campo} = $valor;
@@ -1426,7 +1448,7 @@ class RecepcionMineralService
             $lote->peso_actual = round($totalNeto, 2);
             $lote->particion_finalizada = true;
             $lote->id_empleado_fin_particion = $idEmpleado;
-            $lote->fecha_hora_fin_particion = $now;
+            $lote->fecha_hora_fin_particion = Carbon::now();
             $lote->save();
             error_log('[finalizar_particion_lote] lote guardado OK');
 
@@ -1524,6 +1546,9 @@ class RecepcionMineralService
         }
         if ($particion->peso_neto !== null) {
             $data['peso_neto'] = (float) $particion->peso_neto;
+        }
+        if (empty($data['observaciones']) && ! empty($particion->observaciones)) {
+            $data['observaciones'] = (string) $particion->observaciones;
         }
 
         // Metadato adicional por si el frontend lo requiere en el futuro.

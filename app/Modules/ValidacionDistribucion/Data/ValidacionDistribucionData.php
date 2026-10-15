@@ -292,12 +292,14 @@ class ValidacionDistribucionData
                 v.placa AS vehiculo_placa,
                 v.tara AS vehiculo_tara,
                 v.capacidad AS vehiculo_capacidad,
-                vc.placa AS vehiculo_carreta_placa
+                vc.placa AS vehiculo_carreta_placa,
+                lm.observaciones
             FROM particion_lote_mineral plm
             LEFT JOIN ticket_balanza tb ON tb.id = plm.id_ticket_balanza
             LEFT JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
             LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
             LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
+            LEFT JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
             WHERE plm.id_lote_mineral = :id_lote
               AND plm.estado = :estado_particion_activo
             ORDER BY plm.id ASC
@@ -318,6 +320,7 @@ class ValidacionDistribucionData
             $r->peso_neto = (float) ($r->peso_neto ?? 0);
             $r->es_bloqueado = (bool) $r->es_bloqueado;
             $r->esta_validado = (bool) ($r->esta_validado ?? 0);
+            $r->observaciones = isset($r->observaciones) && $r->observaciones !== null ? (string) $r->observaciones : null;
             $r->id_empleado_valida = $r->id_empleado_valida !== null ? (int) $r->id_empleado_valida : null;
             $r->fecha_hora_validacion = $r->fecha_hora_validacion !== null ? (string) $r->fecha_hora_validacion : null;
             $r->id_vehiculo = $r->id_vehiculo !== null ? (int) $r->id_vehiculo : null;
@@ -420,6 +423,7 @@ class ValidacionDistribucionData
             dis_cori.nombre            AS distrito_concesion,
             zo.nombre AS zona_origen_nombre,
             
+            lot.observaciones AS observaciones,
             NULL AS observacion_peso_inicial,
             NULL AS observacion_peso_final,
 
@@ -727,6 +731,7 @@ class ValidacionDistribucionData
             dis_cori.nombre            AS distrito_concesion,
             zo.nombre AS zona_origen_nombre,
 
+            lot.observaciones AS observaciones,
             NULL AS observacion_peso_inicial,
             NULL AS observacion_peso_final,
 
