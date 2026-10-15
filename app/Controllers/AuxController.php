@@ -442,6 +442,7 @@ class AuxController extends Controller
             p.razon_social AS proveedor_nombre,
             v.placa AS vehiculo_placa,
             ru.guia_remitente AS guia_remitente_recepcion,
+            ru.fecha_hora_ingreso as fecha_hora_ingreso_vehiculo,
             ru.guia_transportista AS guia_transportista_recepcion,
             ru.documentos_programacion AS documentos_programacion_recepcion,
             (
@@ -532,6 +533,7 @@ class AuxController extends Controller
             ru.guia_remitente AS guia_remitente_recepcion,
             ru.guia_transportista AS guia_transportista_recepcion,
             ru.documentos_programacion AS documentos_programacion_recepcion,
+            ru.fecha_hora_ingreso as fecha_hora_ingreso_vehiculo,
             (
                 SELECT COUNT(*)
                 FROM lote_guia lg
