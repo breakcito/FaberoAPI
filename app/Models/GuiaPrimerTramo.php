@@ -28,6 +28,10 @@ class GuiaPrimerTramo extends Model
         'guia_transportista',
         'sin_guia_transportista',
         'documentos',
+        'id_recepcion_unidad',
+        'con_no_conformidad',
+        'peso_guia_remision',
+        'peso_vehicular_total',
         'id_empleado_registro',
         'log_cambios',
         'created_at',
@@ -35,6 +39,10 @@ class GuiaPrimerTramo extends Model
 
     protected $casts = [
         'documentos' => 'array',
+        'id_recepcion_unidad' => 'integer',
+        'con_no_conformidad' => 'boolean',
+        'peso_guia_remision' => 'float',
+        'peso_vehicular_total' => 'float',
         'fecha_inicio_traslado' => 'datetime',
         'fecha_emision' => 'datetime',
         'fecha_en_planta' => 'datetime',
@@ -42,4 +50,9 @@ class GuiaPrimerTramo extends Model
         'id_empleado_registro' => 'integer',
         'log_cambios' => 'array',
     ];
+
+    public function recepcionUnidad(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(RecepcionUnidad::class, 'id_recepcion_unidad');
+    }
 }

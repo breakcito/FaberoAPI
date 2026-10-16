@@ -18,6 +18,7 @@ class LoteGuia extends Model
         'peso_inicial',
         'peso_final',
         'peso_neto',
+        'log_cambios',
         'created_at',
     ];
 
@@ -28,6 +29,7 @@ class LoteGuia extends Model
         'peso_inicial' => 'float',
         'peso_final' => 'float',
         'peso_neto' => 'float',
+        'log_cambios' => 'array',
     ];
 
     public function loteMineral(): BelongsTo

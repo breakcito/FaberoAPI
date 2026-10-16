@@ -49,4 +49,9 @@ class RecepcionUnidad extends Model
         'log_cambios' => 'array',
         'es_recepcion_ficticia' => 'boolean',
     ];
+
+    public function guiasPrimerTramo(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(GuiaPrimerTramo::class, 'id_recepcion_unidad');
+    }
 }

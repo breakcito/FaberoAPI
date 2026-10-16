@@ -46,14 +46,24 @@ class RecepcionUnidadesService
     /**
      * Obtener los datos estructurados para el Ticket de Ingreso de Vehículos con Carga.
      */
-    public static function get_ticket_ingreso(int $id): array
+    public static function get_ticket_ingreso(int $id, ?int $idGuia = null): array
     {
-        $ticketInfo = RecepcionUnidadesData::get_ticket_ingreso_info($id);
+        $ticketInfo = RecepcionUnidadesData::get_ticket_ingreso_info($id, $idGuia);
         if (! $ticketInfo) {
             return ApiResponse::error('No se encontró la recepción de unidad o no se pudo generar el ticket.', 404);
         }
 
         return ApiResponse::success($ticketInfo, 'Ticket de ingreso obtenido correctamente');
+    }
+
+    /**
+     * Obtener las guías asociadas a la recepción.
+     */
+    public static function get_guias_recepcion(int $id): array
+    {
+        $guias = RecepcionUnidadesData::get_guias_recepcion($id);
+
+        return ApiResponse::success($guias, 'Guías de la recepción obtenidas correctamente');
     }
 
     /**

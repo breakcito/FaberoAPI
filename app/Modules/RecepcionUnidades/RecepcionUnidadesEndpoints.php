@@ -8,6 +8,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/', 'get_recepciones');
         Route::get('/{id}', 'get_recepcion');
         Route::get('/{id}/ticket-ingreso', 'get_ticket_ingreso');
+        Route::get('/{id}/guias', 'get_guias');
         Route::post('/', 'crear_recepcion');
         Route::put('/{id}/salida', 'registrar_salida');
 

@@ -42,6 +42,10 @@ class GuiasPrimerTramoData
             gpt.guia_transportista,
             gpt.sin_guia_transportista,
             gpt.documentos,
+            gpt.id_recepcion_unidad,
+            gpt.con_no_conformidad,
+            gpt.peso_guia_remision,
+            gpt.peso_vehicular_total,
             gpt.id_empleado_registro,
             gpt.log_cambios,
             gpt.estado,
@@ -88,6 +92,10 @@ class GuiasPrimerTramoData
             $row->documentos = isset($row->documentos) ? json_decode($row->documentos, true) ?? [] : [];
             $row->log_cambios = isset($row->log_cambios) ? json_decode($row->log_cambios, true) ?? [] : [];
             $row->sin_guia_transportista = (bool) $row->sin_guia_transportista;
+            $row->con_no_conformidad = (bool) ($row->con_no_conformidad ?? false);
+            $row->peso_guia_remision = $row->peso_guia_remision !== null ? (float) $row->peso_guia_remision : 0.0;
+            $row->peso_vehicular_total = $row->peso_vehicular_total !== null ? (float) $row->peso_vehicular_total : 0.0;
+            $row->id_recepcion_unidad = $row->id_recepcion_unidad !== null ? (int) $row->id_recepcion_unidad : null;
             $row->id_empleado_registro = $row->id_empleado_registro !== null ? (int) $row->id_empleado_registro : null;
             $row->lotes = self::get_lotes_guia((int) $row->id);
         }
@@ -136,6 +144,10 @@ class GuiasPrimerTramoData
         $row->documentos = isset($row->documentos) ? json_decode($row->documentos, true) ?? [] : [];
         $row->log_cambios = isset($row->log_cambios) ? json_decode($row->log_cambios, true) ?? [] : [];
         $row->sin_guia_transportista = (bool) $row->sin_guia_transportista;
+        $row->con_no_conformidad = (bool) ($row->con_no_conformidad ?? false);
+        $row->peso_guia_remision = $row->peso_guia_remision !== null ? (float) $row->peso_guia_remision : 0.0;
+        $row->peso_vehicular_total = $row->peso_vehicular_total !== null ? (float) $row->peso_vehicular_total : 0.0;
+        $row->id_recepcion_unidad = $row->id_recepcion_unidad !== null ? (int) $row->id_recepcion_unidad : null;
         $row->id_empleado_registro = $row->id_empleado_registro !== null ? (int) $row->id_empleado_registro : null;
         $row->lotes = self::get_lotes_guia($id);
 
@@ -154,6 +166,7 @@ class GuiasPrimerTramoData
             lg.id_lote_mineral,
             lg.id_particion_lote_mineral,
             lg.created_at,
+            lg.log_cambios,
             CASE
                 WHEN lg.id_particion_lote_mineral IS NOT NULL THEN "PARTICION"
                 ELSE "LOTE"
@@ -163,7 +176,10 @@ class GuiasPrimerTramoData
             lm.tipo_mineral,
             COALESCE(lg.peso_inicial, plm.peso_inicial, lm.peso_inicial) AS peso_inicial,
             COALESCE(lg.peso_final, plm.peso_final, lm.peso_final) AS peso_final,
-            COALESCE(lg.peso_neto, plm.peso_neto, lm.peso_neto) AS peso_neto
+            COALESCE(lg.peso_neto, plm.peso_neto, lm.peso_neto) AS peso_neto,
+            COALESCE(plm.peso_inicial, lm.peso_inicial) AS balanza_peso_inicial,
+            COALESCE(plm.peso_final, lm.peso_final) AS balanza_peso_final,
+            COALESCE(plm.peso_neto, lm.peso_neto) AS balanza_peso_neto
         FROM lote_guia lg
         LEFT JOIN lote_mineral lm ON lm.id = lg.id_lote_mineral
         LEFT JOIN particion_lote_mineral plm ON plm.id = lg.id_particion_lote_mineral
@@ -177,6 +193,10 @@ class GuiasPrimerTramoData
             $row->peso_inicial = $row->peso_inicial !== null ? (float) $row->peso_inicial : null;
             $row->peso_final = $row->peso_final !== null ? (float) $row->peso_final : null;
             $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
+            $row->balanza_peso_inicial = $row->balanza_peso_inicial !== null ? (float) $row->balanza_peso_inicial : null;
+            $row->balanza_peso_final = $row->balanza_peso_final !== null ? (float) $row->balanza_peso_final : null;
+            $row->balanza_peso_neto = $row->balanza_peso_neto !== null ? (float) $row->balanza_peso_neto : null;
+            $row->log_cambios = isset($row->log_cambios) ? json_decode($row->log_cambios, true) ?? [] : [];
         }
 
         return $rows;

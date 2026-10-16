@@ -512,7 +512,7 @@ class RecepcionUnidadesData
     /**
      * Obtener toda la información estructurada para el Ticket de Ingreso de Vehículos con Carga.
      */
-    public static function get_ticket_ingreso_info(int $idRecepcionUnidad): ?array
+    public static function get_ticket_ingreso_info(int $idRecepcionUnidad, ?int $idGuia = null): ?array
     {
         $ticket = self::asegurar_ticket_recepcion_unidad($idRecepcionUnidad);
         if (! $ticket) {
@@ -619,13 +619,69 @@ class RecepcionUnidadesData
             return null;
         }
 
-        return self::hydrate_ticket_ingreso($row);
+        // Buscar guía asociada
+        $guia = null;
+        if ($idGuia !== null) {
+            $guia = DB::table('guia_primer_tramo')
+                ->where('id', $idGuia)
+                ->where('estado', 'Activo')
+                ->first();
+        } else {
+            $guias = self::get_guias_recepcion($idRecepcionUnidad);
+            if (! empty($guias)) {
+                $guia = $guias[0];
+            }
+        }
+
+        return self::hydrate_ticket_ingreso($row, $guia);
+    }
+
+    /**
+     * Obtener listado de guías de primer tramo asociadas a la recepción.
+     */
+    public static function get_guias_recepcion(int $idRecepcionUnidad): array
+    {
+        $sql = <<<'SQL'
+            SELECT DISTINCT
+                gpt.id,
+                gpt.guia_remitente,
+                gpt.guia_transportista,
+                gpt.sin_guia_transportista,
+                gpt.con_no_conformidad,
+                gpt.peso_guia_remision,
+                gpt.peso_vehicular_total,
+                gpt.fecha_emision,
+                gpt.created_at
+            FROM guia_primer_tramo gpt
+            LEFT JOIN lote_guia lg ON lg.id_guia_primer_tramo = gpt.id
+            LEFT JOIN lote_mineral lm ON lm.id = lg.id_lote_mineral
+            LEFT JOIN particion_lote_mineral plm ON plm.id = lg.id_particion_lote_mineral
+            WHERE (gpt.id_recepcion_unidad = :id_rec1 OR lm.id_recepcion_unidad = :id_rec2 OR plm.id_recepcion_unidad = :id_rec3)
+              AND gpt.estado = 'Activo'
+            ORDER BY gpt.id ASC
+        SQL;
+
+        $rows = DB::select($sql, [
+            'id_rec1' => $idRecepcionUnidad,
+            'id_rec2' => $idRecepcionUnidad,
+            'id_rec3' => $idRecepcionUnidad,
+        ]);
+
+        foreach ($rows as $r) {
+            $r->id = (int) $r->id;
+            $r->sin_guia_transportista = (bool) $r->sin_guia_transportista;
+            $r->con_no_conformidad = (bool) $r->con_no_conformidad;
+            $r->peso_guia_remision = $r->peso_guia_remision !== null ? (float) $r->peso_guia_remision : 0.0;
+            $r->peso_vehicular_total = $r->peso_vehicular_total !== null ? (float) $r->peso_vehicular_total : 0.0;
+        }
+
+        return $rows;
     }
 
     /**
      * Convierte el row crudo al shape que requiere el PDF Ticket de Ingreso.
      */
-    private static function hydrate_ticket_ingreso(object $row): array
+    private static function hydrate_ticket_ingreso(object $row, mixed $guia = null): array
     {
         $esDespacho = ($row->tipo_ingreso === 'Despacho de Mineral');
 
@@ -687,9 +743,28 @@ class RecepcionUnidadesData
             $producto = 'MINERAL AURIFERO EN BRUTO SIN PROCESAR';
         }
 
-        // Por el momento estos datos van con raya (—)
+        // Pesos documentarios de la guía (en TM)
         $pesoGuiaTm = null;
         $pesoVehicularTotalTm = null;
+
+        if ($guia) {
+            $pGuia = isset($guia->peso_guia_remision) ? (float) $guia->peso_guia_remision : 0.0;
+            $pVeh = isset($guia->peso_vehicular_total) ? (float) $guia->peso_vehicular_total : 0.0;
+
+            if ($pGuia > 0) {
+                $pesoGuiaTm = $pGuia > 200 ? round($pGuia / 1000, 3) : round($pGuia, 3);
+            }
+            if ($pVeh > 0) {
+                $pesoVehicularTotalTm = $pVeh > 200 ? round($pVeh / 1000, 3) : round($pVeh, 3);
+            }
+
+            if (! empty($guia->guia_remitente)) {
+                $row->guia_remitente = $guia->guia_remitente;
+            }
+            if (! empty($guia->guia_transportista)) {
+                $row->guia_transportista = $guia->guia_transportista;
+            }
+        }
 
         return [
             'id' => (int) $row->recepcion_id,

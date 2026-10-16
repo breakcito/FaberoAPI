@@ -40,9 +40,19 @@ class RecepcionUnidadesController extends Controller
     /**
      * Obtener datos estructurados para imprimir el Ticket de Ingreso de Vehículos con Carga.
      */
-    public function get_ticket_ingreso(int $id): JsonResponse
+    public function get_ticket_ingreso(Request $request, int $id): JsonResponse
     {
-        return response()->json(RecepcionUnidadesService::get_ticket_ingreso($id));
+        $idGuia = $request->query('id_guia') ? (int) $request->query('id_guia') : null;
+
+        return response()->json(RecepcionUnidadesService::get_ticket_ingreso($id, $idGuia));
+    }
+
+    /**
+     * Obtener las guías de primer tramo asociadas a la recepción.
+     */
+    public function get_guias(int $id): JsonResponse
+    {
+        return response()->json(RecepcionUnidadesService::get_guias_recepcion($id));
     }
 
     /**

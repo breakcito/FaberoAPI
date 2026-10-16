@@ -219,7 +219,13 @@ class GuiasPrimerTramoController extends Controller
             'guia_remitente' => 'nullable|string|max:20',
             'guia_transportista' => 'nullable|string|max:20',
             'sin_guia_transportista' => 'nullable|boolean',
+            'id_recepcion_unidad' => 'nullable|integer|exists:recepcion_unidad,id',
+            'con_no_conformidad' => 'nullable|boolean',
+            'peso_guia_remision' => 'nullable|numeric|min:0',
+            'peso_vehicular_total' => 'nullable|numeric|min:0',
             'documento_guia_remitente' => 'nullable|file',
+            'documento_guia_transportista' => 'nullable|file',
+            'documento_nota_no_conformidad' => 'nullable|file',
             'pesos_oficiales_lotes' => 'nullable|array',
         ]);
 
@@ -299,12 +305,17 @@ class GuiasPrimerTramoController extends Controller
             'guia_remitente' => $request->input('guia_remitente'),
             'guia_transportista' => $request->input('guia_transportista'),
             'sin_guia_transportista' => $request->boolean('sin_guia_transportista'),
+            'id_recepcion_unidad' => $request->input('id_recepcion_unidad'),
+            'con_no_conformidad' => $request->boolean('con_no_conformidad'),
+            'peso_guia_remision' => $request->input('peso_guia_remision'),
+            'peso_vehicular_total' => $request->input('peso_vehicular_total'),
             'pesos_oficiales_lotes' => $request->input('pesos_oficiales_lotes'),
         ];
 
         $archivos = [
             'guia_remitente' => $request->hasFile('documento_guia_remitente') ? $request->file('documento_guia_remitente') : null,
             'guia_transportista' => $request->hasFile('documento_guia_transportista') ? $request->file('documento_guia_transportista') : null,
+            'nota_no_conformidad' => $request->hasFile('documento_nota_no_conformidad') ? $request->file('documento_nota_no_conformidad') : null,
         ];
 
         $resultado = GuiasPrimerTramoService::crear_guia($data, $lotes, $archivos, $request);
@@ -348,8 +359,13 @@ class GuiasPrimerTramoController extends Controller
             'guia_remitente' => 'nullable|string|max:20',
             'guia_transportista' => 'nullable|string|max:20',
             'sin_guia_transportista' => 'nullable|boolean',
+            'id_recepcion_unidad' => 'nullable|integer|exists:recepcion_unidad,id',
+            'con_no_conformidad' => 'nullable|boolean',
+            'peso_guia_remision' => 'nullable|numeric|min:0',
+            'peso_vehicular_total' => 'nullable|numeric|min:0',
             'documento_guia_remitente' => 'nullable|file',
             'documento_guia_transportista' => 'nullable|file',
+            'documento_nota_no_conformidad' => 'nullable|file',
             'motivo' => 'nullable|string',
             'pesos_oficiales_lotes' => 'nullable|array',
         ]);
@@ -447,6 +463,10 @@ class GuiasPrimerTramoController extends Controller
             'guia_remitente' => $request->input('guia_remitente'),
             'guia_transportista' => $request->input('guia_transportista'),
             'sin_guia_transportista' => $request->boolean('sin_guia_transportista'),
+            'id_recepcion_unidad' => $request->input('id_recepcion_unidad'),
+            'con_no_conformidad' => $request->boolean('con_no_conformidad'),
+            'peso_guia_remision' => $request->input('peso_guia_remision'),
+            'peso_vehicular_total' => $request->input('peso_vehicular_total'),
             'motivo' => $request->input('motivo'),
             'pesos_oficiales_lotes' => $request->input('pesos_oficiales_lotes'),
         ];
@@ -454,6 +474,7 @@ class GuiasPrimerTramoController extends Controller
         $archivos = [
             'guia_remitente' => $request->hasFile('documento_guia_remitente') ? $request->file('documento_guia_remitente') : null,
             'guia_transportista' => $request->hasFile('documento_guia_transportista') ? $request->file('documento_guia_transportista') : null,
+            'nota_no_conformidad' => $request->hasFile('documento_nota_no_conformidad') ? $request->file('documento_nota_no_conformidad') : null,
         ];
 
         $resultado = GuiasPrimerTramoService::actualizar_guia($id, $data, $lotes, $archivos, $request);

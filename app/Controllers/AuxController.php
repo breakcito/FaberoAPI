@@ -441,6 +441,11 @@ class AuxController extends Controller
             lm.created_at,
             p.razon_social AS proveedor_nombre,
             v.placa AS vehiculo_placa,
+            ru.id_vehiculo,
+            ru.id_vehiculo_carreta,
+            vc.placa AS vehiculo_carreta_placa,
+            ru.id_conductor,
+            ru.id_empresa_transporte,
             ru.guia_remitente AS guia_remitente_recepcion,
             ru.fecha_hora_ingreso as fecha_hora_ingreso_vehiculo,
             ru.guia_transportista AS guia_transportista_recepcion,
@@ -456,6 +461,7 @@ class AuxController extends Controller
         FROM lote_mineral lm
         INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
         INNER JOIN vehiculo v ON v.id = ru.id_vehiculo
+        LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
         LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero
         WHERE lm.peso_inicial IS NOT NULL
           AND lm.peso_final IS NOT NULL
@@ -530,6 +536,11 @@ class AuxController extends Controller
             plm.fecha_hora_peso_inicial AS created_at,
             p.razon_social AS proveedor_nombre,
             v.placa AS vehiculo_placa,
+            ru.id_vehiculo,
+            ru.id_vehiculo_carreta,
+            vc.placa AS vehiculo_carreta_placa,
+            ru.id_conductor,
+            ru.id_empresa_transporte,
             ru.guia_remitente AS guia_remitente_recepcion,
             ru.guia_transportista AS guia_transportista_recepcion,
             ru.documentos_programacion AS documentos_programacion_recepcion,
@@ -545,6 +556,7 @@ class AuxController extends Controller
         INNER JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
         INNER JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
         INNER JOIN vehiculo v ON v.id = ru.id_vehiculo
+        LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
         LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero
         WHERE (lm.peso_inicial IS NOT NULL OR lm.particionado_desde_balanza = 1)
           AND (lm.peso_final IS NOT NULL OR lm.particionado_desde_balanza = 1)
@@ -625,7 +637,16 @@ class AuxController extends Controller
     {
         $row = DB::table('recepcion_unidad')
             ->where('id', $idRecepcion)
-            ->first(['documentos_programacion', 'guia_remitente', 'guia_transportista']);
+            ->first([
+                'id',
+                'documentos_programacion',
+                'guia_remitente',
+                'guia_transportista',
+                'id_vehiculo',
+                'id_vehiculo_carreta',
+                'id_conductor',
+                'id_empresa_transporte',
+            ]);
 
         if (! $row) {
             return response()->json(ApiResponse::error('No se encontró la recepción.', 404));
@@ -636,6 +657,11 @@ class AuxController extends Controller
         );
 
         return response()->json(ApiResponse::success([
+            'id_recepcion_unidad' => (int) $row->id,
+            'id_vehiculo' => $row->id_vehiculo !== null ? (int) $row->id_vehiculo : null,
+            'id_vehiculo_carreta' => $row->id_vehiculo_carreta !== null ? (int) $row->id_vehiculo_carreta : null,
+            'id_conductor' => $row->id_conductor !== null ? (int) $row->id_conductor : null,
+            'id_empresa_transporte' => $row->id_empresa_transporte !== null ? (int) $row->id_empresa_transporte : null,
             'guia_remitente' => $row->guia_remitente !== null ? (string) $row->guia_remitente : null,
             'guia_transportista' => $row->guia_transportista !== null ? (string) $row->guia_transportista : null,
             'documentos' => $docs,

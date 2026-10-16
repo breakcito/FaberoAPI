@@ -531,10 +531,25 @@ class RecepcionMineralService
             // padre tiene `id_recepcion_unidad = NULL` y por tanto no aparece
             // en la consulta de lotes regulares). Si AMBAS listas están
             // vacías, no hay nada que cerrar.
-            $lotes = LoteMineral::where('id_recepcion_unidad', $id)->get();
-            $particionesDeUnidad = DB::table('particion_lote_mineral')
-                ->where('id_recepcion_unidad', $id)
-                ->where('estado', EstadoBase::Activo->value)
+            $lotes = LoteMineral::where('id_recepcion_unidad', $id)
+                ->where(function ($q) {
+                    $q->whereNull('estado')
+                        ->orWhere('estado', '!=', EstadoBase::Eliminado->value);
+                })
+                ->where('tiene_particion', false)
+                ->get();
+            $particionesDeUnidad = DB::table('particion_lote_mineral as p')
+                ->join('lote_mineral as lm', 'lm.id', '=', 'p.id_lote_mineral')
+                ->where('p.id_recepcion_unidad', $id)
+                ->where(function ($q) {
+                    $q->whereNull('p.estado')
+                        ->orWhere('p.estado', '!=', EstadoBase::Eliminado->value);
+                })
+                ->where(function ($q) {
+                    $q->whereNull('lm.estado')
+                        ->orWhere('lm.estado', '!=', EstadoBase::Eliminado->value);
+                })
+                ->select('p.*')
                 ->get();
             if ($lotes->isEmpty() && $particionesDeUnidad->isEmpty()) {
                 return ApiResponse::error('Debe registrar al menos un lote o partición de mineral para esta unidad.');

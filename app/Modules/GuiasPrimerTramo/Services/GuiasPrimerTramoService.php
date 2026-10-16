@@ -61,6 +61,7 @@ class GuiasPrimerTramoService
     {
         $doc = [
             'guia_remitente' => $previos['guia_remitente'] ?? null,
+            'nota_no_conformidad' => $previos['nota_no_conformidad'] ?? null,
         ];
 
         if ($sin_guia_transportista) {
@@ -69,14 +70,19 @@ class GuiasPrimerTramoService
             $doc['guia_transportista'] = $previos['guia_transportista'] ?? null;
         }
 
-        if ($archivos['guia_remitente'] !== null) {
+        if (isset($archivos['guia_remitente']) && $archivos['guia_remitente'] !== null) {
             $saved = ArchivoHelper::guardarArchivos('guias-primer-tramo', [$archivos['guia_remitente']]);
             $doc['guia_remitente'] = $saved[0] ?? null;
         }
 
-        if (! $sin_guia_transportista && $archivos['guia_transportista'] !== null) {
+        if (! $sin_guia_transportista && isset($archivos['guia_transportista']) && $archivos['guia_transportista'] !== null) {
             $saved = ArchivoHelper::guardarArchivos('guias-primer-tramo', [$archivos['guia_transportista']]);
             $doc['guia_transportista'] = $saved[0] ?? null;
+        }
+
+        if (isset($archivos['nota_no_conformidad']) && $archivos['nota_no_conformidad'] !== null) {
+            $saved = ArchivoHelper::guardarArchivos('guias-primer-tramo', [$archivos['nota_no_conformidad']]);
+            $doc['nota_no_conformidad'] = $saved[0] ?? null;
         }
 
         return $doc;
@@ -329,6 +335,16 @@ class GuiasPrimerTramoService
                 'guia_transportista' => $sinGuiaTransportista ? null : ($data['guia_transportista'] ?? null),
                 'sin_guia_transportista' => $sinGuiaTransportista,
                 'documentos' => json_encode($documentos),
+                'id_recepcion_unidad' => isset($data['id_recepcion_unidad']) && $data['id_recepcion_unidad'] !== null
+                    ? (int) $data['id_recepcion_unidad']
+                    : null,
+                'con_no_conformidad' => filter_var($data['con_no_conformidad'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                'peso_guia_remision' => isset($data['peso_guia_remision']) && $data['peso_guia_remision'] !== null
+                    ? round((float) $data['peso_guia_remision'], 2)
+                    : 0.00,
+                'peso_vehicular_total' => isset($data['peso_vehicular_total']) && $data['peso_vehicular_total'] !== null
+                    ? round((float) $data['peso_vehicular_total'], 2)
+                    : 0.00,
                 'id_empleado_registro' => $idEmpleadoRegistro,
                 'estado' => EstadoGuiaPrimerTramo::Activo->value,
                 'created_at' => now()->toDateTimeString(),
@@ -446,6 +462,16 @@ class GuiasPrimerTramoService
                 'guia_remitente' => $data['guia_remitente'] ?? null,
                 'guia_transportista' => $sinGuiaTransportista ? null : ($data['guia_transportista'] ?? null),
                 'sin_guia_transportista' => $sinGuiaTransportista,
+                'id_recepcion_unidad' => isset($data['id_recepcion_unidad']) && $data['id_recepcion_unidad'] !== null
+                    ? (int) $data['id_recepcion_unidad']
+                    : null,
+                'con_no_conformidad' => filter_var($data['con_no_conformidad'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                'peso_guia_remision' => isset($data['peso_guia_remision']) && $data['peso_guia_remision'] !== null
+                    ? round((float) $data['peso_guia_remision'], 2)
+                    : 0.00,
+                'peso_vehicular_total' => isset($data['peso_vehicular_total']) && $data['peso_vehicular_total'] !== null
+                    ? round((float) $data['peso_vehicular_total'], 2)
+                    : 0.00,
                 'documentos' => $documentos,
             ];
 
@@ -562,6 +588,9 @@ class GuiasPrimerTramoService
                 'guia_remitente' => ['nombre' => 'Guía remitente', 'tipo' => 'string'],
                 'guia_transportista' => ['nombre' => 'Guía transportista', 'tipo' => 'string'],
                 'sin_guia_transportista' => ['nombre' => 'Sin guía transportista', 'tipo' => 'bool'],
+                'con_no_conformidad' => ['nombre' => 'Con no conformidad', 'tipo' => 'bool'],
+                'peso_guia_remision' => ['nombre' => 'Peso guía de remisión', 'tipo' => 'string'],
+                'peso_vehicular_total' => ['nombre' => 'Peso vehicular total', 'tipo' => 'string'],
             ];
 
             foreach ($camposAuditar as $campoBd => $meta) {
@@ -650,6 +679,7 @@ class GuiasPrimerTramoService
             $docFields = [
                 'guia_remitente' => 'Documento guía remitente',
                 'guia_transportista' => 'Documento guía transportista',
+                'nota_no_conformidad' => 'Documento nota de no conformidad',
             ];
             foreach ($docFields as $docKey => $docLabel) {
                 $previoDoc = is_array($previosDocumentos) ? ($previosDocumentos[$docKey] ?? null) : null;
@@ -781,6 +811,10 @@ class GuiasPrimerTramoService
                 'guia_remitente' => $nuevosValoresCab['guia_remitente'],
                 'guia_transportista' => $nuevosValoresCab['guia_transportista'],
                 'sin_guia_transportista' => $nuevosValoresCab['sin_guia_transportista'],
+                'id_recepcion_unidad' => $nuevosValoresCab['id_recepcion_unidad'],
+                'con_no_conformidad' => $nuevosValoresCab['con_no_conformidad'],
+                'peso_guia_remision' => $nuevosValoresCab['peso_guia_remision'],
+                'peso_vehicular_total' => $nuevosValoresCab['peso_vehicular_total'],
                 'documentos' => json_encode($documentos),
                 'log_cambios' => json_encode($logActual),
             ]);
@@ -819,16 +853,56 @@ class GuiasPrimerTramoService
                         'peso_inicial' => $pesoInicial,
                         'peso_final' => $pesoFinal,
                         'peso_neto' => $pesoNeto,
+                        'log_cambios' => null,
                         'created_at' => $now,
                     ]);
                 } else {
+                    $cambiosItem = [];
+                    $valAntIni = $existente->peso_inicial !== null ? round((float) $existente->peso_inicial, 2) : 0.00;
+                    $valAntFin = $existente->peso_final !== null ? round((float) $existente->peso_final, 2) : 0.00;
+                    $valAntNet = $existente->peso_neto !== null ? round((float) $existente->peso_neto, 2) : 0.00;
+
+                    if (abs($valAntIni - $pesoInicial) > 0.01) {
+                        $cambiosItem[] = [
+                            'campo_bd' => 'peso_inicial',
+                            'campo' => 'Peso inicial (guía)',
+                            'valor_anterior' => $valAntIni,
+                            'valor_nuevo' => $pesoInicial,
+                        ];
+                    }
+                    if (abs($valAntFin - $pesoFinal) > 0.01) {
+                        $cambiosItem[] = [
+                            'campo_bd' => 'peso_final',
+                            'campo' => 'Peso final (guía)',
+                            'valor_anterior' => $valAntFin,
+                            'valor_nuevo' => $pesoFinal,
+                        ];
+                    }
+                    if (abs($valAntNet - $pesoNeto) > 0.01) {
+                        $cambiosItem[] = [
+                            'campo_bd' => 'peso_neto',
+                            'campo' => 'Peso neto (guía)',
+                            'valor_anterior' => $valAntNet,
+                            'valor_nuevo' => $pesoNeto,
+                        ];
+                    }
+
+                    $updateLoteGuia = [
+                        'peso_inicial' => $pesoInicial,
+                        'peso_final' => $pesoFinal,
+                        'peso_neto' => $pesoNeto,
+                    ];
+
+                    if (! empty($cambiosItem)) {
+                        $logItemActual = isset($existente->log_cambios) ? json_decode($existente->log_cambios, true) ?? [] : [];
+                        $nuevoLogItem = RES_CambiosLog::crear($idEmpleado ?? 0, $data['motivo'] ?? null, $cambiosItem);
+                        array_unshift($logItemActual, $nuevoLogItem);
+                        $updateLoteGuia['log_cambios'] = json_encode($logItemActual);
+                    }
+
                     DB::table('lote_guia')
                         ->where('id', $existente->id)
-                        ->update([
-                            'peso_inicial' => $pesoInicial,
-                            'peso_final' => $pesoFinal,
-                            'peso_neto' => $pesoNeto,
-                        ]);
+                        ->update($updateLoteGuia);
                 }
             }
 
