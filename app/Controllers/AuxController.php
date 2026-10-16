@@ -756,6 +756,16 @@ class AuxController extends Controller
     }
 
     /**
+     * Obtener el tipo de cambio vigente para la fecha actual (o consultada) y el último histórico.
+     */
+    public function get_tipo_cambio_vigente(Request $request): JsonResponse
+    {
+        $fecha = $request->query('fecha') ? (string) $request->query('fecha') : null;
+
+        return response()->json(TipoCambioService::get_tipo_cambio_vigente($fecha));
+    }
+
+    /**
      * Registrar un nuevo tipo de cambio (regla: 1 por fecha).
      */
     public function crear_tipo_cambio(Request $request): JsonResponse

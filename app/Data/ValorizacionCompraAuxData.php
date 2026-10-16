@@ -65,6 +65,10 @@ class ValorizacionCompraAuxData
                   )
                   -- Excluir el lote completo si ya tiene AMBOS elementos (Oro y Plata) valorizados.
                   AND NOT (lm.esta_valorizado_oro = 1 AND lm.esta_valorizado_plata = 1)
+                  -- Debe contar con ley de oro, plata y humedad registradas.
+                  AND COALESCE(lm.ley_oro, 0) > 0
+                  AND COALESCE(lm.ley_plata, 0) > 0
+                  AND COALESCE(lm.ley_humedad, 0) > 0
             ) t ON t.id_proveedor = p.id
             ORDER BY p.razon_social ASC;
         ';
@@ -260,6 +264,10 @@ class ValorizacionCompraAuxData
                   )
                   -- Excluir el lote completo si ya tiene AMBOS elementos (Oro y Plata) valorizados.
                   AND NOT (lm.esta_valorizado_oro = 1 AND lm.esta_valorizado_plata = 1)
+                  -- Debe contar con ley de oro, plata y humedad registradas.
+                  AND COALESCE(lm.ley_oro, 0) > 0
+                  AND COALESCE(lm.ley_plata, 0) > 0
+                  AND COALESCE(lm.ley_humedad, 0) > 0
             ) ranked
             WHERE ranked.rn = 1
             ORDER BY ranked.fecha_en_planta ASC, ranked.numero_correlativo ASC;

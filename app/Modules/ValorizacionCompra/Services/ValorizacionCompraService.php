@@ -79,9 +79,16 @@ class ValorizacionCompraService
                 }
             }
 
+            // Validar límite de 10 lotes físicos únicos
+            $lotesUnicos = [];
+            foreach ($data['detalles'] as $d) {
+                $lotesUnicos[$d['id_lote_guia']] = true;
+            }
+            if (count($lotesUnicos) > 10) {
+                throw new Exception('Solo se puede valorizar/hacer propuesta de hasta 10 lotes.');
+            }
+
             if ($todosSinValorComercial) {
-                $data['monto_penalidad'] = 0;
-                $data['monto_flete'] = 0;
                 $data['anticipos'] = [];
                 $tipoPagoEnum = TipoPagoValorizacionCompra::Transferencia;
             } else {
@@ -99,6 +106,8 @@ class ValorizacionCompraService
                 'id_cuenta_detraccion' => $data['id_cuenta_detraccion'] ?? null,
                 'id_empleado_registro' => $data['id_empleado_registro'],
                 'id_empleado_aprobacion' => null,
+                'id_empleado_solicita_oc' => null,
+                'fecha_hora_solicitud_oc' => null,
                 'numero_correlativo' => $numeroCorrelativo,
                 'correlativo' => $correlativoStr,
                 'tipo_pago' => $tipoPagoEnum->value,
@@ -106,8 +115,6 @@ class ValorizacionCompraService
                 'log_cambios' => [],
                 'fecha_hora_aprobacion' => null,
                 'fecha_hora_valorizacion' => $data['fecha_hora_valorizacion'] ?? null,
-                'monto_penalidad' => $data['monto_penalidad'] ?? 0,
-                'monto_flete' => $data['monto_flete'] ?? 0,
                 'created_at' => now(),
                 'estado' => EstadoValorizacionCompra::Pendiente->value,
             ]);
@@ -139,6 +146,11 @@ class ValorizacionCompraService
                     $factor = 1.0;
                     $ptn = 0.0;
                     $subtotal = 0.0;
+                    $montoPenalidad = 0.0;
+                    $montoFlete = 0.0;
+                    $descuento = 0.0;
+                    $subtotalSinDescuento = 0.0;
+                    $subtotalFinal = 0.0;
                 } else {
                     $inter = (float) $det['inter'];
                     $desInter = (float) $det['des_inter'];
@@ -150,8 +162,13 @@ class ValorizacionCompraService
                     // Formula: ptn = ((inter - desInter) * ley * (rec / 100) - maquila - consumo) * factor
                     $ptn = (($inter - $desInter) * $ley * ($recuperacion / 100) - $maquila - $consumo) * $factor;
 
-                    // Formula: subtotal = ptn * pesoSeco / 1000
-                    $subtotal = ($ptn * $pesoSeco) / 1000;
+                    // Formula: subtotal_sin_descuento = ptn * pesoSeco / 1000
+                    $subtotalSinDescuento = round(($ptn * $pesoSeco) / 1000, 2);
+
+                    $montoPenalidad = (float) ($det['monto_penalidad'] ?? 0);
+                    $montoFlete = (float) ($det['monto_flete'] ?? 0);
+                    $descuento = round($montoPenalidad + $montoFlete, 2);
+                    $subtotalFinal = round($subtotalSinDescuento - $descuento, 2);
                 }
 
                 $detallesCreados[] = ValorizacionCompraDetalle::create([
@@ -167,7 +184,11 @@ class ValorizacionCompraService
                     'consumo' => $consumo,
                     'factor' => $factor,
                     'precio_por_tonelada' => round($ptn, 2),
-                    'subtotal' => round($subtotal, 2),
+                    'monto_penalidad' => $montoPenalidad,
+                    'monto_flete' => $montoFlete,
+                    'descuento' => $descuento,
+                    'subtotal_sin_descuento' => $subtotalSinDescuento,
+                    'subtotal' => $subtotalFinal,
                     'log_cambios' => [],
                 ]);
             }
@@ -274,9 +295,16 @@ class ValorizacionCompraService
                 }
             }
 
+            // Validar límite de 10 lotes físicos únicos
+            $lotesUnicos = [];
+            foreach ($data['detalles'] ?? [] as $d) {
+                $lotesUnicos[$d['id_lote_guia']] = true;
+            }
+            if (count($lotesUnicos) > 10) {
+                throw new Exception('Solo se puede valorizar/hacer propuesta de hasta 10 lotes.');
+            }
+
             if ($todosSinValorComercial) {
-                $data['monto_penalidad'] = 0;
-                $data['monto_flete'] = 0;
                 $data['anticipos'] = [];
                 $tipoPagoEnum = TipoPagoValorizacionCompra::Transferencia;
             } else {
@@ -402,8 +430,6 @@ class ValorizacionCompraService
                 'log_cambios' => $logCambios,
                 'total_subtotal' => $newTotalSubtotal,
                 'fecha_hora_valorizacion' => $data['fecha_hora_valorizacion'] ?? null,
-                'monto_penalidad' => $data['monto_penalidad'] ?? 0,
-                'monto_flete' => $data['monto_flete'] ?? 0,
             ]);
 
             // Re-sincronizar detalles
@@ -558,6 +584,12 @@ class ValorizacionCompraService
                     }
                 }
 
+                $montoPenalidad = (float) ($det['monto_penalidad'] ?? 0);
+                $montoFlete = (float) ($det['monto_flete'] ?? 0);
+                $descuento = round($montoPenalidad + $montoFlete, 2);
+                $subtotalSinDescuento = round($subtotal, 2);
+                $subtotalFinal = round($subtotalSinDescuento - $descuento, 2);
+
                 $detallesCreados[] = ValorizacionCompraDetalle::create([
                     'id_valorizacion_compra' => $valorizacion->id,
                     'id_lote_guia' => $det['id_lote_guia'],
@@ -571,7 +603,11 @@ class ValorizacionCompraService
                     'consumo' => $consumo,
                     'factor' => $factor,
                     'precio_por_tonelada' => round($ptn, 2),
-                    'subtotal' => round($subtotal, 2),
+                    'monto_penalidad' => $montoPenalidad,
+                    'monto_flete' => $montoFlete,
+                    'descuento' => $descuento,
+                    'subtotal_sin_descuento' => $subtotalSinDescuento,
+                    'subtotal' => $subtotalFinal,
                     'log_cambios' => $logCambiosDetalle,
                 ]);
             }
@@ -1103,6 +1139,8 @@ class ValorizacionCompraService
                 'consumo' => (float) $od->consumo,
                 'factor' => (float) $od->factor,
                 'precio_por_tonelada' => (float) $od->precio_por_tonelada,
+                'monto_penalidad' => (float) ($od->monto_penalidad ?? 0),
+                'monto_flete' => (float) ($od->monto_flete ?? 0),
                 'subtotal' => (float) $od->subtotal,
                 'log_cambios' => $od->log_cambios ?? [],
             ];
@@ -1124,21 +1162,25 @@ class ValorizacionCompraService
                 'maquila' => (float) ($det['maquila'] ?? 0),
                 'consumo' => (float) ($det['consumo'] ?? 0),
                 'factor' => (float) ($det['factor'] ?? 1.0),
+                'monto_penalidad' => (float) ($det['monto_penalidad'] ?? 0),
+                'monto_flete' => (float) ($det['monto_flete'] ?? 0),
             ];
 
             if ($lg && $lg->loteMineral) {
                 $lote = $lg->loteMineral;
                 if (self::loteEsSinValorComercial($lote)) {
-                    $subtotalTmp = 0.0;
+                    $subtotalFinalTmp = 0.0;
                 } else {
                     $pesoNeto = (float) ($lote->peso_neto ?? 0);
                     $pesoSeco = $pesoNeto * (1 - ((float) $lote->ley_humedad / 100));
                     $elementoEnumTmp = ElementoQuimicoValorizacion::tryFrom($elem) ?? ElementoQuimicoValorizacion::Oro;
                     $leyTmp = $elementoEnumTmp === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
                     $ptnTmp = (((float) ($det['inter'] ?? 0) - (float) ($det['des_inter'] ?? 0)) * $leyTmp * ((float) ($det['recuperacion'] ?? 0) / 100) - (float) ($det['maquila'] ?? 0) - (float) ($det['consumo'] ?? 0)) * (float) ($det['factor'] ?? 1.0);
-                    $subtotalTmp = ($ptnTmp * $pesoSeco) / 1000;
+                    $subtotalSinDescTmp = round(($ptnTmp * $pesoSeco) / 1000, 2);
+                    $descTmp = round((float) ($det['monto_penalidad'] ?? 0) + (float) ($det['monto_flete'] ?? 0), 2);
+                    $subtotalFinalTmp = round($subtotalSinDescTmp - $descTmp, 2);
                 }
-                $newTotalSubtotal += round($subtotalTmp, 2);
+                $newTotalSubtotal += $subtotalFinalTmp;
             }
         }
 
@@ -1257,5 +1299,52 @@ class ValorizacionCompraService
         }
 
         return $lote->con_valor_comercial === 0 || $lote->con_valor_comercial === false || $lote->con_valor_comercial === '0';
+    }
+
+    /**
+     * Solicitar Orden de Compra para una valorización
+     */
+    public static function solicitar_oc(int $id, int $idEmpleado): array
+    {
+        $valorizacion = ValorizacionCompraData::find_model($id);
+        if (! $valorizacion) {
+            return ApiResponse::error("Valorización con ID {$id} no encontrada.");
+        }
+
+        $empleado = DB::table('empleado')->where('id', $idEmpleado)->first();
+        $nombreEmpleado = $empleado ? trim($empleado->nombre.' '.$empleado->apellido) : "Empleado #{$idEmpleado}";
+
+        $logCambios = $valorizacion->log_cambios ?? [];
+        $logCambios[] = [
+            'fecha_hora' => now()->toDateTimeString(),
+            'update_at' => now()->toIso8601String(),
+            'id_empleado' => $idEmpleado,
+            'accion' => 'Solicitud de Orden de Compra',
+            'motivo' => "Solicitud de OC generada por {$nombreEmpleado}",
+            'cambios' => [
+                [
+                    'campo_bd' => 'fecha_hora_solicitud_oc',
+                    'campo' => 'Fecha de Solicitud OC',
+                    'valor_anterior' => $valorizacion->fecha_hora_solicitud_oc ? $valorizacion->fecha_hora_solicitud_oc->toDateTimeString() : '—',
+                    'valor_nuevo' => now()->toDateTimeString(),
+                ],
+                [
+                    'campo_bd' => 'id_empleado_solicita_oc',
+                    'campo' => 'Solicitado Por',
+                    'valor_anterior' => $valorizacion->empleadoSolicitaOc ? trim($valorizacion->empleadoSolicitaOc->nombre.' '.$valorizacion->empleadoSolicitaOc->apellido) : '—',
+                    'valor_nuevo' => $nombreEmpleado,
+                ],
+            ],
+        ];
+
+        $valorizacion->update([
+            'id_empleado_solicita_oc' => $idEmpleado,
+            'fecha_hora_solicitud_oc' => now(),
+            'log_cambios' => $logCambios,
+        ]);
+
+        $valDetalle = ValorizacionCompraData::get_valorizacion_by_id($id);
+
+        return ApiResponse::success($valDetalle, 'Orden de Compra solicitada correctamente.');
     }
 }

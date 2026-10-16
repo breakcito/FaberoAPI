@@ -97,6 +97,64 @@ class TipoCambioData
     }
 
     /**
+     * Obtener el tipo de cambio vigente para la fecha actual (o consultada) y el último histórico.
+     */
+    public static function get_tipo_cambio_vigente(?string $fecha = null): array
+    {
+        $fechaActual = $fecha ?: date('Y-m-d');
+
+        $sql = '
+        SELECT
+            tc.id,
+            tc.id_empleado_registro,
+            CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre,
+            tc.valor_compra,
+            tc.valor_venta,
+            tc.fecha,
+            tc.created_at,
+            tc.estado
+        FROM tipo_cambio tc
+        INNER JOIN empleado emp ON emp.id = tc.id_empleado_registro
+        WHERE tc.fecha = :fecha AND tc.estado = :estado
+        ORDER BY tc.id DESC
+        LIMIT 1
+        ';
+
+        $hoy = DB::selectOne($sql, [
+            'fecha' => $fechaActual,
+            'estado' => EstadoBase::Activo->value,
+        ]);
+
+        $sqlUltimo = '
+        SELECT
+            tc.id,
+            tc.id_empleado_registro,
+            CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre,
+            tc.valor_compra,
+            tc.valor_venta,
+            tc.fecha,
+            tc.created_at,
+            tc.estado
+        FROM tipo_cambio tc
+        INNER JOIN empleado emp ON emp.id = tc.id_empleado_registro
+        WHERE tc.estado = :estado
+        ORDER BY tc.fecha DESC, tc.id DESC
+        LIMIT 1
+        ';
+
+        $ultimo = DB::selectOne($sqlUltimo, [
+            'estado' => EstadoBase::Activo->value,
+        ]);
+
+        return [
+            'fecha_consultada' => $fechaActual,
+            'registrado_hoy' => $hoy !== null,
+            'tipo_cambio_hoy' => $hoy,
+            'ultimo_historico' => $ultimo,
+        ];
+    }
+
+    /**
      * Verificar si ya existe un tipo de cambio activo registrado para la fecha dada.
      */
     public static function existe_tipo_cambio_en_fecha(string $fecha): bool

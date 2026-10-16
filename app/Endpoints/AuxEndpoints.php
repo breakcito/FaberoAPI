@@ -83,6 +83,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
 
         // tipo de cambio
         Route::get('/tipos-cambio', [AuxController::class, 'get_tipos_cambio']);
+        Route::get('/tipo-cambio/vigente', [AuxController::class, 'get_tipo_cambio_vigente']);
         Route::get('/tipo-cambio', [AuxController::class, 'get_tipo_cambio_por_fecha']);
         Route::post('/tipo-cambio', [AuxController::class, 'crear_tipo_cambio']);
 

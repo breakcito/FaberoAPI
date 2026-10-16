@@ -67,14 +67,14 @@ class ValorizacionCompraController extends Controller
             'detalles.*.maquila' => 'required|numeric|min:0',
             'detalles.*.consumo' => 'required|numeric|min:0',
             'detalles.*.factor' => 'nullable|numeric|min:0',
+            'detalles.*.monto_penalidad' => 'nullable|numeric|min:0',
+            'detalles.*.monto_flete' => 'nullable|numeric|min:0',
             'anticipos' => 'nullable|array',
             'anticipos.*.id_anticipo_proveedor' => 'required|integer|exists:anticipo_proveedor,id',
             'anticipos.*.monto_retirado' => 'required|numeric|gt:0',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
             'fecha_hora_valorizacion' => 'required|date',
-            'monto_penalidad' => 'nullable|numeric|min:0',
-            'monto_flete' => 'nullable|numeric|min:0',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
@@ -90,8 +90,6 @@ class ValorizacionCompraController extends Controller
             'detalles' => $request->input('detalles'),
             'anticipos' => $request->input('anticipos', []),
             'fecha_hora_valorizacion' => $request->input('fecha_hora_valorizacion') ?: null,
-            'monto_penalidad' => $request->input('monto_penalidad') !== null ? (float) $request->input('monto_penalidad') : 0,
-            'monto_flete' => $request->input('monto_flete') !== null ? (float) $request->input('monto_flete') : 0,
         ];
 
         $archivos = [];
@@ -143,6 +141,8 @@ class ValorizacionCompraController extends Controller
             'detalles.*.maquila' => 'required|numeric|min:0',
             'detalles.*.consumo' => 'required|numeric|min:0',
             'detalles.*.factor' => 'nullable|numeric|min:0',
+            'detalles.*.monto_penalidad' => 'nullable|numeric|min:0',
+            'detalles.*.monto_flete' => 'nullable|numeric|min:0',
             'anticipos' => 'nullable|array',
             'anticipos.*.id_anticipo_proveedor' => 'required|integer|exists:anticipo_proveedor,id',
             'anticipos.*.monto_retirado' => 'required|numeric|gt:0',
@@ -150,8 +150,6 @@ class ValorizacionCompraController extends Controller
             'evidencias.*' => 'file',
             'evidencias_existentes' => 'nullable|string',
             'fecha_hora_valorizacion' => 'required|date',
-            'monto_penalidad' => 'nullable|numeric|min:0',
-            'monto_flete' => 'nullable|numeric|min:0',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
@@ -167,8 +165,6 @@ class ValorizacionCompraController extends Controller
             'anticipos' => $request->input('anticipos', []),
             'evidencias_existentes' => $request->input('evidencias_existentes'),
             'fecha_hora_valorizacion' => $request->input('fecha_hora_valorizacion') ?: null,
-            'monto_penalidad' => $request->input('monto_penalidad') !== null ? (float) $request->input('monto_penalidad') : 0,
-            'monto_flete' => $request->input('monto_flete') !== null ? (float) $request->input('monto_flete') : 0,
         ];
 
         $archivos = [];
@@ -232,6 +228,20 @@ class ValorizacionCompraController extends Controller
             $tipoEliminacion,
             $archivos
         );
+        $status = ($res['success'] ?? false) ? 200 : 400;
+
+        return response()->json($res, $status);
+    }
+
+    /**
+     * Solicitar Orden de Compra para una valorización
+     */
+    public function solicitar_oc(Request $request, int $id): JsonResponse
+    {
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = $authUser ? ($authUser->id_empleado ?? $authUser->id_usuario) : 1;
+
+        $res = ValorizacionCompraService::solicitar_oc($id, (int) $idEmpleado);
         $status = ($res['success'] ?? false) ? 200 : 400;
 
         return response()->json($res, $status);

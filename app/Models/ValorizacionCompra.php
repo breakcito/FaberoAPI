@@ -22,6 +22,7 @@ class ValorizacionCompra extends Model
         'id_empleado_registro',
         'id_empleado_aprobacion',
         'id_empleado_anulacion',
+        'id_empleado_solicita_oc',
         'numero_correlativo',
         'correlativo',
         'tipo_pago',
@@ -30,8 +31,7 @@ class ValorizacionCompra extends Model
         'motivo_anulacion',
         'fecha_hora_anulacion',
         'fecha_hora_valorizacion',
-        'monto_penalidad',
-        'monto_flete',
+        'fecha_hora_solicitud_oc',
         'log_cambios',
         'fecha_hora_aprobacion',
         'created_at',
@@ -46,14 +46,14 @@ class ValorizacionCompra extends Model
         'id_empleado_registro' => 'integer',
         'id_empleado_aprobacion' => 'integer',
         'id_empleado_anulacion' => 'integer',
+        'id_empleado_solicita_oc' => 'integer',
         'evidencias' => 'array',
         'evidencias_anulacion' => 'array',
         'log_cambios' => 'array',
         'fecha_hora_aprobacion' => 'datetime',
         'fecha_hora_anulacion' => 'datetime',
         'fecha_hora_valorizacion' => 'datetime',
-        'monto_penalidad' => 'float',
-        'monto_flete' => 'float',
+        'fecha_hora_solicitud_oc' => 'datetime',
         'created_at' => 'datetime',
         'tipo_pago' => TipoPagoValorizacionCompra::class,
         'estado' => EstadoValorizacionCompra::class,
@@ -92,6 +92,11 @@ class ValorizacionCompra extends Model
     public function empleadoAnulacion(): BelongsTo
     {
         return $this->belongsTo(Empleado::class, 'id_empleado_anulacion');
+    }
+
+    public function empleadoSolicitaOc(): BelongsTo
+    {
+        return $this->belongsTo(Empleado::class, 'id_empleado_solicita_oc');
     }
 
     public function detalles(): HasMany

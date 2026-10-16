@@ -35,6 +35,26 @@ class TipoCambioService
     }
 
     /**
+     * Obtener el tipo de cambio vigente para la fecha actual (o consultada) y el último histórico.
+     */
+    public static function get_tipo_cambio_vigente(?string $fecha = null): array
+    {
+        $res = TipoCambioData::get_tipo_cambio_vigente($fecha);
+
+        if ($res['tipo_cambio_hoy']) {
+            $res['tipo_cambio_hoy']->valor_compra = (float) $res['tipo_cambio_hoy']->valor_compra;
+            $res['tipo_cambio_hoy']->valor_venta = (float) $res['tipo_cambio_hoy']->valor_venta;
+        }
+
+        if ($res['ultimo_historico']) {
+            $res['ultimo_historico']->valor_compra = (float) $res['ultimo_historico']->valor_compra;
+            $res['ultimo_historico']->valor_venta = (float) $res['ultimo_historico']->valor_venta;
+        }
+
+        return ApiResponse::success($res, 'Tipo de cambio consultado correctamente.');
+    }
+
+    /**
      * Registrar un nuevo tipo de cambio para una fecha (regla: un solo registro activo por día).
      */
     public static function crear_tipo_cambio(

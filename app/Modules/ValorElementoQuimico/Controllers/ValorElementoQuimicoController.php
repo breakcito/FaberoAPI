@@ -9,6 +9,26 @@ use Illuminate\Http\Request;
 class ValorElementoQuimicoController
 {
     /**
+     * GET /valor-elemento-quimico/vigentes
+     */
+    public function get_precios_vigentes(Request $request): JsonResponse
+    {
+        $fecha = $request->query('fecha') ? (string) $request->query('fecha') : null;
+
+        return response()->json(ValorElementoQuimicoService::get_precios_vigentes($fecha));
+    }
+
+    /**
+     * GET /valor-elemento-quimico/historial
+     */
+    public function get_historial(Request $request): JsonResponse
+    {
+        $limit = $request->query('limit') ? (int) $request->query('limit') : 20;
+
+        return response()->json(ValorElementoQuimicoService::get_historial($limit));
+    }
+
+    /**
      * GET /valor-elemento-quimico/buscar?elemento=Oro&fecha=YYYY-MM-DD
      */
     public function buscar_precio(Request $request): JsonResponse

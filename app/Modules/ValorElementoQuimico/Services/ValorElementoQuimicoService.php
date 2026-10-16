@@ -11,6 +11,26 @@ use Throwable;
 class ValorElementoQuimicoService
 {
     /**
+     * Obtener precios INTER vigentes para la fecha consultada (o hoy).
+     */
+    public static function get_precios_vigentes(?string $fecha = null): array
+    {
+        $data = ValorElementoQuimicoData::get_precios_vigentes($fecha);
+
+        return ApiResponse::success($data, 'Precios INTER vigentes obtenidos correctamente.');
+    }
+
+    /**
+     * Obtener historial de precios INTER registrados recientemente.
+     */
+    public static function get_historial(int $limit = 20): array
+    {
+        $data = ValorElementoQuimicoData::get_historial($limit);
+
+        return ApiResponse::success($data, 'Historial de precios INTER obtenido correctamente.');
+    }
+
+    /**
      * Buscar precio INTER exacto por elemento + fecha.
      */
     public static function buscar_precio(string $elemento, string $fecha): array
