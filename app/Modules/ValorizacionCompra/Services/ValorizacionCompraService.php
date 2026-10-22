@@ -1079,6 +1079,11 @@ class ValorizacionCompraService
             ]);
 
             self::marcarLotesValorizados($valorizacion->detalles);
+            self::asignarLeyesLotesDesdeGrupos(
+                $valorizacion->detalles,
+                $idEmpleadoAprobacion,
+                $valorizacion->correlativo ?? (string) $valorizacion->numero_correlativo
+            );
 
             DB::commit();
 
@@ -1405,6 +1410,149 @@ class ValorizacionCompraService
             $idsLotes = array_values(array_unique($idsLotes));
             $columna = $elemento === 'Oro' ? 'esta_valorizado_oro' : 'esta_valorizado_plata';
             LoteMineral::whereIn('id', $idsLotes)->update([$columna => 1]);
+        }
+    }
+
+    /**
+     * Al aprobar una propuesta de valorización, actualiza en lote_mineral
+     * las leyes (oro, plata, humedad, recuperación) provenientes del grupo de análisis elegido.
+     *
+     * @param  iterable<ValorizacionCompraDetalle>  $detalles
+     */
+    private static function asignarLeyesLotesDesdeGrupos(iterable $detalles, int $idEmpleado, string $correlativoVal): void
+    {
+        $lotesDetalles = [];
+        foreach ($detalles as $det) {
+            if (empty($det->id_grupo_analisis)) {
+                continue;
+            }
+            $loteGuia = LoteGuia::with('loteMineral', 'particionLoteMineral.loteMineral')->find($det->id_lote_guia);
+            $lote = $loteGuia?->loteMineral ?? $loteGuia?->particionLoteMineral?->loteMineral;
+            if (! $lote) {
+                continue;
+            }
+            $lotesDetalles[$lote->id][] = [
+                'lote' => $lote,
+                'detalle' => $det,
+            ];
+        }
+
+        foreach ($lotesDetalles as $idLote => $items) {
+            $lote = $items[0]['lote'];
+            $updateData = [];
+            $cambiosLote = [];
+            $nombresGrupos = [];
+
+            foreach ($items as $item) {
+                $det = $item['detalle'];
+                $grupo = DB::table('grupo_analisis')->where('id', $det->id_grupo_analisis)->first();
+                if (! $grupo) {
+                    continue;
+                }
+                $nombresGrupos[] = $grupo->nombre ?? "Grupo {$grupo->numero_correlativo}";
+
+                $elemento = $det->elemento_quimico?->value;
+
+                // 1. Ley según el elemento químico valorizado
+                if ($elemento === 'Oro') {
+                    $leyOroVal = round((float) $grupo->ley_oro_cierre, 3);
+                    if (abs((float) ($lote->ley_oro ?? 0) - $leyOroVal) > 0.0001) {
+                        $cambiosLote[] = [
+                            'campo_bd' => 'ley_oro',
+                            'campo' => 'Ley Oro',
+                            'valor_anterior' => (string) ($lote->ley_oro ?? 0),
+                            'valor_nuevo' => (string) $leyOroVal,
+                        ];
+                    }
+                    $updateData['ley_oro'] = $leyOroVal;
+                } elseif ($elemento === 'Plata') {
+                    $leyPlataVal = round((float) $grupo->ley_plata_cierre, 3);
+                    if (abs((float) ($lote->ley_plata ?? 0) - $leyPlataVal) > 0.0001) {
+                        $cambiosLote[] = [
+                            'campo_bd' => 'ley_plata',
+                            'campo' => 'Ley Plata',
+                            'valor_anterior' => (string) ($lote->ley_plata ?? 0),
+                            'valor_nuevo' => (string) $leyPlataVal,
+                        ];
+                    }
+                    $updateData['ley_plata'] = $leyPlataVal;
+                }
+
+                // 2. Ley de humedad de cierre si está disponible (> 0)
+                if ((float) $grupo->ley_humedad_cierre > 0 && ! isset($updateData['ley_humedad'])) {
+                    $leyHumVal = round((float) $grupo->ley_humedad_cierre, 3);
+                    if (abs((float) ($lote->ley_humedad ?? 0) - $leyHumVal) > 0.0001) {
+                        $cambiosLote[] = [
+                            'campo_bd' => 'ley_humedad',
+                            'campo' => 'Ley Humedad',
+                            'valor_anterior' => (string) ($lote->ley_humedad ?? 0),
+                            'valor_nuevo' => (string) $leyHumVal,
+                        ];
+                    }
+                    $updateData['ley_humedad'] = $leyHumVal;
+                }
+
+                // 3. Ley de recuperación de cierre si está disponible (> 0)
+                if ((float) $grupo->ley_recuperacion_cierre > 0 && ! isset($updateData['ley_recuperacion'])) {
+                    $leyRecVal = round((float) $grupo->ley_recuperacion_cierre, 3);
+                    if (abs((float) ($lote->ley_recuperacion ?? 0) - $leyRecVal) > 0.0001) {
+                        $cambiosLote[] = [
+                            'campo_bd' => 'ley_recuperacion',
+                            'campo' => 'Ley Recuperación',
+                            'valor_anterior' => (string) ($lote->ley_recuperacion ?? 0),
+                            'valor_nuevo' => (string) $leyRecVal,
+                        ];
+                    }
+                    $updateData['ley_recuperacion'] = $leyRecVal;
+                }
+
+                // 4. Si el lote aún no tiene valorizado el otro elemento y el grupo tiene ley de cierre > 0, tomarla también
+                if (! isset($updateData['ley_oro']) && ! $lote->esta_valorizado_oro && (float) $grupo->ley_oro_cierre > 0) {
+                    $leyOroVal = round((float) $grupo->ley_oro_cierre, 3);
+                    if (abs((float) ($lote->ley_oro ?? 0) - $leyOroVal) > 0.0001) {
+                        $cambiosLote[] = [
+                            'campo_bd' => 'ley_oro',
+                            'campo' => 'Ley Oro',
+                            'valor_anterior' => (string) ($lote->ley_oro ?? 0),
+                            'valor_nuevo' => (string) $leyOroVal,
+                        ];
+                    }
+                    $updateData['ley_oro'] = $leyOroVal;
+                }
+                if (! isset($updateData['ley_plata']) && ! $lote->esta_valorizado_plata && (float) $grupo->ley_plata_cierre > 0) {
+                    $leyPlataVal = round((float) $grupo->ley_plata_cierre, 3);
+                    if (abs((float) ($lote->ley_plata ?? 0) - $leyPlataVal) > 0.0001) {
+                        $cambiosLote[] = [
+                            'campo_bd' => 'ley_plata',
+                            'campo' => 'Ley Plata',
+                            'valor_anterior' => (string) ($lote->ley_plata ?? 0),
+                            'valor_nuevo' => (string) $leyPlataVal,
+                        ];
+                    }
+                    $updateData['ley_plata'] = $leyPlataVal;
+                }
+            }
+
+            if (! empty($updateData)) {
+                if (! empty($cambiosLote)) {
+                    $logLote = $lote->log_cambios ?? [];
+                    if (! is_array($logLote)) {
+                        $logLote = json_decode((string) $logLote, true) ?? [];
+                    }
+                    $strGrupos = implode(', ', array_unique($nombresGrupos));
+                    $logLote[] = [
+                        'id_empleado' => $idEmpleado,
+                        'fecha_hora' => now()->toDateTimeString(),
+                        'update_at' => now()->toIso8601String(),
+                        'accion' => 'Actualización de Leyes por Valorización Aprobada',
+                        'motivo' => "Leyes actualizadas desde {$strGrupos} al aprobar valorización {$correlativoVal}",
+                        'cambios' => $cambiosLote,
+                    ];
+                    $updateData['log_cambios'] = $logLote;
+                }
+
+                $lote->update($updateData);
+            }
         }
     }
 
