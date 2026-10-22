@@ -55,12 +55,16 @@ class ValorizacionCompraController extends Controller
             'id_concesion' => 'required|integer|exists:concesion,id',
             'id_cuenta_bancaria' => 'nullable|integer|exists:cuenta_bancaria_proveedor,id',
             'id_cuenta_detraccion' => 'nullable|integer|exists:cuenta_bancaria_proveedor,id',
-            'tipo_pago' => 'required|string|in:transferencia,anticipo,mixto',
+            'tipo_pago' => 'nullable|string|in:transferencia,anticipo,mixto',
+            'porcentaje_igv' => 'nullable|numeric|min:0',
+            'porcentaje_detraccion' => 'nullable|numeric|min:0',
             'detalles' => 'required|array|min:1',
             'detalles.*.id_lote_guia' => 'required|integer|exists:lote_guia,id',
+            'detalles.*.id_grupo_analisis' => 'required|integer|exists:grupo_analisis,id',
             'detalles.*.elemento_quimico' => 'required|string|in:Oro,Plata',
             'detalles.*.id_condicion_comercial' => 'nullable|integer',
             'detalles.*.id_valor_elemento_quimico' => 'nullable|integer',
+            'detalles.*.ley' => 'nullable|numeric|min:0',
             'detalles.*.inter' => 'required|numeric|min:0',
             'detalles.*.des_inter' => 'required|numeric|min:0',
             'detalles.*.recuperacion' => 'required|numeric|min:0|max:100',
@@ -86,7 +90,9 @@ class ValorizacionCompraController extends Controller
             'id_cuenta_bancaria' => $request->input('id_cuenta_bancaria') ? (int) $request->input('id_cuenta_bancaria') : null,
             'id_cuenta_detraccion' => $request->input('id_cuenta_detraccion') ? (int) $request->input('id_cuenta_detraccion') : null,
             'id_empleado_registro' => (int) $idEmpleado,
-            'tipo_pago' => $request->input('tipo_pago'),
+            'tipo_pago' => $request->input('tipo_pago') ?? 'transferencia',
+            'porcentaje_igv' => $request->input('porcentaje_igv'),
+            'porcentaje_detraccion' => $request->input('porcentaje_detraccion'),
             'detalles' => $request->input('detalles'),
             'anticipos' => $request->input('anticipos', []),
             'fecha_hora_valorizacion' => $request->input('fecha_hora_valorizacion') ?: null,
@@ -107,7 +113,7 @@ class ValorizacionCompraController extends Controller
     }
 
     /**
-     * Editar una valorización existente en estado Pendiente
+     * Editar una valorización existente en estado Propuesta
      */
     public function editar_valorizacion(Request $request, int $id): JsonResponse
     {
@@ -129,12 +135,16 @@ class ValorizacionCompraController extends Controller
             'id_concesion' => 'required|integer|exists:concesion,id',
             'id_cuenta_bancaria' => 'nullable|integer|exists:cuenta_bancaria_proveedor,id',
             'id_cuenta_detraccion' => 'nullable|integer|exists:cuenta_bancaria_proveedor,id',
-            'tipo_pago' => 'required|string|in:transferencia,anticipo,mixto',
+            'tipo_pago' => 'nullable|string|in:transferencia,anticipo,mixto',
+            'porcentaje_igv' => 'nullable|numeric|min:0',
+            'porcentaje_detraccion' => 'nullable|numeric|min:0',
             'detalles' => 'required|array|min:1',
             'detalles.*.id_lote_guia' => 'required|integer|exists:lote_guia,id',
+            'detalles.*.id_grupo_analisis' => 'required|integer|exists:grupo_analisis,id',
             'detalles.*.elemento_quimico' => 'required|string|in:Oro,Plata',
             'detalles.*.id_condicion_comercial' => 'nullable|integer',
             'detalles.*.id_valor_elemento_quimico' => 'nullable|integer',
+            'detalles.*.ley' => 'nullable|numeric|min:0',
             'detalles.*.inter' => 'required|numeric|min:0',
             'detalles.*.des_inter' => 'required|numeric|min:0',
             'detalles.*.recuperacion' => 'required|numeric|min:0|max:100',
@@ -160,7 +170,9 @@ class ValorizacionCompraController extends Controller
             'id_cuenta_bancaria' => $request->input('id_cuenta_bancaria') ? (int) $request->input('id_cuenta_bancaria') : null,
             'id_cuenta_detraccion' => $request->input('id_cuenta_detraccion') ? (int) $request->input('id_cuenta_detraccion') : null,
             'id_empleado_edicion' => (int) $idEmpleado,
-            'tipo_pago' => $request->input('tipo_pago'),
+            'tipo_pago' => $request->input('tipo_pago') ?? 'transferencia',
+            'porcentaje_igv' => $request->input('porcentaje_igv'),
+            'porcentaje_detraccion' => $request->input('porcentaje_detraccion'),
             'detalles' => $request->input('detalles'),
             'anticipos' => $request->input('anticipos', []),
             'evidencias_existentes' => $request->input('evidencias_existentes'),
@@ -186,10 +198,26 @@ class ValorizacionCompraController extends Controller
      */
     public function aprobar_valorizacion(Request $request, int $id): JsonResponse
     {
+        if ($request->has('anticipos') && is_string($request->input('anticipos'))) {
+            $decoded = json_decode($request->input('anticipos'), true);
+            if (is_array($decoded)) {
+                $request->merge(['anticipos' => $decoded]);
+            }
+        }
+
+        $request->validate([
+            'id_cuenta_bancaria' => 'required|integer|exists:cuenta_bancaria_proveedor,id',
+            'id_cuenta_detraccion' => 'required|integer|exists:cuenta_bancaria_proveedor,id',
+            'tipo_pago' => 'required|string|in:transferencia,anticipo,mixto',
+            'anticipos' => 'nullable|array',
+            'anticipos.*.id_anticipo_proveedor' => 'required|integer|exists:anticipo_proveedor,id',
+            'anticipos.*.monto_retirado' => 'required|numeric|gt:0',
+        ]);
+
         $authUser = $request->attributes->get('auth_user');
         $idEmpleado = $authUser ? ($authUser->id_empleado ?? $authUser->id_usuario) : 1;
 
-        $res = ValorizacionCompraService::aprobar_valorizacion($id, (int) $idEmpleado);
+        $res = ValorizacionCompraService::aprobar_valorizacion($id, (int) $idEmpleado, $request->all());
         $status = ($res['success'] ?? false) ? 200 : 400;
 
         return response()->json($res, $status);

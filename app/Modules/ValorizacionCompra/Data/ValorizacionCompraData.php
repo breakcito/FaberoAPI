@@ -61,9 +61,20 @@ class ValorizacionCompraData
         $guiasTransportista = [];
         $lotesVistos = [];
         $tmhTotalBalanza = 0.0;
+        $lotesGuiaVistos = [];
+        $tmhTotalGr = 0.0;
 
         foreach ($item->detalles as $d) {
             $lg = $d->loteGuia;
+            if ($lg && ! isset($lotesGuiaVistos[$lg->id])) {
+                $lotesGuiaVistos[$lg->id] = true;
+                $lm = $lg->loteMineral ?? $lg->particionLoteMineral?->loteMineral;
+                $pesoGr = ($lg->peso_neto !== null && (float) $lg->peso_neto > 0)
+                    ? (float) $lg->peso_neto
+                    : (float) ($lm?->peso_neto ?? 0);
+                $tmhTotalGr += $pesoGr;
+            }
+
             $lm = $lg ? ($lg->loteMineral ?? $lg->particionLoteMineral?->loteMineral) : null;
             if ($lm && ! isset($lotesVistos[$lm->id])) {
                 $lotesVistos[$lm->id] = true;
@@ -81,13 +92,20 @@ class ValorizacionCompraData
             }
         }
 
+        if ($tmhTotalGr <= 0 && $tmhTotalBalanza > 0) {
+            $tmhTotalGr = $tmhTotalBalanza;
+        }
+
         $guiaRemitenteStr = ! empty($guiasRemitente) ? implode(', ', array_unique($guiasRemitente)) : '—';
         $guiaTransportistaStr = ! empty($guiasTransportista) ? implode(', ', array_unique($guiasTransportista)) : '—';
 
         // Cálculos económicos para el reporte de liquidación
-        $igv = round($totalSubtotal * 0.18, 2);
+        $pctIgv = $item->porcentaje_igv !== null ? (float) $item->porcentaje_igv : 18.00;
+        $pctDetraccion = $item->porcentaje_detraccion !== null ? (float) $item->porcentaje_detraccion : 10.00;
+
+        $igv = round($totalSubtotal * ($pctIgv / 100), 2);
         $totalConIgv = round($totalSubtotal + $igv, 2);
-        $detraccion = round($totalConIgv * 0.10, 2);
+        $detraccion = round($totalConIgv * ($pctDetraccion / 100), 2);
         $netoAPagar = round($totalConIgv - $detraccion - $totalAnticipos, 2);
 
         return [
@@ -111,10 +129,12 @@ class ValorizacionCompraData
             'cuenta_detraccion_info' => $item->cuentaDetraccion ? $item->cuentaDetraccion->numero_cuenta : null,
             'tipo_pago' => $item->tipo_pago ? $item->tipo_pago->value : null,
             'estado' => $item->estado ? $item->estado->value : null,
+            'porcentaje_igv' => $pctIgv,
+            'porcentaje_detraccion' => $pctDetraccion,
             'guia_remitente' => $guiaRemitenteStr,
             'guia_transportista' => $guiaTransportistaStr,
             'lugar_compra' => 'KM. 573 OTR. PANAMERICANA NORTE (B083464-13-01) LA LIBERTAD - TRUJILLO - HUANCHACO',
-            'tmh_total_gr' => '—',
+            'tmh_total_gr' => round($tmhTotalGr, 3),
             'tmh_total_balanza' => round($tmhTotalBalanza, 3),
             'factura_asociada' => '—',
             'igv' => $igv,
@@ -188,10 +208,19 @@ class ValorizacionCompraData
                         ? $pesosContabilizadosMap[$idLote]
                         : ($lg && $lg->peso_neto ? (float) $lg->peso_neto : $tmh);
 
+                    $idGrupo = $d->id_grupo_analisis ? (int) $d->id_grupo_analisis : null;
+                    $ga = $d->grupoAnalisis;
+                    $leyDetalle = $ga
+                        ? (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro' ? $ga->ley_oro_cierre : $ga->ley_plata_cierre)
+                        : ($lm ? (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro' ? $lm->ley_oro : $lm->ley_plata) : 0);
+                    $leyHumedadDetalle = $ga && $ga->ley_humedad_cierre > 0 ? (float) $ga->ley_humedad_cierre : $leyHumedad;
+
                     return [
                         'id' => $d->id,
                         'id_valorizacion_compra' => $d->id_valorizacion_compra,
                         'id_lote_guia' => $d->id_lote_guia,
+                        'id_grupo_analisis' => $idGrupo,
+                        'grupo_analisis_nombre' => $ga ? $ga->nombre : null,
                         'id_condicion_comercial' => $d->id_condicion_comercial,
                         'id_valor_elemento_quimico' => $d->id_valor_elemento_quimico,
                         'elemento_quimico' => $d->elemento_quimico ? $d->elemento_quimico->value : null,
@@ -206,9 +235,9 @@ class ValorizacionCompraData
                         'peso_contabilizado' => $pesoContab,
                         'id_lote_mineral' => $idLote,
                         'id_particion_lote_mineral' => $lg && $lg->id_particion_lote_mineral ? (int) $lg->id_particion_lote_mineral : null,
-                        'ley_humedad' => $leyHumedad,
+                        'ley_humedad' => $leyHumedadDetalle,
                         'tms' => $tms,
-                        'ley' => $lm ? (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro' ? $lm->ley_oro : $lm->ley_plata) : 0,
+                        'ley' => $leyDetalle,
                         'inter' => (float) $d->inter,
                         'des_inter' => (float) $d->des_inter,
                         'recuperacion' => (float) $d->recuperacion,

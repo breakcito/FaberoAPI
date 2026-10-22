@@ -4,6 +4,7 @@ namespace App\Shared\Enums\_Generic;
 
 enum TipoOrigen: string
 {
-    case Proveedor = 'Proveedor';
     case Interno = 'Interno';
+    case Externo = 'Externo';
+    case Proveedor = 'Proveedor';
 }

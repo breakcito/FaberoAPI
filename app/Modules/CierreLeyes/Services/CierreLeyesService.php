@@ -3,11 +3,10 @@
 namespace App\Modules\CierreLeyes\Services;
 
 use App\Modules\CierreLeyes\Data\CierreLeyesData;
-use App\Shared\Enums\_Generic\EstadoLeyes;
+use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
-use Illuminate\Support\Carbon;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 class CierreLeyesService
 {
@@ -22,670 +21,438 @@ class CierreLeyesService
     }
 
     /**
-     * Iniciar el proceso de análisis de leyes para un lote.
-     */
-    public static function iniciar_lote(int $idLote, int $idEmpleado): array
-    {
-        $lote = CierreLeyesData::get_lote_by_id($idLote);
-        if (! $lote) {
-            return ApiResponse::error('Lote no encontrado');
-        }
-
-        if ($lote->getRawOriginal('estado_leyes') !== EstadoLeyes::Pendiente->value) {
-            return ApiResponse::error('El lote no se encuentra en estado Pendiente');
-        }
-
-        DB::beginTransaction();
-        try {
-            CierreLeyesData::actualizar_estado_inicio_lote($lote, $idEmpleado);
-
-            $uuidFila = Str::uuid()->toString();
-            CierreLeyesData::crear_registros_vacios_analisis($idLote, $uuidFila, $idEmpleado);
-
-            DB::commit();
-
-            $updatedLote = CierreLeyesData::get_lotes_cierre($idLote);
-            $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
-
-            return ApiResponse::success($loteData, 'Análisis de leyes iniciado correctamente para el lote');
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            return ApiResponse::error('Error al iniciar el lote: '.$e->getMessage());
-        }
-    }
-
-    /**
-     * Agregar una nueva corrida de análisis a un lote en proceso.
-     */
-    public static function agregar_analisis(int $idLote, int $idEmpleado): array
-    {
-        $lote = CierreLeyesData::get_lote_by_id($idLote);
-        if (! $lote) {
-            return ApiResponse::error('Lote no encontrado');
-        }
-
-        if ($lote->getRawOriginal('estado_leyes') !== EstadoLeyes::EnProceso->value) {
-            return ApiResponse::error('El lote no se encuentra en proceso de análisis');
-        }
-
-        DB::beginTransaction();
-        try {
-            $uuidFila = Str::uuid()->toString();
-            CierreLeyesData::crear_registros_vacios_analisis($idLote, $uuidFila, $idEmpleado);
-
-            DB::commit();
-
-            $updatedLote = CierreLeyesData::get_lotes_cierre($idLote);
-            $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
-
-            return ApiResponse::success($loteData, 'Nuevo análisis agregado correctamente');
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            return ApiResponse::error('Error al agregar análisis: '.$e->getMessage());
-        }
-    }
-
-    /**
-     * Obtener el listado de lotes en proceso o confirmados para el cierre de leyes.
+     * Obtener el listado de lotes para el cierre de leyes con sus grupos y análisis.
      */
     public static function get_lotes_cierre(?string $estado = null, ?string $fechaInicio = null, ?string $fechaFin = null, ?int $id = null): array
     {
         $filtros = [];
 
-        if ($id !== null) {
-            $filtros['id_lookup'] = $id;
-        }
-
         if ($estado !== null && $estado !== '' && $estado !== 'Todos') {
             $filtros['estados'] = [$estado];
         }
 
-        if ($fechaInicio !== null && $fechaInicio !== '') {
+        if ($fechaInicio) {
             $filtros['fecha_inicio'] = $fechaInicio;
         }
 
-        if ($fechaFin !== null && $fechaFin !== '') {
+        if ($fechaFin) {
             $filtros['fecha_fin'] = $fechaFin;
         }
 
-        $idLookup = $filtros['id_lookup'] ?? null;
-        unset($filtros['id_lookup']);
+        $lotes = CierreLeyesData::get_lotes_cierre($id, $filtros);
 
-        $data = CierreLeyesData::get_lotes_cierre($idLookup, $filtros);
-
-        return ApiResponse::success($data, 'Lotes en proceso/confirmados obtenidos correctamente');
+        return ApiResponse::success($lotes, 'Listado de lotes obtenido correctamente');
     }
 
     /**
-     * Guardar o actualizar el valor de una ley en el análisis mineral.
+     * Crear un grupo de análisis para un lote
      */
-    public static function guardar_valor_ley(
-        int $idLoteMineral,
-        int $idGrupoAnalisisDetalle,
-        ?string $tipoOrigen,
-        string $uuidFila,
-        float $ley,
-        bool $estaConfirmada,
-        int $idEmpleadoRegistro,
-        ?int $id = null
-    ): array {
-        if ($estaConfirmada && $ley <= 0) {
-            return ApiResponse::error('No se puede confirmar un análisis sin un valor mayor a cero.');
+    public static function crear_grupo(array $data, int $idEmpleado, array $archivos = []): array
+    {
+        if (empty($data['id_lote_mineral']) && empty($data['id_muestra_externa'])) {
+            return ApiResponse::error('Debe especificar un lote o una muestra externa.');
         }
+
+        $idLote = ! empty($data['id_lote_mineral']) ? (int) $data['id_lote_mineral'] : null;
+        $nombre = ! empty($data['nombre']) ? trim($data['nombre']) : 'Grupo 1';
 
         DB::beginTransaction();
         try {
-            $detalle = CierreLeyesData::get_detalle_con_analito($idGrupoAnalisisDetalle);
-            if (! $detalle) {
-                return ApiResponse::error('El detalle del grupo de análisis no existe');
-            }
-
-            $esDesplegable = $detalle->analito ? (bool) $detalle->analito->es_desplegable : false;
-
-            if (! $esDesplegable) {
-                $affected = CierreLeyesData::actualizar_leyes_no_desplegables(
-                    $idLoteMineral,
-                    $idGrupoAnalisisDetalle,
-                    $ley,
-                    $estaConfirmada,
-                    $idEmpleadoRegistro
-                );
-
-                if ($affected === 0) {
-                    CierreLeyesData::crear_analisis_mineral([
-                        'id_lote_mineral' => $idLoteMineral,
-                        'id_grupo_analisis_detalle' => $idGrupoAnalisisDetalle,
-                        'tipo_origen' => $tipoOrigen,
-                        'uuid_fila' => $uuidFila,
-                        'ley' => $ley,
-                        'esta_confirmada' => $estaConfirmada ? 1 : 0,
-                        'id_empleado_registro' => $idEmpleadoRegistro,
-                    ]);
-                }
-            } else {
-                if ($id !== null) {
-                    $registro = CierreLeyesData::get_registro_analisis_by_id($id);
-                    if (! $registro) {
-                        return ApiResponse::error('Registro de análisis no encontrado para actualizar');
-                    }
-                    CierreLeyesData::actualizar_registro_analisis($registro, $ley, $estaConfirmada, $idEmpleadoRegistro);
-                } else {
-                    CierreLeyesData::crear_analisis_mineral([
-                        'id_lote_mineral' => $idLoteMineral,
-                        'id_grupo_analisis_detalle' => $idGrupoAnalisisDetalle,
-                        'tipo_origen' => $tipoOrigen,
-                        'uuid_fila' => $uuidFila,
-                        'ley' => $ley,
-                        'esta_confirmada' => $estaConfirmada ? 1 : 0,
-                        'id_empleado_registro' => $idEmpleadoRegistro,
-                    ]);
-                }
-            }
-
-            DB::commit();
-
-            $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
-            $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
-
-            return ApiResponse::success($loteData, 'Valor de ley guardado correctamente');
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            return ApiResponse::error('Error al guardar el valor de ley: '.$e->getMessage());
-        }
-    }
-
-    /**
-     * Eliminar un registro individual de ley.
-     */
-    public static function eliminar_valor(int $id): array
-    {
-        $registro = CierreLeyesData::get_registro_analisis_by_id($id);
-        if (! $registro) {
-            return ApiResponse::error('Registro de análisis no encontrado');
-        }
-
-        $idLoteMineral = (int) $registro->id_lote_mineral;
-        CierreLeyesData::eliminar_registro_analisis($registro);
-
-        $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
-        $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
-
-        return ApiResponse::success($loteData, 'Registro de análisis eliminado correctamente');
-    }
-
-    /**
-     * Eliminar todas las celdas asociadas a una corrida de análisis por su uuid_fila.
-     */
-    public static function eliminar_fila(int $idLoteMineral, string $uuidFila): array
-    {
-        CierreLeyesData::eliminar_fila_analisis($idLoteMineral, $uuidFila);
-
-        $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
-        $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
-
-        return ApiResponse::success($loteData, 'Fila de análisis eliminada correctamente');
-    }
-
-    /**
-     * Validar si un lote cumple las condiciones de cierre.
-     * Cada analito activo marcado para valorización debe tener al menos un análisis confirmado y con ley > 0.
-     *
-     * @return array{ok: bool, motivo?: string}
-     */
-    private static function validar_cierre(int $idLote): array
-    {
-        $detallesValorizar = CierreLeyesData::get_detalles_para_valorizacion();
-
-        if (empty($detallesValorizar)) {
-            return ['ok' => true];
-        }
-
-        $analisisLote = CierreLeyesData::get_filas_analisis_por_lote($idLote);
-
-        foreach ($detallesValorizar as $detalle) {
-            $tieneConfirmadoValido = $analisisLote->contains(function ($reg) use ($detalle) {
-                return (int) $reg->id_grupo_analisis_detalle === (int) $detalle->detalle_id
-                    && (bool) $reg->esta_confirmada
-                    && $reg->ley !== null
-                    && (float) $reg->ley > 0;
-            });
-
-            if (! $tieneConfirmadoValido) {
-                return [
-                    'ok' => false,
-                    'motivo' => "El analito '{$detalle->analito_nombre}' requiere al menos un análisis confirmado con un valor mayor a cero.",
-                ];
-            }
-        }
-
-        return ['ok' => true];
-    }
-
-    /**
-     * Consolidar las leyes representativas del lote calculando promedios para analitos desplegables o valor único para no desplegables.
-     * Si el front envia leyes manuales (id_detalle → ley), sobrescribe el cálculo automático SOLO en los detalles provistos.
-     *
-     * @param  array<int,float>|null  $leyesManuales
-     */
-    private static function consolidar_leyes(int $idLote, ?array $leyesManuales = null): array
-    {
-        $analisisConfirmados = CierreLeyesData::get_analisis_confirmados_por_lote($idLote);
-
-        $leyesValores = [
-            'ley_oro' => 0.0,
-            'ley_plata' => 0.0,
-            'ley_humedad' => 0.0,
-            'ley_recuperacion' => 0.0,
-        ];
-
-        $agrupados = $analisisConfirmados->groupBy('id_grupo_analisis_detalle');
-
-        foreach ($agrupados as $idDetalle => $registros) {
-            $detalle = CierreLeyesData::get_detalle_con_analito((int) $idDetalle);
-            if (! $detalle) {
-                continue;
-            }
-
-            // Override manual del front: si llega un valor para este detalle, gana sobre el cálculo automático.
-            if ($leyesManuales !== null && array_key_exists((int) $idDetalle, $leyesManuales)) {
-                $valor = (float) $leyesManuales[(int) $idDetalle];
-            } else {
-                $esDesplegable = $detalle->analito ? (bool) $detalle->analito->es_desplegable : false;
-
-                if ($esDesplegable) {
-                    $sumaLeyes = 0.0;
-                    $cant = 0;
-                    foreach ($registros as $reg) {
-                        $sumaLeyes += (float) $reg->ley;
-                        $cant++;
-                    }
-                    $valor = $cant > 0 ? $sumaLeyes / $cant : 0.0;
-                } else {
-                    $valor = (float) ($registros[0]->ley ?? 0.0);
-                }
-            }
-
-            if ((bool) $detalle->para_valorizacion_oro) {
-                $leyesValores['ley_oro'] = $valor;
-            }
-            if ((bool) $detalle->para_valorizacion_plata) {
-                $leyesValores['ley_plata'] = $valor;
-            }
-            if ((bool) $detalle->para_valorizacion_humedad) {
-                $leyesValores['ley_humedad'] = $valor;
-            }
-            if ((bool) $detalle->para_valorizacion_recuperacion) {
-                $leyesValores['ley_recuperacion'] = $valor;
-            }
-        }
-
-        return $leyesValores;
-    }
-
-    /**
-     * Calcular el promedio de humedad y recuperación del lote considerando TODAS las filas
-     * con `ley` definido (incluye 0 y filas migradas desde muestras con `esta_confirmada=0`).
-     * Usado al asociar muestras para que el valor consolidado del lote se mantenga en
-     * sincronía con las filas reales, sin esperar a la confirmación formal del lote.
-     *
-     * @return array{ley_humedad: float, ley_recuperacion: float}
-     */
-    private static function consolidar_humedad_recuperacion(int $idLote): array
-    {
-        $rows = CierreLeyesData::get_humedad_recuperacion_rows_for_lote($idLote);
-
-        $detalles = DB::table('grupo_analisis_detalle')
-            ->select('id', 'para_valorizacion_humedad', 'para_valorizacion_recuperacion')
-            ->where(function ($q) {
-                $q->where('para_valorizacion_humedad', 1)
-                    ->orWhere('para_valorizacion_recuperacion', 1);
-            })
-            ->get();
-
-        $humedadIds = $detalles->where('para_valorizacion_humedad', 1)->pluck('id')->all();
-        $recuperacionIds = $detalles->where('para_valorizacion_recuperacion', 1)->pluck('id')->all();
-
-        $humVals = $rows->whereIn('id_grupo_analisis_detalle', $humedadIds);
-        $recVals = $rows->whereIn('id_grupo_analisis_detalle', $recuperacionIds);
-
-        return [
-            'ley_humedad' => $humVals->count() > 0 ? (float) $humVals->avg('ley') : 0.0,
-            'ley_recuperacion' => $recVals->count() > 0 ? (float) $recVals->avg('ley') : 0.0,
-        ];
-    }
-
-    /**
-     * Confirmar y cerrar el lote de leyes.
-     *
-     * @param  array<int,float>|null  $leyesManuales  Map id_detalle → ley cuando el front envia override; si null, consolidar automaticamente
-     */
-    public static function confirmar_lote_leyes(int $idLote, bool $conValorComercial, int $idEmpleado, ?array $leyesManuales = null): array
-    {
-        $lote = CierreLeyesData::get_lote_by_id($idLote);
-        if (! $lote) {
-            return ApiResponse::error('Lote no encontrado');
-        }
-
-        if ($lote->getRawOriginal('estado_leyes') !== EstadoLeyes::EnProceso->value) {
-            return ApiResponse::error('El lote no se encuentra en proceso de análisis');
-        }
-
-        $validacion = self::validar_cierre($idLote);
-        if (! $validacion['ok']) {
-            return ApiResponse::error($validacion['motivo']);
-        }
-
-        DB::beginTransaction();
-        try {
-            $leyesValores = self::consolidar_leyes($idLote, $leyesManuales);
-            CierreLeyesData::confirmar_y_cerrar_lote($lote, $leyesValores, $conValorComercial, $idEmpleado);
-
-            DB::commit();
-
-            $updatedLote = CierreLeyesData::get_lotes_cierre($idLote);
-            $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
-
-            return ApiResponse::success($loteData, 'Lote de leyes confirmado y cerrado correctamente');
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            return ApiResponse::error('Error al confirmar el cierre de leyes: '.$e->getMessage());
-        }
-    }
-
-    /**
-     * Actualizar el tipo de origen de una corrida de análisis.
-     */
-    public static function actualizar_origen_fila(int $idLoteMineral, string $uuidFila, ?string $tipoOrigen, int $idEmpleado = 1): array
-    {
-        CierreLeyesData::actualizar_origen_fila($idLoteMineral, $uuidFila, $tipoOrigen, $idEmpleado);
-
-        $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
-        $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
-
-        return ApiResponse::success($loteData, 'Origen de la corrida actualizado correctamente');
-    }
-
-    // ===== MUESTRAS EXTERNAS (pre-análisis de un lote que aún no existe) =====
-
-    /**
-     * Iniciar una muestra externa: inserta la cabecera con correlativo "RC-NN" (Periodo::Ninguno)
-     * y crea una corrida de analisis_mineral asociada por id_muestra_externa con sin_lote=1.
-     *
-     * @return array{data?: array, success?: bool, message?: string}
-     */
-    public static function iniciar_muestra_externa(int $idProveedorMinero, int $idEmpleado, ?string $codigoCliente = null, ?string $fechaHoraIngreso = null): array
-    {
-        DB::beginTransaction();
-        try {
-            // Generar siguiente número correlativo monotónico (formato "RC-NN", sin reinicio de tiempo)
-            $siguienteNumero = ((int) DB::table('muestra_externa')->max('numero_correlativo')) + 1;
-            $correlativo = 'RC-'.str_pad((string) $siguienteNumero, 2, '0', STR_PAD_LEFT);
-
-            $idMuestra = CierreLeyesData::crear_muestra_externa([
+            $idGrupo = CierreLeyesData::crear_grupo([
+                'id_lote_mineral' => $idLote,
+                'id_muestra_externa' => ! empty($data['id_muestra_externa']) ? (int) $data['id_muestra_externa'] : 0,
                 'id_empleado_registro' => $idEmpleado,
-                'id_proveedor_minero' => $idProveedorMinero,
-                'correlativo' => $correlativo,
-                'numero_correlativo' => $siguienteNumero,
-                'codigo_cliente' => $codigoCliente,
-                'fecha_hora_ingreso' => $fechaHoraIngreso ?: Carbon::now(),
+                'nombre' => $nombre,
             ]);
 
-            $uuidFila = Str::uuid()->toString();
-            CierreLeyesData::crear_registros_vacios_analisis_muestra($idMuestra, $uuidFila, $idEmpleado);
+            // Si se indicaron datos de análisis (laboratorio, ensayo, etc.), creamos el análisis inicial
+            if (! empty($data['id_laboratorio']) || ! empty($data['asumido_por']) || ! empty($data['numero_ensayo'])) {
+                $docs = [];
+                if (! empty($archivos)) {
+                    $docs = ArchivoHelper::guardarArchivos('cierre_leyes', $archivos);
+                }
+
+                CierreLeyesData::agregar_analisis_a_grupo($idGrupo, [
+                    'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
+                    'asumido_por' => ! empty($data['asumido_por']) ? trim($data['asumido_por']) : 'Proveedor',
+                    'numero_ensayo' => ! empty($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : 1,
+                    'tipo_origen' => ! empty($data['tipo_origen']) ? trim($data['tipo_origen']) : 'Interno',
+                    'documentos' => $docs,
+                    'sin_lote' => empty($idLote),
+                ], $idEmpleado);
+            }
 
             DB::commit();
 
-            $muestra = CierreLeyesData::get_muestra_externa_by_id($idMuestra);
-
-            return ApiResponse::success($muestra, 'Muestra externa iniciada correctamente');
+            return ApiResponse::success(['id' => $idGrupo], 'Grupo de análisis creado correctamente');
         } catch (\Exception $e) {
             DB::rollBack();
 
-            return ApiResponse::error('Error al iniciar la muestra externa: '.$e->getMessage());
+            return ApiResponse::error('Error al crear el grupo de análisis: '.$e->getMessage());
         }
     }
 
     /**
-     * Listar muestras externas activas (aún no asociadas a un lote).
+     * Agregar un análisis a un grupo existente
+     */
+    public static function agregar_analisis_a_grupo(int $idGrupo, array $data, int $idEmpleado, array $archivos = []): array
+    {
+        $grupo = DB::table('grupo_analisis')->where('id', $idGrupo)->first();
+        if ($grupo && ($grupo->tiene_propuesta_oro || $grupo->tiene_propuesta_plata)) {
+            return ApiResponse::error('No se puede agregar análisis a un grupo que ya se encuentra en una propuesta de valorización.');
+        }
+
+        DB::beginTransaction();
+        try {
+            $docs = [];
+            if (! empty($archivos)) {
+                $docs = ArchivoHelper::guardarArchivos('cierre_leyes', $archivos);
+            }
+
+            $idAnalisis = CierreLeyesData::agregar_analisis_a_grupo($idGrupo, [
+                'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
+                'asumido_por' => ! empty($data['asumido_por']) ? trim($data['asumido_por']) : 'Proveedor',
+                'numero_ensayo' => ! empty($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : 1,
+                'tipo_origen' => ! empty($data['tipo_origen']) ? trim($data['tipo_origen']) : 'Interno',
+                'documentos' => $docs,
+                'sin_lote' => ! empty($data['sin_lote']),
+            ], $idEmpleado);
+
+            DB::commit();
+
+            return ApiResponse::success(['id' => $idAnalisis], 'Análisis agregado correctamente al grupo');
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return ApiResponse::error('Error al agregar análisis al grupo: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Guardar valores de leyes en una fila de análisis
+     */
+    public static function guardar_valores_analisis(int $idAnalisis, array $valores, int $idEmpleado, ?string $motivo = null): array
+    {
+        try {
+            $analisis = DB::table('analisis_mineral')->where('id', $idAnalisis)->first();
+            if ($analisis && $analisis->id_grupo_analisis) {
+                $grupo = DB::table('grupo_analisis')->where('id', $analisis->id_grupo_analisis)->first();
+                if ($grupo) {
+                    if ($grupo->tiene_propuesta_oro && (isset($valores['ley_oro']) || isset($valores['ley_oro_confirmada']))) {
+                        return ApiResponse::error('No se puede modificar las leyes de oro porque el grupo se encuentra en una propuesta de valorización.');
+                    }
+                    if ($grupo->tiene_propuesta_plata && (isset($valores['ley_plata']) || isset($valores['ley_plata_confirmada']))) {
+                        return ApiResponse::error('No se puede modificar las leyes de plata porque el grupo se encuentra en una propuesta de valorización.');
+                    }
+                }
+            }
+
+            $ok = CierreLeyesData::guardar_valores_analisis(
+                $idAnalisis,
+                $valores,
+                $idEmpleado,
+                $motivo ?? 'Actualización de leyes de análisis'
+            );
+
+            if (! $ok) {
+                return ApiResponse::error('No se pudo encontrar el análisis para actualizar');
+            }
+
+            return ApiResponse::success(null, 'Valores de leyes guardados correctamente');
+        } catch (\Exception $e) {
+            return ApiResponse::error('Error al guardar valores: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Guardar leyes de cierre finales en el grupo
+     */
+    public static function guardar_leyes_cierre_grupo(int $idGrupo, array $leyes, int $idEmpleado, ?string $motivo = null): array
+    {
+        try {
+            $grupo = DB::table('grupo_analisis')->where('id', $idGrupo)->first();
+            if ($grupo) {
+                if ($grupo->tiene_propuesta_oro && isset($leyes['ley_oro_cierre'])) {
+                    return ApiResponse::error('No se puede modificar la ley de cierre de oro porque el grupo se encuentra en una propuesta de valorización.');
+                }
+                if ($grupo->tiene_propuesta_plata && isset($leyes['ley_plata_cierre'])) {
+                    return ApiResponse::error('No se puede modificar la ley de cierre de plata porque el grupo se encuentra en una propuesta de valorización.');
+                }
+            }
+
+            $ok = CierreLeyesData::guardar_leyes_cierre_grupo(
+                $idGrupo,
+                $leyes,
+                $idEmpleado,
+                $motivo ?? 'Cierre de leyes finales'
+            );
+
+            if (! $ok) {
+                return ApiResponse::error('No se pudo encontrar el grupo para actualizar');
+            }
+
+            return ApiResponse::success(null, 'Leyes de cierre guardadas correctamente en el grupo');
+        } catch (\Exception $e) {
+            return ApiResponse::error('Error al guardar leyes de cierre: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Subir documentos a una fila de análisis
+     */
+    public static function subir_documentos_analisis(int $idAnalisis, array $archivos): array
+    {
+        if (empty($archivos)) {
+            return ApiResponse::error('No se adjuntaron archivos para subir');
+        }
+
+        try {
+            $nuevosDocs = ArchivoHelper::guardarArchivos('cierre_leyes', $archivos);
+            $docsFinales = CierreLeyesData::adjuntar_documentos_analisis($idAnalisis, $nuevosDocs);
+
+            if ($docsFinales === false) {
+                return ApiResponse::error('No se pudo adjuntar documentos al análisis especificado');
+            }
+
+            return ApiResponse::success($docsFinales, 'Documentos adjuntados correctamente');
+        } catch (\Exception $e) {
+            return ApiResponse::error('Error al subir documentos: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Eliminar análisis
+     */
+    public static function eliminar_analisis(int $idAnalisis): array
+    {
+        try {
+            $analisis = DB::table('analisis_mineral')->where('id', $idAnalisis)->first();
+            if ($analisis && $analisis->id_grupo_analisis) {
+                $grupo = DB::table('grupo_analisis')->where('id', $analisis->id_grupo_analisis)->first();
+                if ($grupo && ($grupo->tiene_propuesta_oro || $grupo->tiene_propuesta_plata)) {
+                    return ApiResponse::error('No se puede eliminar un ensayo de un grupo que se encuentra en una propuesta de valorización.');
+                }
+            }
+
+            $ok = CierreLeyesData::eliminar_analisis($idAnalisis);
+            if (! $ok) {
+                return ApiResponse::error('Análisis no encontrado');
+            }
+
+            return ApiResponse::success(null, 'Análisis eliminado correctamente');
+        } catch (\Exception $e) {
+            return ApiResponse::error('Error al eliminar análisis: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Confirmar cierre del lote
+     */
+    public static function confirmar_lote(int $idLote, bool $conValorComercial, int $idEmpleado): array
+    {
+        try {
+            $ok = CierreLeyesData::confirmar_lote($idLote, $conValorComercial, $idEmpleado);
+            if (! $ok) {
+                return ApiResponse::error('Lote no encontrado');
+            }
+
+            return ApiResponse::success(null, 'Lote cerrado correctamente');
+        } catch (\Exception $e) {
+            return ApiResponse::error('Error al confirmar lote: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Muestras externas
      */
     public static function get_muestras_externas(): array
     {
-        $data = CierreLeyesData::get_muestras_externas_activas();
+        $muestras = CierreLeyesData::get_muestras_externas();
 
-        return ApiResponse::success($data, 'Muestras externas activas obtenidas correctamente');
+        return ApiResponse::success($muestras, 'Muestras externas obtenidas correctamente');
     }
 
     /**
-     * Guardar o actualizar el valor de una ley en una muestra externa (misma lógica que
-     * un lote, apuntando a id_muestra_externa en vez de id_lote_mineral).
+     * Iniciar muestra externa
      */
-    public static function guardar_valor_muestra_externa(
-        int $idMuestraExterna,
-        int $idGrupoAnalisisDetalle,
-        ?string $tipoOrigen,
-        string $uuidFila,
-        float $ley,
-        bool $estaConfirmada,
-        int $idEmpleadoRegistro,
-        ?int $id = null
-    ): array {
-        if ($estaConfirmada && $ley <= 0) {
-            return ApiResponse::error('No se puede confirmar un análisis sin un valor mayor a cero.');
-        }
-
+    public static function iniciar_muestra_externa(int $idEmpleado, array $data): array
+    {
         DB::beginTransaction();
         try {
-            $detalle = CierreLeyesData::get_detalle_con_analito($idGrupoAnalisisDetalle);
-            if (! $detalle) {
-                return ApiResponse::error('El detalle del grupo de análisis no existe');
-            }
+            $codigoCliente = ! empty($data['codigo_cliente'])
+                ? trim((string) $data['codigo_cliente'])
+                : (! empty($data['nombre']) ? trim((string) $data['nombre']) : null);
 
-            $esDesplegable = $detalle->analito ? (bool) $detalle->analito->es_desplegable : false;
+            $idProveedor = ! empty($data['id_proveedor']) ? (int) $data['id_proveedor'] : null;
+            $fecha = ! empty($data['fecha']) ? $data['fecha'] : now();
 
-            if (! $esDesplegable) {
-                // No-desplegable: actualizar SOLO la corrida específica (mismo uuid_fila),
-                // NO todas las corridas de la muestra para ese detalle.
-                $affected = CierreLeyesData::actualizar_leyes_no_desplegables_muestra(
-                    $idMuestraExterna,
-                    $idGrupoAnalisisDetalle,
-                    $ley,
-                    $estaConfirmada,
-                    $idEmpleadoRegistro,
-                    $uuidFila
-                );
+            $sigNumero = (int) (DB::table('muestra_externa')->max('numero_correlativo') ?? 0) + 1;
+            $correlativo = 'ME-' . str_pad((string) $sigNumero, 4, '0', STR_PAD_LEFT);
 
-                if ($affected === 0) {
-                    CierreLeyesData::crear_analisis_mineral_muestra([
-                        'id_muestra_externa' => $idMuestraExterna,
-                        'id_grupo_analisis_detalle' => $idGrupoAnalisisDetalle,
-                        'tipo_origen' => $tipoOrigen,
-                        'uuid_fila' => $uuidFila,
-                        'ley' => $ley,
-                        'esta_confirmada' => $estaConfirmada ? 1 : 0,
-                        'id_empleado_registro' => $idEmpleadoRegistro,
-                    ]);
-                }
-            } else {
-                if ($id !== null) {
-                    $registro = CierreLeyesData::get_registro_analisis_by_id($id);
-                    if (! $registro) {
-                        return ApiResponse::error('Registro de análisis no encontrado para actualizar');
-                    }
-                    CierreLeyesData::actualizar_registro_analisis($registro, $ley, $estaConfirmada, $idEmpleadoRegistro);
-                } else {
-                    CierreLeyesData::crear_analisis_mineral_muestra([
-                        'id_muestra_externa' => $idMuestraExterna,
-                        'id_grupo_analisis_detalle' => $idGrupoAnalisisDetalle,
-                        'tipo_origen' => $tipoOrigen,
-                        'uuid_fila' => $uuidFila,
-                        'ley' => $ley,
-                        'esta_confirmada' => $estaConfirmada ? 1 : 0,
-                        'id_empleado_registro' => $idEmpleadoRegistro,
-                    ]);
+            // Guardar en tabla muestra_externa (NO en grupo_analisis)
+            $idMuestra = DB::table('muestra_externa')->insertGetId([
+                'id_empleado_registro' => $idEmpleado,
+                'id_proveedor_minero' => $idProveedor,
+                'codigo_cliente' => $codigoCliente,
+                'correlativo' => $correlativo,
+                'numero_correlativo' => $sigNumero,
+                'fecha_hora_ingreso' => $fecha,
+                'created_at' => now(),
+            ]);
+
+            // Guardar documentos si fueron subidos
+            $docsJson = [];
+            if (! empty($data['documentos']) && is_array($data['documentos'])) {
+                /** @var UploadedFile[] $archivosSubidos */
+                $archivosSubidos = array_filter($data['documentos'], fn ($f) => $f instanceof UploadedFile);
+                if (count($archivosSubidos) > 0) {
+                    $docsJson = ArchivoHelper::guardarArchivos('analisis_mineral', $archivosSubidos);
                 }
             }
 
-            DB::commit();
-
-            $muestra = CierreLeyesData::get_muestra_externa_by_id($idMuestraExterna);
-
-            return ApiResponse::success($muestra, 'Valor de ley guardado correctamente');
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            return ApiResponse::error('Error al guardar el valor de ley: '.$e->getMessage());
-        }
-    }
-
-    /**
-     * Eliminar una corrida de análisis de una muestra externa por uuid_fila.
-     * Si después de eliminar la corrida la muestra queda sin análisis, se hace CASCADE
-     * (se borra la cabecera de muestra_externa también) para no dejar muestras huérfanas.
-     */
-    public static function eliminar_fila_muestra_externa(int $idMuestraExterna, string $uuidFila): array
-    {
-        DB::beginTransaction();
-        try {
-            CierreLeyesData::eliminar_fila_analisis_muestra($idMuestraExterna, $uuidFila);
-
-            $restantes = CierreLeyesData::count_analisis_by_muestra($idMuestraExterna);
-            if ($restantes === 0) {
-                CierreLeyesData::eliminar_muestra_externa($idMuestraExterna);
-                DB::commit();
-
-                return ApiResponse::success(null, 'Muestra externa eliminada por quedar sin registros');
+            // Si se especificó laboratorio o número de ensayo o documentos, crear primer análisis asociado a la muestra externa (sin grupo)
+            if (! empty($data['id_laboratorio']) || ! empty($data['asumido_por']) || ! empty($docsJson)) {
+                DB::table('analisis_mineral')->insert([
+                    'id_grupo_analisis' => null,
+                    'id_muestra_externa' => $idMuestra,
+                    'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
+                    'asumido_por' => ! empty($data['asumido_por']) ? trim((string) $data['asumido_por']) : 'Proveedor',
+                    'numero_ensayo' => ! empty($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : 1,
+                    'tipo_origen' => 'Externo',
+                    'sin_lote' => 1,
+                    'documentos' => json_encode($docsJson),
+                    'ley_oro' => 0.000,
+                    'ley_plata' => 0.000,
+                    'ley_humedad' => 0.000,
+                    'ley_recuperacion' => 0.000,
+                    'ley_oro_confirmada' => 0,
+                    'ley_plata_confirmada' => 0,
+                    'id_empleado_registro' => $idEmpleado,
+                    'log_cambios' => json_encode([]),
+                    'created_at' => now(),
+                ]);
             }
 
-            $muestra = CierreLeyesData::get_muestra_externa_by_id($idMuestraExterna);
             DB::commit();
-
-            return ApiResponse::success($muestra, 'Fila de análisis eliminada correctamente');
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            return ApiResponse::error('Error al eliminar la fila de análisis: '.$e->getMessage());
-        }
-    }
-
-    /**
-     * Agregar una nueva corrida de análisis (nuevo uuid_fila) a una muestra externa.
-     */
-    public static function agregar_analisis_muestra(int $idMuestraExterna, int $idEmpleado): array
-    {
-        $muestra = CierreLeyesData::get_muestra_externa_by_id($idMuestraExterna);
-        if (! $muestra) {
-            return ApiResponse::error('Muestra externa no encontrada');
-        }
-
-        DB::beginTransaction();
-        try {
-            $uuidFila = Str::uuid()->toString();
-            CierreLeyesData::crear_registros_vacios_analisis_muestra($idMuestraExterna, $uuidFila, $idEmpleado);
-
-            DB::commit();
-
-            $muestraActualizada = CierreLeyesData::get_muestra_externa_by_id($idMuestraExterna);
-
-            return ApiResponse::success($muestraActualizada, 'Nuevo análisis agregado a la muestra externa');
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            return ApiResponse::error('Error al agregar análisis a la muestra externa: '.$e->getMessage());
-        }
-    }
-
-    /**
-     * Actualizar tipo de origen de una corrida de análisis de una muestra externa.
-     */
-    public static function actualizar_origen_fila_muestra_externa(int $idMuestraExterna, string $uuidFila, ?string $tipoOrigen, int $idEmpleado = 1): array
-    {
-        CierreLeyesData::actualizar_origen_fila_muestra($idMuestraExterna, $uuidFila, $tipoOrigen, $idEmpleado);
-
-        $muestra = CierreLeyesData::get_muestra_externa_by_id($idMuestraExterna);
-
-        return ApiResponse::success($muestra, 'Origen de la corrida actualizado correctamente');
-    }
-
-    /**
-     * Asociar una muestra externa a un lote: los analisis_mineral de la muestra
-     * actualizan su id_lote_mineral al destino, id_muestra_externa=NULL, sin_lote=0.
-     * Cada analisis_mineral afectado recibe una entrada en log_cambios indicando
-     * la migración desde la muestra externa (mantiene su uuid_fila original).
-     *
-     * Reglas:
-     *  - El lote destino debe estar en estado_leyes 'Pendiente' o 'En Proceso'.
-     *  - Si el lote estaba Pendiente, se cambia automáticamente a EnProceso
-     *    (es un "iniciar análisis" implícito con datos precargados).
-     *  - Una muestra solo puede asociarse a un lote.
-     */
-    public static function asociar_muestra_a_lote(int $idMuestraExterna, int $idLoteMineral, int $idEmpleado): array
-    {
-        $lote = CierreLeyesData::get_lote_by_id($idLoteMineral);
-        if (! $lote) {
-            return ApiResponse::error('Lote no encontrado');
-        }
-
-        $estadoLeyes = $lote->getRawOriginal('estado_leyes');
-        if ($estadoLeyes !== EstadoLeyes::Pendiente->value && $estadoLeyes !== EstadoLeyes::EnProceso->value) {
-            return ApiResponse::error('Solo se pueden asociar muestras externas a lotes en estado Pendiente o En Proceso');
-        }
-
-        $muestra = CierreLeyesData::get_muestra_externa_by_id($idMuestraExterna);
-        if (! $muestra) {
-            return ApiResponse::error('Muestra externa no encontrada');
-        }
-
-        DB::beginTransaction();
-        try {
-            // Si el lote estaba Pendiente, lo abrimos a EnProceso (mismo efecto que iniciar_lote).
-            $esPendiente = $estadoLeyes === EstadoLeyes::Pendiente->value;
-            if ($esPendiente) {
-                CierreLeyesData::actualizar_estado_inicio_lote($lote, $idEmpleado);
-            }
-
-            $migrados = CierreLeyesData::asociar_analisis_muestra_a_lote($idMuestraExterna, $idLoteMineral, $idEmpleado, $muestra);
-
-            // Recalcular humedad/recuperacion con TODAS las filas (incluye las migradas,
-            // que vienen con esta_confirmada=0) para que el consolidado del lote refleje
-            // el promedio real de las filas tras la asociación. No toca oro/plata ni el
-            // estado de confirmación del lote.
-            $hr = self::consolidar_humedad_recuperacion($idLoteMineral);
-            CierreLeyesData::actualizar_leyes_lote($lote, $hr);
-            CierreLeyesData::actualizar_filas_humedad_recuperacion_a_promedio(
-                $idLoteMineral,
-                $hr['ley_humedad'],
-                $hr['ley_recuperacion'],
-            );
-
-            DB::commit();
-
-            $updatedLote = CierreLeyesData::get_lotes_cierre($idLoteMineral);
-            $loteData = count($updatedLote) > 0 ? $updatedLote[0] : null;
 
             return ApiResponse::success([
-                'lote' => $loteData,
-                'muestra' => $muestra,
-                'analisis_migrados' => $migrados,
-                'lote_iniciado' => $esPendiente,
-            ], 'Muestra externa asociada al lote correctamente');
+                'id' => $idMuestra,
+                'id_muestra_externa' => $idMuestra,
+            ], 'Muestra externa creada correctamente');
         } catch (\Exception $e) {
             DB::rollBack();
 
-            return ApiResponse::error('Error al asociar la muestra externa: '.$e->getMessage());
+            return ApiResponse::error('Error al crear muestra externa: '.$e->getMessage());
         }
     }
 
     /**
-     * Listar las muestras externas que fueron asociadas a un lote específico.
+     * Agregar análisis directamente a una muestra externa
      */
-    public static function get_muestras_asociadas_por_lote(int $idLoteMineral): array
+    public static function agregar_analisis_a_muestra_externa(int $idMuestraExterna, array $data, int $idEmpleado, array $archivos = []): array
     {
-        $data = CierreLeyesData::get_muestras_asociadas_por_lote($idLoteMineral);
+        try {
+            $muestra = DB::table('muestra_externa')->where('id', $idMuestraExterna)->first();
+            if (! $muestra) {
+                return ApiResponse::error('Muestra externa no encontrada');
+            }
 
-        return ApiResponse::success($data, 'Muestras externas asociadas al lote obtenidas correctamente');
+            $docs = [];
+            if (! empty($archivos)) {
+                $docs = ArchivoHelper::guardarArchivos('analisis_mineral', $archivos);
+            }
+
+            $maxEnsayo = (int) (DB::table('analisis_mineral')
+                ->where('id_muestra_externa', $idMuestraExterna)
+                ->max('numero_ensayo') ?? 0);
+
+            $numeroEnsayo = ! empty($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : ($maxEnsayo + 1);
+            $tipoOrigen = ! empty($data['tipo_origen']) ? trim((string) $data['tipo_origen']) : 'Externo';
+
+            // Obtener humedad y recuperación existentes de la muestra para mantenerlas idénticas
+            $analisisPrevio = DB::table('analisis_mineral')
+                ->where('id_muestra_externa', $idMuestraExterna)
+                ->where(function ($q) {
+                    $q->where('ley_humedad', '>', 0)
+                      ->orWhere('ley_recuperacion', '>', 0);
+                })
+                ->first();
+
+            $humedadActual = $analisisPrevio ? (float) $analisisPrevio->ley_humedad : 0.000;
+            $recuperacionActual = $analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000;
+
+            $idAnalisis = DB::table('analisis_mineral')->insertGetId([
+                'id_grupo_analisis' => null,
+                'id_muestra_externa' => $idMuestraExterna,
+                'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
+                'asumido_por' => ! empty($data['asumido_por']) ? trim((string) $data['asumido_por']) : 'Proveedor',
+                'numero_ensayo' => $numeroEnsayo,
+                'tipo_origen' => $tipoOrigen,
+                'sin_lote' => 1,
+                'documentos' => json_encode($docs),
+                'ley_oro' => 0.000,
+                'ley_plata' => 0.000,
+                'ley_humedad' => $humedadActual,
+                'ley_recuperacion' => $recuperacionActual,
+                'ley_oro_confirmada' => 0,
+                'ley_plata_confirmada' => 0,
+                'id_empleado_registro' => $idEmpleado,
+                'log_cambios' => json_encode([]),
+                'created_at' => now(),
+            ]);
+
+            return ApiResponse::success(['id' => $idAnalisis], 'Análisis agregado a la muestra externa correctamente');
+        } catch (\Exception $e) {
+            return ApiResponse::error('Error al agregar análisis a la muestra: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Asociar muestra externa a grupo
+     */
+    public static function asociar_muestra_a_grupo(int $idMuestraExterna, int $idGrupoDestino): array
+    {
+        return self::asociar_muestras_multiples_a_grupo([$idMuestraExterna], $idGrupoDestino);
+    }
+
+    /**
+     * Asociar múltiples muestras externas a un grupo
+     */
+    public static function asociar_muestras_multiples_a_grupo(array $idsMuestraExterna, int $idGrupoDestino): array
+    {
+        if (empty($idsMuestraExterna)) {
+            return ApiResponse::error('Debe seleccionar al menos una muestra para asociar');
+        }
+
+        try {
+            DB::beginTransaction();
+            $ok = CierreLeyesData::asociar_muestras_multiples_a_grupo($idsMuestraExterna, $idGrupoDestino);
+            if (! $ok) {
+                DB::rollBack();
+
+                return ApiResponse::error('No se pudo encontrar el grupo destino especificado');
+            }
+            DB::commit();
+
+            $msg = count($idsMuestraExterna) === 1
+                ? 'Muestra asociada al grupo correctamente'
+                : count($idsMuestraExterna).' muestras asociadas al grupo correctamente';
+
+            return ApiResponse::success(null, $msg);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return ApiResponse::error('Error al asociar muestras: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Obtener muestras asociadas a un grupo
+     */
+    public static function get_muestras_asociadas_por_grupo(int $idGrupo): array
+    {
+        $data = CierreLeyesData::get_muestras_asociadas_por_grupo($idGrupo);
+
+        return ApiResponse::success($data, 'Muestras asociadas obtenidas correctamente');
     }
 }

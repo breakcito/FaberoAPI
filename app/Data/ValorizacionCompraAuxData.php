@@ -31,7 +31,7 @@ class ValorizacionCompraAuxData
                 p.estado
             FROM proveedor p
             INNER JOIN (
-                SELECT lg.id AS id_lote_guia, lm.con_valor_comercial, gpt.id_proveedor AS id_proveedor
+                SELECT lg.id AS id_lote_guia, lm.con_valor_comercial, COALESCE(gpt.id_proveedor, lm.id_proveedor_minero) AS id_proveedor
                 FROM lote_guia lg
                 INNER JOIN lote_mineral lm ON lm.id = COALESCE(
                     lg.id_lote_mineral,
@@ -65,10 +65,8 @@ class ValorizacionCompraAuxData
                   )
                   -- Excluir el lote completo si ya tiene AMBOS elementos (Oro y Plata) valorizados.
                   AND NOT (lm.esta_valorizado_oro = 1 AND lm.esta_valorizado_plata = 1)
-                  -- Debe contar con ley de oro, plata y humedad registradas.
-                  AND COALESCE(lm.ley_oro, 0) > 0
-                  AND COALESCE(lm.ley_plata, 0) > 0
-                  AND COALESCE(lm.ley_humedad, 0) > 0
+                  -- Debe contar con peso neto registrado.
+                  AND COALESCE(lm.peso_neto, 0) > 0
             ) t ON t.id_proveedor = p.id
             ORDER BY p.razon_social ASC;
         ';
@@ -211,8 +209,28 @@ class ValorizacionCompraAuxData
                     COALESCE(lm.peso_neto, 0) * (1 - (COALESCE(lm.ley_humedad, 0) / 100)) AS tms,
                     COALESCE(lm.ley_oro, 0) AS ley_oro,
                     COALESCE(lm.ley_plata, 0) AS ley_plata,
-                    lm.esta_valorizado_oro AS es_valorizado_oro,
-                    lm.esta_valorizado_plata AS es_valorizado_plata,
+                    CASE WHEN EXISTS (
+                        SELECT 1
+                        FROM valorizacion_compramineral_detalle vcd_o
+                        INNER JOIN valorizacion_compra vc_o ON vc_o.id = vcd_o.id_valorizacion_compra
+                        INNER JOIN lote_guia lg_o ON lg_o.id = vcd_o.id_lote_guia
+                        LEFT JOIN particion_lote_mineral plm_o ON plm_o.id = lg_o.id_particion_lote_mineral
+                        WHERE COALESCE(lg_o.id_lote_mineral, plm_o.id_lote_mineral) = lm.id
+                          AND vcd_o.elemento_quimico = \'Oro\'
+                          AND vc_o.estado IN (\'Propuesta\', \'Aprobado\')
+                          '.($idValorizacionEdicion ? "AND vc_o.id <> {$idValorizacionEdicion}" : '').'
+                    ) OR (COALESCE(lm.esta_valorizado_oro, 0) = 1 '.($idValorizacionEdicion ? 'AND 1 = 0' : '').') THEN 1 ELSE 0 END AS es_valorizado_oro,
+                    CASE WHEN EXISTS (
+                        SELECT 1
+                        FROM valorizacion_compramineral_detalle vcd_p
+                        INNER JOIN valorizacion_compra vc_p ON vc_p.id = vcd_p.id_valorizacion_compra
+                        INNER JOIN lote_guia lg_p ON lg_p.id = vcd_p.id_lote_guia
+                        LEFT JOIN particion_lote_mineral plm_p ON plm_p.id = lg_p.id_particion_lote_mineral
+                        WHERE COALESCE(lg_p.id_lote_mineral, plm_p.id_lote_mineral) = lm.id
+                          AND vcd_p.elemento_quimico = \'Plata\'
+                          AND vc_p.estado IN (\'Propuesta\', \'Aprobado\')
+                          '.($idValorizacionEdicion ? "AND vc_p.id <> {$idValorizacionEdicion}" : '').'
+                    ) OR (COALESCE(lm.esta_valorizado_plata, 0) = 1 '.($idValorizacionEdicion ? 'AND 1 = 0' : '').') THEN 1 ELSE 0 END AS es_valorizado_plata,
                     ROW_NUMBER() OVER (PARTITION BY lm.id ORDER BY lg.id ASC) AS rn
                 FROM lote_guia lg
                 INNER JOIN lote_mineral lm ON lm.id = COALESCE(
@@ -262,12 +280,38 @@ class ValorizacionCompraAuxData
                           0
                       ) = COALESCE(lm.peso_neto, 0)
                   )
-                  -- Excluir el lote completo si ya tiene AMBOS elementos (Oro y Plata) valorizados.
-                  AND NOT (lm.esta_valorizado_oro = 1 AND lm.esta_valorizado_plata = 1)
-                  -- Debe contar con ley de oro, plata y humedad registradas.
-                  AND COALESCE(lm.ley_oro, 0) > 0
-                  AND COALESCE(lm.ley_plata, 0) > 0
-                  AND COALESCE(lm.ley_humedad, 0) > 0
+                  -- Excluir solo si ya esta valorizado para AMBOS elementos en otra propuesta o valorizacion activa
+                  AND NOT (
+                      (
+                          EXISTS (
+                              SELECT 1
+                              FROM valorizacion_compramineral_detalle vcd_o
+                              INNER JOIN valorizacion_compra vc_o ON vc_o.id = vcd_o.id_valorizacion_compra
+                              INNER JOIN lote_guia lg_o ON lg_o.id = vcd_o.id_lote_guia
+                              LEFT JOIN particion_lote_mineral plm_o ON plm_o.id = lg_o.id_particion_lote_mineral
+                              WHERE COALESCE(lg_o.id_lote_mineral, plm_o.id_lote_mineral) = lm.id
+                                AND vcd_o.elemento_quimico = \'Oro\'
+                                AND vc_o.estado IN (\'Propuesta\', \'Aprobado\')
+                                '.($idValorizacionEdicion ? "AND vc_o.id <> {$idValorizacionEdicion}" : '').'
+                          )
+                          OR (COALESCE(lm.esta_valorizado_oro, 0) = 1 '.($idValorizacionEdicion ? 'AND 1 = 0' : '').')
+                      )
+                      AND
+                      (
+                          EXISTS (
+                              SELECT 1
+                              FROM valorizacion_compramineral_detalle vcd_p
+                              INNER JOIN valorizacion_compra vc_p ON vc_p.id = vcd_p.id_valorizacion_compra
+                              INNER JOIN lote_guia lg_p ON lg_p.id = vcd_p.id_lote_guia
+                              LEFT JOIN particion_lote_mineral plm_p ON plm_p.id = lg_p.id_particion_lote_mineral
+                              WHERE COALESCE(lg_p.id_lote_mineral, plm_p.id_lote_mineral) = lm.id
+                                AND vcd_p.elemento_quimico = \'Plata\'
+                                AND vc_p.estado IN (\'Propuesta\', \'Aprobado\')
+                                '.($idValorizacionEdicion ? "AND vc_p.id <> {$idValorizacionEdicion}" : '').'
+                          )
+                          OR (COALESCE(lm.esta_valorizado_plata, 0) = 1 '.($idValorizacionEdicion ? 'AND 1 = 0' : '').')
+                      )
+                  )
             ) ranked
             WHERE ranked.rn = 1
             ORDER BY ranked.fecha_en_planta ASC, ranked.numero_correlativo ASC;
@@ -285,11 +329,94 @@ class ValorizacionCompraAuxData
             ->get();
 
         foreach ($lotes as $lote) {
+            $grupos = DB::select('
+                SELECT
+                    ga.id,
+                    ga.nombre,
+                    ga.numero_correlativo,
+                    ga.ley_oro_cierre,
+                    ga.ley_plata_cierre,
+                    ga.ley_humedad_cierre,
+                    ga.ley_recuperacion_cierre,
+                    ga.tiene_propuesta_oro,
+                    ga.tiene_propuesta_plata,
+                    (
+                        SELECT vc.estado
+                        FROM valorizacion_compramineral_detalle vcd
+                        JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
+                        WHERE vcd.id_grupo_analisis = ga.id
+                          AND vcd.elemento_quimico = "Oro"
+                          AND vc.estado != "Anulado"
+                        ORDER BY CASE WHEN vc.estado = "Aprobado" THEN 1 ELSE 2 END ASC, vc.id DESC
+                        LIMIT 1
+                    ) AS estado_valorizacion_oro,
+                    (
+                        SELECT vc.estado
+                        FROM valorizacion_compramineral_detalle vcd
+                        JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
+                        WHERE vcd.id_grupo_analisis = ga.id
+                          AND vcd.elemento_quimico = "Plata"
+                          AND vc.estado != "Anulado"
+                        ORDER BY CASE WHEN vc.estado = "Aprobado" THEN 1 ELSE 2 END ASC, vc.id DESC
+                        LIMIT 1
+                    ) AS estado_valorizacion_plata
+                FROM grupo_analisis ga
+                WHERE ga.id_lote_mineral = :id_lote_mineral
+                ORDER BY ga.id DESC
+            ', ['id_lote_mineral' => $lote->id_lote_mineral]);
+
+            foreach ($grupos as $g) {
+                $g->id = (int) $g->id;
+                $g->numero_correlativo = (int) $g->numero_correlativo;
+                $g->ley_oro_cierre = (float) $g->ley_oro_cierre;
+                $g->ley_plata_cierre = (float) $g->ley_plata_cierre;
+                $g->ley_humedad_cierre = (float) $g->ley_humedad_cierre;
+                $g->ley_recuperacion_cierre = (float) $g->ley_recuperacion_cierre;
+                $g->estado_valorizacion_oro = $g->estado_valorizacion_oro ?? ($g->tiene_propuesta_oro ? 'Propuesta' : null);
+                $g->estado_valorizacion_plata = $g->estado_valorizacion_plata ?? ($g->tiene_propuesta_plata ? 'Propuesta' : null);
+                $g->tiene_propuesta_oro = ! empty($g->estado_valorizacion_oro) || (bool) $g->tiene_propuesta_oro;
+                $g->tiene_propuesta_plata = ! empty($g->estado_valorizacion_plata) || (bool) $g->tiene_propuesta_plata;
+
+                if ($g->ley_oro_cierre <= 0 || $g->ley_plata_cierre <= 0 || $g->ley_humedad_cierre <= 0) {
+                    $promedios = DB::select('
+                        SELECT
+                            AVG(CASE WHEN ley_oro_confirmada = 1 AND ley_oro > 0 THEN ley_oro ELSE NULL END) as prom_oro,
+                            AVG(CASE WHEN ley_plata_confirmada = 1 AND ley_plata > 0 THEN ley_plata ELSE NULL END) as prom_plata,
+                            AVG(CASE WHEN ley_humedad > 0 THEN ley_humedad ELSE NULL END) as prom_humedad,
+                            AVG(CASE WHEN ley_recuperacion > 0 THEN ley_recuperacion ELSE NULL END) as prom_recuperacion
+                        FROM analisis_mineral
+                        WHERE id_grupo_analisis = :id_grupo
+                    ', ['id_grupo' => $g->id]);
+
+                    if (! empty($promedios)) {
+                        $p = $promedios[0];
+                        if ($g->ley_oro_cierre <= 0 && $p->prom_oro !== null) {
+                            $g->ley_oro_cierre = round((float) $p->prom_oro, 3);
+                        }
+                        if ($g->ley_plata_cierre <= 0 && $p->prom_plata !== null) {
+                            $g->ley_plata_cierre = round((float) $p->prom_plata, 3);
+                        }
+                        if ($g->ley_humedad_cierre <= 0 && $p->prom_humedad !== null) {
+                            $g->ley_humedad_cierre = round((float) $p->prom_humedad, 3);
+                        }
+                        if ($g->ley_recuperacion_cierre <= 0 && $p->prom_recuperacion !== null) {
+                            $g->ley_recuperacion_cierre = round((float) $p->prom_recuperacion, 3);
+                        }
+                    }
+                }
+            }
+
+            $lote->grupos_analisis = $grupos;
+
+            $primerGrupo = ! empty($grupos) ? $grupos[0] : null;
+            $lote->id_grupo_analisis = $primerGrupo ? $primerGrupo->id : null;
+            $lote->ley_oro = $primerGrupo ? (float) $primerGrupo->ley_oro_cierre : (float) ($lote->ley_oro ?? 0.0);
+            $lote->ley_plata = $primerGrupo ? (float) $primerGrupo->ley_plata_cierre : (float) ($lote->ley_plata ?? 0.0);
+            $lote->ley_humedad = $primerGrupo ? (float) $primerGrupo->ley_humedad_cierre : (float) ($lote->ley_humedad ?? 0.0);
+            $lote->ley_recuperacion = $primerGrupo ? (float) $primerGrupo->ley_recuperacion_cierre : 0.0;
+
             $lote->tmh = (float) $lote->tmh;
-            $lote->ley_humedad = (float) $lote->ley_humedad;
-            $lote->tms = (float) $lote->tms;
-            $lote->ley_oro = (float) $lote->ley_oro;
-            $lote->ley_plata = (float) $lote->ley_plata;
+            $lote->tms = round($lote->tmh * (1 - ($lote->ley_humedad / 100)), 4);
             $lote->es_valorizado_oro = (bool) $lote->es_valorizado_oro;
             $lote->es_valorizado_plata = (bool) $lote->es_valorizado_plata;
             $lote->con_valor_comercial = (bool) ($lote->con_valor_comercial ?? 1);
@@ -329,6 +456,19 @@ class ValorizacionCompraAuxData
                 'maquila' => (float) $condPlata->maquila,
                 'consumo' => (float) $condPlata->consumo,
             ] : null;
+
+            $lote->condiciones_comerciales = $condiciones->map(function ($c) {
+                return [
+                    'id' => (int) $c->id,
+                    'elemento_quimico' => $c->elemento_quimico instanceof ElementoQuimicoValorizacion ? $c->elemento_quimico->value : (string) $c->elemento_quimico,
+                    'ley_inicio' => (float) $c->ley_inicio,
+                    'ley_fin' => (float) $c->ley_fin,
+                    'recuperacion' => (float) $c->recuperacion,
+                    'maquila' => (float) $c->maquila,
+                    'consumo' => (float) $c->consumo,
+                    'riesgo_comercial' => (float) ($c->riesgo_comercial ?? 0),
+                ];
+            })->values()->all();
         }
 
         return $lotes;
@@ -360,8 +500,9 @@ class ValorizacionCompraAuxData
                 p.razon_social AS proveedor_nombre,
                 c.nombre AS concesion_nombre,
                 vc.id_cuenta_bancaria,
-                vc.monto_penalidad,
-                vc.monto_flete,
+                COALESCE((SELECT SUM(vcd.monto_penalidad) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS monto_penalidad,
+                COALESCE((SELECT SUM(vcd.monto_flete) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS monto_flete,
+                COALESCE((SELECT SUM(COALESCE(vcd.subtotal_sin_descuento, vcd.subtotal)) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS total_dolares_sin_descuento,
                 COALESCE((SELECT SUM(vcd.subtotal) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS total_dolares,
                 COALESCE((SELECT SUM(tap.monto_retirado) FROM transaccion_anticipo_proveedor tap WHERE tap.id_valorizacion_compra = vc.id AND tap.estado = :tap_estado_aprobado), 0) AS monto_anticipos
             FROM valorizacion_compra vc

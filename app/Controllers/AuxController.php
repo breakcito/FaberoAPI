@@ -879,4 +879,28 @@ class AuxController extends Controller
 
         return response()->json(ValorizacionVentaAuxService::get_condiciones_comerciales_planta($idPlanta));
     }
+
+    /**
+     * Listar laboratorios
+     */
+    public function get_laboratorios(): JsonResponse
+    {
+        return response()->json(\App\Services\LaboratoriosService::get_laboratorios());
+    }
+
+    /**
+     * Crear laboratorio
+     */
+    public function crear_laboratorio(Request $request): JsonResponse
+    {
+        $idEmpleado = (int) auth()->id();
+        $nombre = $request->input('nombre');
+        $ruc = $request->input('ruc');
+
+        return response()->json(\App\Services\LaboratoriosService::crear_laboratorio(
+            id_empleado_registro: $idEmpleado,
+            nombre: $nombre,
+            ruc: $ruc
+        ));
+    }
 }

@@ -111,12 +111,14 @@ class ValorizacionCompraService
                 'numero_correlativo' => $numeroCorrelativo,
                 'correlativo' => $correlativoStr,
                 'tipo_pago' => $tipoPagoEnum->value,
+                'porcentaje_igv' => isset($data['porcentaje_igv']) ? (float) $data['porcentaje_igv'] : 18.00,
+                'porcentaje_detraccion' => isset($data['porcentaje_detraccion']) ? (float) $data['porcentaje_detraccion'] : 10.00,
                 'evidencias' => ! empty($evidenciasGuardadas) ? json_encode(array_values($evidenciasGuardadas)) : null,
                 'log_cambios' => [],
                 'fecha_hora_aprobacion' => null,
                 'fecha_hora_valorizacion' => $data['fecha_hora_valorizacion'] ?? null,
                 'created_at' => now(),
-                'estado' => EstadoValorizacionCompra::Pendiente->value,
+                'estado' => EstadoValorizacionCompra::Propuesta->value,
             ]);
 
             // Guardar Detalles de lotes
@@ -128,12 +130,51 @@ class ValorizacionCompraService
                 if (! $loteGuia || ! $lote) {
                     throw new Exception("El lote guía ID {$det['id_lote_guia']} no fue encontrado.");
                 }
+
+                $idGrupo = ! empty($det['id_grupo_analisis']) ? (int) $det['id_grupo_analisis'] : null;
+                $grupo = $idGrupo ? DB::table('grupo_analisis')->where('id', $idGrupo)->first() : null;
+
                 $pesoNeto = (float) ($lote->peso_neto ?? 0);
-                $leyHumedad = (float) $lote->ley_humedad;
+                if ($grupo && $grupo->ley_humedad_cierre > 0) {
+                    $leyHumedad = (float) $grupo->ley_humedad_cierre;
+                } elseif (isset($det['ley_humedad']) && (float) $det['ley_humedad'] > 0) {
+                    $leyHumedad = (float) $det['ley_humedad'];
+                } else {
+                    $leyHumedad = (float) ($lote->ley_humedad ?? 0);
+                }
                 $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
 
                 $elementoEnum = ElementoQuimicoValorizacion::tryFrom($det['elemento_quimico']) ?? ElementoQuimicoValorizacion::Oro;
-                $ley = $elementoEnum === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
+                $leyBase = $elementoEnum === ElementoQuimicoValorizacion::Oro
+                    ? ($grupo ? (float) $grupo->ley_oro_cierre : (float) ($lote->ley_oro ?? 0))
+                    : ($grupo ? (float) $grupo->ley_plata_cierre : (float) ($lote->ley_plata ?? 0));
+
+                $ley = isset($det['ley']) ? (float) $det['ley'] : $leyBase;
+
+                // Si la ley fue modificada respecto a la del grupo, auditar en log_cambios del grupo
+                if ($grupo && abs($ley - $leyBase) > 0.0001 && ! empty($data['id_empleado_registro'])) {
+                    $campoLey = $elementoEnum === ElementoQuimicoValorizacion::Oro ? 'ley_oro_cierre' : 'ley_plata_cierre';
+                    $logGrupo = isset($grupo->log_cambios) ? (is_array($grupo->log_cambios) ? $grupo->log_cambios : (json_decode((string) $grupo->log_cambios, true) ?? [])) : [];
+                    $logGrupo[] = [
+                        'id_empleado' => (int) $data['id_empleado_registro'],
+                        'fecha_hora' => now()->toDateTimeString(),
+                        'update_at' => now()->toIso8601String(),
+                        'accion' => 'Ajuste de Ley desde Propuesta de Valorización',
+                        'motivo' => "Ley {$elementoEnum->value} ajustada para propuesta {$correlativoStr}: {$leyBase} -> {$ley}",
+                        'cambios' => [
+                            [
+                                'campo_bd' => $campoLey,
+                                'campo' => "Ley {$elementoEnum->value}",
+                                'valor_anterior' => (string) $leyBase,
+                                'valor_nuevo' => (string) $ley,
+                            ],
+                        ],
+                    ];
+                    DB::table('grupo_analisis')->where('id', $grupo->id)->update([
+                        $campoLey => $ley,
+                        'log_cambios' => json_encode($logGrupo),
+                    ]);
+                }
 
                 $esSinValor = self::loteEsSinValorComercial($lote);
 
@@ -174,6 +215,7 @@ class ValorizacionCompraService
                 $detallesCreados[] = ValorizacionCompraDetalle::create([
                     'id_valorizacion_compra' => $valorizacion->id,
                     'id_lote_guia' => $det['id_lote_guia'],
+                    'id_grupo_analisis' => $idGrupo,
                     'id_condicion_comercial' => $esSinValor ? null : ($det['id_condicion_comercial'] ?? null),
                     'id_valor_elemento_quimico' => $esSinValor ? null : (isset($det['id_valor_elemento_quimico']) ? (int) $det['id_valor_elemento_quimico'] : null),
                     'elemento_quimico' => $elementoEnum->value,
@@ -191,6 +233,12 @@ class ValorizacionCompraService
                     'subtotal' => $subtotalFinal,
                     'log_cambios' => [],
                 ]);
+
+                // Activar flag en grupo_analisis
+                if ($idGrupo) {
+                    $campoFlag = $elementoEnum === ElementoQuimicoValorizacion::Oro ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
+                    DB::table('grupo_analisis')->where('id', $idGrupo)->update([$campoFlag => 1]);
+                }
             }
 
             // Prender flags esta_valorizado_X del lote_mineral para los detalles recien creados.
@@ -278,10 +326,10 @@ class ValorizacionCompraService
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
-            if ($valorizacion->estado->value !== EstadoValorizacionCompra::Pendiente->value) {
+            if ($valorizacion->estado->value !== EstadoValorizacionCompra::Propuesta->value) {
                 DB::rollBack();
 
-                return ApiResponse::error('Solo se pueden editar valorizaciones en estado Pendiente.');
+                return ApiResponse::error('Solo se pueden editar valorizaciones en estado Propuesta. Las valorizaciones aprobadas no pueden modificarse.');
             }
 
             // Verificar si todos los lotes incluidos carecen de valor comercial
@@ -426,6 +474,8 @@ class ValorizacionCompraService
                 'id_cuenta_bancaria' => $data['id_cuenta_bancaria'] ?? null,
                 'id_cuenta_detraccion' => $data['id_cuenta_detraccion'] ?? null,
                 'tipo_pago' => $tipoPagoEnum->value,
+                'porcentaje_igv' => isset($data['porcentaje_igv']) ? (float) $data['porcentaje_igv'] : ($valorizacion->porcentaje_igv ?? 18.00),
+                'porcentaje_detraccion' => isset($data['porcentaje_detraccion']) ? (float) $data['porcentaje_detraccion'] : ($valorizacion->porcentaje_detraccion ?? 10.00),
                 'evidencias' => ! empty($vNueEvidencias) ? array_values($vNueEvidencias) : null,
                 'log_cambios' => $logCambios,
                 'total_subtotal' => $newTotalSubtotal,
@@ -435,6 +485,12 @@ class ValorizacionCompraService
             // Re-sincronizar detalles
             // 1) Liberar flags de los detalles que se van a eliminar (si no quedan otras valorizaciones vivas).
             $oldDetalles = ValorizacionCompraDetalle::where('id_valorizacion_compra', $id)->get();
+            foreach ($oldDetalles as $oldDet) {
+                if ($oldDet->id_grupo_analisis) {
+                    $flag = $oldDet->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
+                    DB::table('grupo_analisis')->where('id', $oldDet->id_grupo_analisis)->update([$flag => 0]);
+                }
+            }
             ValorizacionCompraData::delete_detalles_by_valorizacion($id);
             self::liberarLotesValorizados($id, $oldDetalles);
 
@@ -446,12 +502,51 @@ class ValorizacionCompraService
                 if (! $loteGuia || ! $lote) {
                     throw new Exception("El lote guía ID {$det['id_lote_guia']} no fue encontrado.");
                 }
+
+                $idGrupo = ! empty($det['id_grupo_analisis']) ? (int) $det['id_grupo_analisis'] : null;
+                $grupo = $idGrupo ? DB::table('grupo_analisis')->where('id', $idGrupo)->first() : null;
+
                 $pesoNeto = (float) ($lote->peso_neto ?? 0);
-                $leyHumedad = (float) $lote->ley_humedad;
+                if ($grupo && $grupo->ley_humedad_cierre > 0) {
+                    $leyHumedad = (float) $grupo->ley_humedad_cierre;
+                } elseif (isset($det['ley_humedad']) && (float) $det['ley_humedad'] > 0) {
+                    $leyHumedad = (float) $det['ley_humedad'];
+                } else {
+                    $leyHumedad = (float) ($lote->ley_humedad ?? 0);
+                }
                 $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
 
                 $elementoEnum = ElementoQuimicoValorizacion::tryFrom($det['elemento_quimico']) ?? ElementoQuimicoValorizacion::Oro;
-                $ley = $elementoEnum === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
+                $leyBase = $elementoEnum === ElementoQuimicoValorizacion::Oro
+                    ? ($grupo ? (float) $grupo->ley_oro_cierre : (float) ($lote->ley_oro ?? 0))
+                    : ($grupo ? (float) $grupo->ley_plata_cierre : (float) ($lote->ley_plata ?? 0));
+
+                $ley = isset($det['ley']) ? (float) $det['ley'] : $leyBase;
+
+                // Si la ley fue modificada respecto a la del grupo, auditar en log_cambios del grupo
+                if ($grupo && abs($ley - $leyBase) > 0.0001 && ! empty($data['id_empleado_edicion'])) {
+                    $campoLey = $elementoEnum === ElementoQuimicoValorizacion::Oro ? 'ley_oro_cierre' : 'ley_plata_cierre';
+                    $logGrupo = isset($grupo->log_cambios) ? (is_array($grupo->log_cambios) ? $grupo->log_cambios : (json_decode((string) $grupo->log_cambios, true) ?? [])) : [];
+                    $logGrupo[] = [
+                        'id_empleado' => (int) $data['id_empleado_edicion'],
+                        'fecha_hora' => now()->toDateTimeString(),
+                        'update_at' => now()->toIso8601String(),
+                        'accion' => 'Ajuste de Ley desde Propuesta de Valorización (Edición)',
+                        'motivo' => "Ley {$elementoEnum->value} ajustada para propuesta {$valorizacion->correlativo}: {$leyBase} -> {$ley}",
+                        'cambios' => [
+                            [
+                                'campo_bd' => $campoLey,
+                                'campo' => "Ley {$elementoEnum->value}",
+                                'valor_anterior' => (string) $leyBase,
+                                'valor_nuevo' => (string) $ley,
+                            ],
+                        ],
+                    ];
+                    DB::table('grupo_analisis')->where('id', $grupo->id)->update([
+                        $campoLey => $ley,
+                        'log_cambios' => json_encode($logGrupo),
+                    ]);
+                }
 
                 $esSinValor = self::loteEsSinValorComercial($lote);
 
@@ -593,6 +688,7 @@ class ValorizacionCompraService
                 $detallesCreados[] = ValorizacionCompraDetalle::create([
                     'id_valorizacion_compra' => $valorizacion->id,
                     'id_lote_guia' => $det['id_lote_guia'],
+                    'id_grupo_analisis' => $idGrupo,
                     'id_condicion_comercial' => $esSinValor ? null : ($det['id_condicion_comercial'] ?? null),
                     'id_valor_elemento_quimico' => $esSinValor ? null : (isset($det['id_valor_elemento_quimico']) ? (int) $det['id_valor_elemento_quimico'] : null),
                     'elemento_quimico' => $elementoEnum->value,
@@ -610,6 +706,12 @@ class ValorizacionCompraService
                     'subtotal' => $subtotalFinal,
                     'log_cambios' => $logCambiosDetalle,
                 ]);
+
+                // Activar flag en grupo_analisis
+                if ($idGrupo) {
+                    $campoFlag = $elementoEnum === ElementoQuimicoValorizacion::Oro ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
+                    DB::table('grupo_analisis')->where('id', $idGrupo)->update([$campoFlag => 1]);
+                }
             }
 
             // Prender flags esta_valorizado_X del lote_mineral para los detalles recien creados
@@ -805,9 +907,11 @@ class ValorizacionCompraService
     }
 
     /**
-     * Aprobar una valorización y descontar los anticipos involucrados en la transacción
+     * Aprobar una valorización (convierte propuesta en valorización oficial asignando cuentas y anticipos)
+     *
+     * @param  array<string,mixed>  $data
      */
-    public static function aprobar_valorizacion(int $id, int $idEmpleadoAprobacion): array
+    public static function aprobar_valorizacion(int $id, int $idEmpleadoAprobacion, array $data = []): array
     {
         DB::beginTransaction();
         try {
@@ -818,10 +922,43 @@ class ValorizacionCompraService
                 return ApiResponse::error("Valorización con ID {$id} no encontrada.");
             }
 
-            if ($valorizacion->estado->value !== EstadoValorizacionCompra::Pendiente->value) {
+            if ($valorizacion->estado->value !== EstadoValorizacionCompra::Propuesta->value) {
                 DB::rollBack();
 
-                return ApiResponse::error('Solo se pueden aprobar valorizaciones que estén en estado Pendiente.');
+                return ApiResponse::error('Solo se pueden aprobar valorizaciones que estén en estado Propuesta.');
+            }
+
+            $idCuentaBancaria = ! empty($data['id_cuenta_bancaria']) ? (int) $data['id_cuenta_bancaria'] : $valorizacion->id_cuenta_bancaria;
+            $idCuentaDetraccion = ! empty($data['id_cuenta_detraccion']) ? (int) $data['id_cuenta_detraccion'] : $valorizacion->id_cuenta_detraccion;
+            $tipoPagoStr = ! empty($data['tipo_pago']) ? $data['tipo_pago'] : ($valorizacion->tipo_pago?->value ?? TipoPagoValorizacionCompra::Transferencia->value);
+
+            if (empty($idCuentaBancaria)) {
+                throw new Exception('Debe asignar una cuenta bancaria antes de aprobar la valorización.');
+            }
+            if (empty($idCuentaDetraccion)) {
+                throw new Exception('Debe asignar una cuenta de detracción antes de aprobar la valorización.');
+            }
+
+            // Si vienen anticipos en $data, sincronizar transacciones
+            if (! empty($data['anticipos'])) {
+                ValorizacionCompraData::delete_transacciones_by_valorizacion($id);
+                foreach ($data['anticipos'] as $antItem) {
+                    $anticipo = ValorizacionCompraData::find_anticipo_proveedor((int) $antItem['id_anticipo_proveedor']);
+                    if (! $anticipo) {
+                        throw new Exception("Anticipo ID {$antItem['id_anticipo_proveedor']} no encontrado.");
+                    }
+                    $montoRetirado = (float) $antItem['monto_retirado'];
+                    TransaccionAnticipoProveedor::create([
+                        'id_anticipo_proveedor' => $anticipo->id,
+                        'id_valorizacion_compra' => $valorizacion->id,
+                        'monto_retirado' => $montoRetirado,
+                        'saldo_actual' => (float) $anticipo->saldo_actual,
+                        'log_cambios' => [],
+                        'created_at' => now(),
+                        'estado' => EstadoTransaccionAnticipo::Pendiente->value,
+                    ]);
+                }
+                $valorizacion->load('transaccionesAnticipo');
             }
 
             // Procesar cada transacción de anticipo
@@ -925,13 +1062,16 @@ class ValorizacionCompraService
                     [
                         'campo_bd' => 'estado',
                         'campo' => 'Estado',
-                        'valor_anterior' => EstadoValorizacionCompra::Pendiente->value,
+                        'valor_anterior' => EstadoValorizacionCompra::Propuesta->value,
                         'valor_nuevo' => EstadoValorizacionCompra::Aprobado->value,
                     ],
                 ],
             ];
 
             $valorizacion->update([
+                'id_cuenta_bancaria' => $idCuentaBancaria,
+                'id_cuenta_detraccion' => $idCuentaDetraccion,
+                'tipo_pago' => $tipoPagoStr,
                 'estado' => EstadoValorizacionCompra::Aprobado->value,
                 'id_empleado_aprobacion' => $idEmpleadoAprobacion,
                 'fecha_hora_aprobacion' => now(),
@@ -1032,6 +1172,15 @@ class ValorizacionCompraService
 
             if ($tipoEliminacion === 'fisica') {
                 $detallesParaLiberar = $valorizacion->detalles;
+
+                // Liberar flags de grupo_analisis
+                foreach ($detallesParaLiberar as $det) {
+                    if ($det->id_grupo_analisis) {
+                        $flag = $det->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
+                        DB::table('grupo_analisis')->where('id', $det->id_grupo_analisis)->update([$flag => 0]);
+                    }
+                }
+
                 ValorizacionCompraData::delete_detalles_by_valorizacion($id);
                 ValorizacionCompraData::delete_transacciones_by_valorizacion($id);
                 ValorizacionCompraData::delete_model($valorizacion);
@@ -1088,6 +1237,14 @@ class ValorizacionCompraService
                 'evidencias_anulacion' => ! empty($evidenciasAnulacionGuardadas) ? json_encode(array_values($evidenciasAnulacionGuardadas)) : null,
                 'log_cambios' => $logCambios,
             ]);
+
+            // Liberar flags tiene_propuesta en los grupos de análisis
+            foreach ($valorizacion->detalles as $det) {
+                if ($det->id_grupo_analisis) {
+                    $flag = $det->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
+                    DB::table('grupo_analisis')->where('id', $det->id_grupo_analisis)->update([$flag => 0]);
+                }
+            }
 
             self::liberarLotesValorizados($id, $valorizacion->detalles);
 

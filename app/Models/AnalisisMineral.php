@@ -12,13 +12,19 @@ class AnalisisMineral extends Model
     public $timestamps = false;
 
     protected $fillable = [
-        'id_grupo_analisis_detalle',
-        'id_lote_mineral',
+        'id_grupo_analisis',
+        'id_laboratorio',
+        'asumido_por',
+        'numero_ensayo',
+        'documentos',
+        'ley_oro',
+        'ley_plata',
+        'ley_humedad',
+        'ley_recuperacion',
+        'ley_oro_confirmada',
+        'ley_plata_confirmada',
         'id_muestra_externa',
         'id_empleado_registro',
-        'uuid_fila',
-        'ley',
-        'esta_confirmada',
         'tipo_origen',
         'sin_lote',
         'created_at',
@@ -26,20 +32,25 @@ class AnalisisMineral extends Model
     ];
 
     protected $casts = [
-        'ley' => 'float',
-        'esta_confirmada' => 'boolean',
+        'ley_oro' => 'float',
+        'ley_plata' => 'float',
+        'ley_humedad' => 'float',
+        'ley_recuperacion' => 'float',
+        'ley_oro_confirmada' => 'boolean',
+        'ley_plata_confirmada' => 'boolean',
         'sin_lote' => 'boolean',
+        'documentos' => 'array',
         'log_cambios' => 'array',
     ];
 
-    public function grupo_analisis_detalle(): BelongsTo
+    public function grupo_analisis(): BelongsTo
     {
-        return $this->belongsTo(GrupoAnalisisDetalle::class, 'id_grupo_analisis_detalle');
+        return $this->belongsTo(GrupoAnalisis::class, 'id_grupo_analisis');
     }
 
-    public function lote_mineral(): BelongsTo
+    public function laboratorio(): BelongsTo
     {
-        return $this->belongsTo(LoteMineral::class, 'id_lote_mineral');
+        return $this->belongsTo(Laboratorio::class, 'id_laboratorio');
     }
 
     public function empleado_registro(): BelongsTo

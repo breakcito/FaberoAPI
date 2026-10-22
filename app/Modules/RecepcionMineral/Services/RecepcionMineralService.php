@@ -223,7 +223,6 @@ class RecepcionMineralService
                     'tiene_particion' => true,
                     'particionado_desde_balanza' => true,
                     'particion_finalizada' => false,
-                    'estado_leyes' => EstadoLeyes::Pendiente->value,
                     'estado' => EstadoBase::Activo->value,
                     'created_at' => now()->toDateTimeString(),
                 ]);
@@ -285,7 +284,6 @@ class RecepcionMineralService
             'numero_correlativo' => $numeroCorrelativo,
             'con_codigo_manual' => $conCodigoManual,
             'id_ticket_balanza' => $ticketId,
-            'estado_leyes' => EstadoLeyes::Pendiente->value,
             'estado' => EstadoBase::Activo->value,
             'created_at' => now()->toDateTimeString(),
         ]);

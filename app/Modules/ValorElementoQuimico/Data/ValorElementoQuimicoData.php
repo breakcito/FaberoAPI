@@ -21,7 +21,7 @@ class ValorElementoQuimicoData
             ['elemento' => $elemento, 'fecha' => $fecha],
         );
 
-        if (! $row) {
+        if (!$row) {
             return null;
         }
 
@@ -51,7 +51,7 @@ class ValorElementoQuimicoData
             ['elemento' => $elemento],
         );
 
-        if (! $row) {
+        if (!$row) {
             return null;
         }
 
@@ -82,7 +82,7 @@ class ValorElementoQuimicoData
             ['elemento' => $elemento, 'fecha' => $fecha],
         );
 
-        if (! $row) {
+        if (!$row) {
             return null;
         }
 

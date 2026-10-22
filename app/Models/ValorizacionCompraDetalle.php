@@ -15,6 +15,7 @@ class ValorizacionCompraDetalle extends Model
     protected $fillable = [
         'id_valorizacion_compra',
         'id_lote_guia',
+        'id_grupo_analisis',
         'id_condicion_comercial',
         'id_valor_elemento_quimico',
         'elemento_quimico',
@@ -36,6 +37,7 @@ class ValorizacionCompraDetalle extends Model
     protected $casts = [
         'id_valorizacion_compra' => 'integer',
         'id_lote_guia' => 'integer',
+        'id_grupo_analisis' => 'integer',
         'id_condicion_comercial' => 'integer',
         'id_valor_elemento_quimico' => 'integer',
         'inter' => 'float',
@@ -62,6 +64,11 @@ class ValorizacionCompraDetalle extends Model
     public function loteGuia(): BelongsTo
     {
         return $this->belongsTo(LoteGuia::class, 'id_lote_guia');
+    }
+
+    public function grupoAnalisis(): BelongsTo
+    {
+        return $this->belongsTo(GrupoAnalisis::class, 'id_grupo_analisis');
     }
 
     public function condicionComercial(): BelongsTo

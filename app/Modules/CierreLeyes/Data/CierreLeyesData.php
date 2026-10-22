@@ -3,20 +3,18 @@
 namespace App\Modules\CierreLeyes\Data;
 
 use App\Models\AnalisisMineral;
-use App\Models\GrupoAnalisisDetalle;
+use App\Models\GrupoAnalisis;
 use App\Models\LoteMineral;
 use App\Shared\Enums\_Generic\CondicionIngreso;
 use App\Shared\Enums\_Generic\EstadoLeyes;
 use App\Shared\Enums\_Generic\EstadoPesaje;
-use Carbon\Carbon;
-use Illuminate\Database\Eloquent\Collection;
+use App\Shared\Responses\_Generic\RES_CambiosLog;
 use Illuminate\Support\Facades\DB;
 
 class CierreLeyesData
 {
     /**
-     * Obtener los lotes sugeridos que están pendientes de análisis de leyes.
-     * Solo retorna los pesos oficiales (pueden ser NULL si la guia aun no los seteo).
+     * Obtener los lotes sugeridos que están pendientes de grupo de análisis.
      */
     public static function get_lotes_sugeridos(): array
     {
@@ -30,7 +28,6 @@ class CierreLeyesData
                 lm.peso_final,
                 lm.peso_neto,
                 lm.tipo_mineral,
-                lm.estado_leyes,
                 lm.id_proveedor_minero,
                 pr.razon_social AS proveedor_razon_social,
                 lm.created_at
@@ -38,19 +35,16 @@ class CierreLeyesData
             LEFT JOIN recepcion_unidad ru ON lm.id_recepcion_unidad = ru.id
             LEFT JOIN proveedor pr ON pr.id = lm.id_proveedor_minero
             WHERE (
-                -- Lote regular: tiene unidad y está pesado.
-                (lm.id_recepcion_unidad IS NOT NULL
-                 AND ru.estado_pesaje = "'.EstadoPesaje::Pesado->value.'")
+                (lm.id_recepcion_unidad IS NOT NULL AND ru.estado_pesaje = "'.EstadoPesaje::Pesado->value.'")
                 OR
-                -- Lote padre particionado y finalizado: no tiene unidad directa,
-                -- pero el total consolidado ya fue sellado por finalizar_particion_lote.
-                (lm.particionado_desde_balanza = 1
-                 AND lm.particion_finalizada = 1
-                 AND lm.id_recepcion_unidad IS NULL
-                 AND lm.peso_neto IS NOT NULL)
+                (lm.particionado_desde_balanza = 1 AND lm.particion_finalizada = 1 AND lm.id_recepcion_unidad IS NULL AND lm.peso_neto IS NOT NULL)
             )
               AND lm.condicion_ingreso = "'.CondicionIngreso::Comercializacion->value.'"
-              AND (lm.estado_leyes = "'.EstadoLeyes::Pendiente->value.'" OR lm.estado_leyes IS NULL OR lm.estado_leyes = "")
+              AND lm.id NOT IN (
+                  SELECT ga.id_lote_mineral 
+                  FROM grupo_analisis ga 
+                  WHERE ga.id_lote_mineral IS NOT NULL AND ga.id_lote_mineral > 0
+              )
             ORDER BY lm.created_at DESC, lm.id DESC
         ');
 
@@ -60,7 +54,6 @@ class CierreLeyesData
             $row->peso_inicial = $row->peso_inicial !== null ? (float) $row->peso_inicial : null;
             $row->peso_final = $row->peso_final !== null ? (float) $row->peso_final : null;
             $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
-            $row->estado_leyes = $row->estado_leyes !== null ? (string) $row->estado_leyes : null;
             $row->id_proveedor_minero = $row->id_proveedor_minero !== null ? (int) $row->id_proveedor_minero : null;
         }
 
@@ -68,23 +61,14 @@ class CierreLeyesData
     }
 
     /**
-     * Obtener el listado de lotes para el cierre de leyes con sus análisis asociados.
+     * Obtener el listado de lotes para el cierre de leyes con sus grupos de análisis y análisis hijos.
      *
-     * @param  array{estados?: string[], fecha_inicio?: string|null, fecha_fin?: string|null}  $filtros
+     * @param  array{fecha_inicio?: string|null, fecha_fin?: string|null}  $filtros
      */
     public static function get_lotes_cierre(?int $id = null, array $filtros = []): array
     {
-        $estados = $filtros['estados'] ?? [EstadoLeyes::EnProceso->value, EstadoLeyes::Confirmado->value];
         $fechaInicio = $filtros['fecha_inicio'] ?? null;
         $fechaFin = $filtros['fecha_fin'] ?? null;
-
-        $placeholdersEstado = [];
-        $bindingsEstado = [];
-        foreach ($estados as $idx => $estado) {
-            $key = "estado_{$idx}";
-            $placeholdersEstado[] = ":{$key}";
-            $bindingsEstado[$key] = $estado;
-        }
 
         $sql = '
             SELECT
@@ -94,27 +78,22 @@ class CierreLeyesData
                 lm.condicion_ingreso,
                 lm.peso_neto,
                 lm.tipo_mineral,
-                lm.estado_leyes,
                 lm.con_valor_comercial,
-                lm.fecha_hora_inicio_analisis,
-                lm.fecha_hora_confirmacion_analisis,
-                lm.ley_oro,
-                lm.ley_plata,
-                lm.ley_humedad,
-                lm.ley_recuperacion,
                 lm.id_proveedor_minero,
                 lm.created_at,
-                pr.razon_social AS proveedor_razon_social,
-                CONCAT(emp_ini.nombre, " ", emp_ini.apellido) AS empleado_inicio_nombre,
-                CONCAT(emp_conf.nombre, " ", emp_conf.apellido) AS empleado_confirmacion_nombre
+                pr.razon_social AS proveedor_razon_social
             FROM lote_mineral lm
-            LEFT JOIN empleado emp_ini ON lm.id_empleado_inicio_analisis = emp_ini.id
-            LEFT JOIN empleado emp_conf ON lm.id_empleado_confirmacion_analisis = emp_conf.id
+            LEFT JOIN recepcion_unidad ru ON lm.id_recepcion_unidad = ru.id
             LEFT JOIN proveedor pr ON pr.id = lm.id_proveedor_minero
-            WHERE lm.estado_leyes IN ('.implode(',', $placeholdersEstado).')
+            WHERE lm.id IN (
+                SELECT DISTINCT ga.id_lote_mineral 
+                FROM grupo_analisis ga 
+                WHERE ga.id_lote_mineral IS NOT NULL AND ga.id_lote_mineral > 0
+            )
+              AND lm.condicion_ingreso = "'.CondicionIngreso::Comercializacion->value.'"
         ';
 
-        $bindings = $bindingsEstado;
+        $bindings = [];
 
         if ($id !== null) {
             $sql .= ' AND lm.id = :id';
@@ -122,12 +101,12 @@ class CierreLeyesData
         }
 
         if ($fechaInicio !== null) {
-            $sql .= ' AND DATE(COALESCE(lm.fecha_hora_inicio_analisis, lm.created_at)) >= :fecha_inicio';
+            $sql .= ' AND DATE(lm.created_at) >= :fecha_inicio';
             $bindings['fecha_inicio'] = $fechaInicio;
         }
 
         if ($fechaFin !== null) {
-            $sql .= ' AND DATE(COALESCE(lm.fecha_hora_inicio_analisis, lm.created_at)) <= :fecha_fin';
+            $sql .= ' AND DATE(lm.created_at) <= :fecha_fin';
             $bindings['fecha_fin'] = $fechaFin;
         }
 
@@ -136,835 +115,661 @@ class CierreLeyesData
         $lotes = DB::select($sql, $bindings);
 
         foreach ($lotes as $lote) {
-            $lote->analisis = DB::select('
-                SELECT
-                    am.id,
-                    am.id_grupo_analisis_detalle,
-                    gad.id_grupo_analisis AS id_grupo_analisis,
-                    gad.id_analito AS id_analito,
-                    am.uuid_fila,
-                    am.ley,
-                    am.esta_confirmada,
-                    am.tipo_origen,
-                    am.log_cambios,
-                    am.created_at
-                FROM analisis_mineral am
-                INNER JOIN grupo_analisis_detalle gad ON am.id_grupo_analisis_detalle = gad.id
-                WHERE am.id_lote_mineral = :id_lote_mineral
-                ORDER BY am.id ASC
-            ', ['id_lote_mineral' => $lote->id]);
-
-            foreach ($lote->analisis as $a) {
-                $a->id = (int) $a->id;
-                $a->id_grupo_analisis_detalle = (int) $a->id_grupo_analisis_detalle;
-                $a->id_grupo_analisis = (int) $a->id_grupo_analisis;
-                $a->id_analito = (int) $a->id_analito;
-                $a->ley = (float) $a->ley;
-                $a->esta_confirmada = (bool) $a->esta_confirmada;
-                $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
-            }
-
             $lote->id = (int) $lote->id;
             $lote->numero_correlativo = (int) $lote->numero_correlativo;
             $lote->peso_neto = $lote->peso_neto !== null ? (float) $lote->peso_neto : null;
             $lote->con_valor_comercial = $lote->con_valor_comercial !== null ? (bool) $lote->con_valor_comercial : null;
-            $lote->ley_oro = $lote->ley_oro !== null ? (float) $lote->ley_oro : null;
-            $lote->ley_plata = $lote->ley_plata !== null ? (float) $lote->ley_plata : null;
-            $lote->ley_humedad = $lote->ley_humedad !== null ? (float) $lote->ley_humedad : null;
-            $lote->ley_recuperacion = $lote->ley_recuperacion !== null ? (float) $lote->ley_recuperacion : null;
             $lote->id_proveedor_minero = $lote->id_proveedor_minero !== null ? (int) $lote->id_proveedor_minero : null;
-            $lote->created_at = $lote->created_at !== null ? (string) $lote->created_at : null;
+
+            // Obtener todos los grupos de análisis asociados al lote ordenados por correlativo
+            $grupos = DB::select('
+                SELECT
+                    ga.id,
+                    ga.id_empleado_registro,
+                    ga.id_lote_mineral,
+                    ga.id_muestra_externa,
+                    ga.nombre,
+                    ga.numero_correlativo,
+                    ga.ley_oro_cierre,
+                    ga.ley_plata_cierre,
+                    ga.ley_humedad_cierre,
+                    ga.ley_recuperacion_cierre,
+                    ga.log_cambios,
+                    ga.tiene_propuesta_oro,
+                    ga.tiene_propuesta_plata,
+                    ga.created_at,
+                    CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre,
+                    (
+                        SELECT COUNT(DISTINCT am_sub.id_muestra_externa)
+                        FROM analisis_mineral am_sub
+                        WHERE am_sub.id_grupo_analisis = ga.id
+                          AND am_sub.id_muestra_externa IS NOT NULL
+                          AND am_sub.id_muestra_externa > 0
+                    ) AS total_muestras_asociadas,
+                    (
+                        SELECT vc.estado
+                        FROM valorizacion_compramineral_detalle vcd
+                        JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
+                        WHERE vcd.id_grupo_analisis = ga.id
+                          AND vcd.elemento_quimico = "Oro"
+                          AND vc.estado != "Anulado"
+                        ORDER BY CASE WHEN vc.estado = "Aprobado" THEN 1 ELSE 2 END ASC, vc.id DESC
+                        LIMIT 1
+                    ) AS estado_valorizacion_oro,
+                    (
+                        SELECT vc.estado
+                        FROM valorizacion_compramineral_detalle vcd
+                        JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
+                        WHERE vcd.id_grupo_analisis = ga.id
+                          AND vcd.elemento_quimico = "Plata"
+                          AND vc.estado != "Anulado"
+                        ORDER BY CASE WHEN vc.estado = "Aprobado" THEN 1 ELSE 2 END ASC, vc.id DESC
+                        LIMIT 1
+                    ) AS estado_valorizacion_plata
+                FROM grupo_analisis ga
+                LEFT JOIN empleado emp ON ga.id_empleado_registro = emp.id
+                WHERE ga.id_lote_mineral = :id_lote_mineral
+                ORDER BY ga.numero_correlativo ASC, ga.id ASC
+            ', ['id_lote_mineral' => $lote->id]);
+
+            foreach ($grupos as $grupo) {
+                $grupo->id = (int) $grupo->id;
+                $grupo->id_empleado_registro = (int) $grupo->id_empleado_registro;
+                $grupo->id_lote_mineral = (int) $grupo->id_lote_mineral;
+                $grupo->id_muestra_externa = (int) $grupo->id_muestra_externa;
+                $grupo->numero_correlativo = (int) $grupo->numero_correlativo;
+                $grupo->ley_oro_cierre = $grupo->ley_oro_cierre !== null ? (float) $grupo->ley_oro_cierre : 0.0;
+                $grupo->ley_plata_cierre = $grupo->ley_plata_cierre !== null ? (float) $grupo->ley_plata_cierre : 0.0;
+                $grupo->ley_humedad_cierre = $grupo->ley_humedad_cierre !== null ? (float) $grupo->ley_humedad_cierre : 0.0;
+                $grupo->ley_recuperacion_cierre = $grupo->ley_recuperacion_cierre !== null ? (float) $grupo->ley_recuperacion_cierre : 0.0;
+                $grupo->estado_valorizacion_oro = $grupo->estado_valorizacion_oro ?? ($grupo->tiene_propuesta_oro ? 'Propuesta' : null);
+                $grupo->estado_valorizacion_plata = $grupo->estado_valorizacion_plata ?? ($grupo->tiene_propuesta_plata ? 'Propuesta' : null);
+                $grupo->tiene_propuesta_oro = ! empty($grupo->estado_valorizacion_oro) || (bool) $grupo->tiene_propuesta_oro;
+                $grupo->tiene_propuesta_plata = ! empty($grupo->estado_valorizacion_plata) || (bool) $grupo->tiene_propuesta_plata;
+                $grupo->total_muestras_asociadas = (int) ($grupo->total_muestras_asociadas ?? 0);
+                $grupo->log_cambios = isset($grupo->log_cambios) ? (is_array($grupo->log_cambios) ? $grupo->log_cambios : (json_decode($grupo->log_cambios, true) ?? [])) : [];
+
+                // Obtener análisis del grupo
+                $analisis = DB::select('
+                    SELECT
+                        am.id,
+                        am.id_grupo_analisis,
+                        am.id_laboratorio,
+                        lab.nombre AS laboratorio_nombre,
+                        am.asumido_por,
+                        am.numero_ensayo,
+                        am.documentos,
+                        am.ley_oro,
+                        am.ley_plata,
+                        am.ley_humedad,
+                        am.ley_recuperacion,
+                        am.ley_oro_confirmada,
+                        am.ley_plata_confirmada,
+                        am.tipo_origen,
+                        am.sin_lote,
+                        am.log_cambios,
+                        am.created_at
+                    FROM analisis_mineral am
+                    LEFT JOIN laboratorio lab ON am.id_laboratorio = lab.id
+                    WHERE am.id_grupo_analisis = :id_grupo_analisis
+                    ORDER BY am.numero_ensayo ASC, am.id ASC
+                ', ['id_grupo_analisis' => $grupo->id]);
+
+                foreach ($analisis as $a) {
+                    $a->id = (int) $a->id;
+                    $a->id_grupo_analisis = (int) $a->id_grupo_analisis;
+                    $a->id_laboratorio = $a->id_laboratorio !== null ? (int) $a->id_laboratorio : null;
+                    $a->numero_ensayo = $a->numero_ensayo !== null ? (int) $a->numero_ensayo : 1;
+                    $a->ley_oro = (float) $a->ley_oro;
+                    $a->ley_plata = (float) $a->ley_plata;
+                    $a->ley_humedad = (float) $a->ley_humedad;
+                    $a->ley_recuperacion = (float) $a->ley_recuperacion;
+                    $a->ley_oro_confirmada = (bool) $a->ley_oro_confirmada;
+                    $a->ley_plata_confirmada = (bool) $a->ley_plata_confirmada;
+                    $a->documentos = isset($a->documentos) ? (is_array($a->documentos) ? $a->documentos : (json_decode($a->documentos, true) ?? [])) : [];
+                    $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
+                }
+
+                $grupo->analisis = $analisis;
+            }
+
+            $lote->grupos_analisis = $grupos;
+            $lote->grupo_analisis = ! empty($grupos) ? $grupos[0] : null;
         }
 
         return $lotes;
     }
 
     /**
-     * Obtener un lote mineral por su ID.
+     * Crear un nuevo grupo de análisis
      */
-    public static function get_lote_by_id(int $idLote): ?LoteMineral
+    public static function crear_grupo(array $data): int
     {
-        return LoteMineral::find($idLote);
+        $idLote = isset($data['id_lote_mineral']) ? (int) $data['id_lote_mineral'] : null;
+        $idMuestra = isset($data['id_muestra_externa']) ? (int) $data['id_muestra_externa'] : 0;
+        $idEmpleado = (int) $data['id_empleado_registro'];
+        $nombre = trim($data['nombre'] ?? 'Grupo 1');
+
+        // Generar correlativo
+        $ultimoCorrelativo = DB::table('grupo_analisis')->max('numero_correlativo') ?? 0;
+        $nuevoNumero = $ultimoCorrelativo + 1;
+
+        $idGrupo = (int) DB::table('grupo_analisis')->insertGetId([
+            'id_empleado_registro' => $idEmpleado,
+            'id_lote_mineral' => $idLote ?? 0,
+            'id_muestra_externa' => $idMuestra,
+            'nombre' => $nombre,
+            'numero_correlativo' => $nuevoNumero,
+            'ley_oro_cierre' => 0.000,
+            'ley_plata_cierre' => 0.000,
+            'ley_humedad_cierre' => 0.000,
+            'ley_recuperacion_cierre' => 0.000,
+            'log_cambios' => isset($data['log_cambios']) ? (is_string($data['log_cambios']) ? $data['log_cambios'] : json_encode($data['log_cambios'])) : json_encode([]),
+            'tiene_propuesta_oro' => 0,
+            'tiene_propuesta_plata' => 0,
+            'created_at' => ! empty($data['created_at']) ? $data['created_at'] : now(),
+        ]);
+
+        return $idGrupo;
     }
 
     /**
-     * Obtener los detalles de grupos de análisis activos.
+     * Agregar un análisis a un grupo
      */
-    public static function get_detalles_activos_analisis(): array
+    public static function agregar_analisis_a_grupo(int $idGrupo, array $data, int $idEmpleado): int
     {
-        return DB::table('grupo_analisis_detalle as gad')
-            ->join('grupo_analisis as ga', 'gad.id_grupo_analisis', '=', 'ga.id')
-            ->where('ga.estado', 'Activo')
-            ->select('gad.id as detalle_id', 'ga.indicar_origen')
-            ->get()
-            ->toArray();
-    }
+        $idLaboratorio = isset($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null;
+        $asumidoPor = isset($data['asumido_por']) ? trim($data['asumido_por']) : 'Proveedor';
+        $numeroEnsayo = isset($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : 1;
+        $tipoOrigen = isset($data['tipo_origen']) ? trim($data['tipo_origen']) : 'Interno';
+        $documentos = isset($data['documentos']) ? (is_array($data['documentos']) ? $data['documentos'] : []) : [];
+        $sinLote = isset($data['sin_lote']) ? (bool) $data['sin_lote'] : false;
+        $idMuestra = isset($data['id_muestra_externa']) ? (int) $data['id_muestra_externa'] : null;
 
-    /**
-     * Obtener los detalles de grupos de análisis activos que están marcados para valorización.
-     */
-    public static function get_detalles_para_valorizacion(): array
-    {
-        return DB::table('grupo_analisis_detalle as gad')
-            ->join('grupo_analisis as ga', 'gad.id_grupo_analisis', '=', 'ga.id')
-            ->join('analito as an', 'gad.id_analito', '=', 'an.id')
-            ->where('ga.estado', 'Activo')
-            ->where(function ($query) {
-                $query->where('gad.para_valorizacion_oro', 1)
-                    ->orWhere('gad.para_valorizacion_plata', 1)
-                    ->orWhere('gad.para_valorizacion_humedad', 1)
-                    ->orWhere('gad.para_valorizacion_recuperacion', 1);
-            })
-            ->select('gad.id as detalle_id', 'an.nombre as analito_nombre')
-            ->get()
-            ->toArray();
-    }
-
-    /**
-     * Obtener un detalle de grupo de análisis por su ID incluyendo la relación con su analito.
-     */
-    public static function get_detalle_con_analito(int $idGrupoAnalisisDetalle): ?GrupoAnalisisDetalle
-    {
-        return GrupoAnalisisDetalle::with('analito')->find($idGrupoAnalisisDetalle);
-    }
-
-    /**
-     * Crear registros iniciales vacíos de análisis para un lote.
-     */
-    public static function crear_registros_vacios_analisis(int $idLote, string $uuidFila, int $idEmpleado): void
-    {
-        $detallesActivos = self::get_detalles_activos_analisis();
-
-        foreach ($detallesActivos as $detalle) {
-            AnalisisMineral::create([
-                'id_lote_mineral' => $idLote,
-                'id_grupo_analisis_detalle' => $detalle->detalle_id,
-                'tipo_origen' => null,
-                'uuid_fila' => $uuidFila,
-                'ley' => 0.0,
-                'esta_confirmada' => 0,
-                'id_empleado_registro' => $idEmpleado,
-            ]);
-        }
-    }
-
-    /**
-     * Actualizar el estado de un lote a En Proceso al iniciar el análisis.
-     */
-    public static function actualizar_estado_inicio_lote(LoteMineral $lote, int $idEmpleado): void
-    {
-        $lote->estado_leyes = EstadoLeyes::EnProceso;
-        $lote->id_empleado_inicio_analisis = $idEmpleado;
-        $lote->fecha_hora_inicio_analisis = Carbon::now();
-        $lote->save();
-    }
-
-    /**
-     * Generar un log de cambio para una entidad AnalisisMineral.
-     */
-    public static function generar_log_cambio(
-        AnalisisMineral $registro,
-        ?float $nuevaLey,
-        ?bool $nuevaEstaConfirmada,
-        ?string $nuevoTipoOrigen,
-        int $idEmpleado
-    ): void {
-        $cambios = [];
-
-        if ($nuevaLey !== null && (float) $registro->ley !== (float) $nuevaLey) {
-            $cambios[] = [
-                'campo_bd' => 'ley',
-                'campo' => 'Ley',
-                'valor_anterior' => (float) $registro->ley,
-                'valor_nuevo' => (float) $nuevaLey,
-            ];
-        }
-
-        if ($nuevaEstaConfirmada !== null && (bool) $registro->esta_confirmada !== (bool) $nuevaEstaConfirmada) {
-            $cambios[] = [
-                'campo_bd' => 'esta_confirmada',
-                'campo' => 'Estado Confirmado',
-                'valor_anterior' => (bool) $registro->esta_confirmada,
-                'valor_nuevo' => (bool) $nuevaEstaConfirmada,
-            ];
-        }
-
-        if ($nuevoTipoOrigen !== null && $registro->tipo_origen !== $nuevoTipoOrigen) {
-            $cambios[] = [
-                'campo_bd' => 'tipo_origen',
-                'campo' => 'Tipo de origen',
-                'valor_anterior' => $registro->tipo_origen ?? '—',
-                'valor_nuevo' => $nuevoTipoOrigen ?? '—',
-            ];
-        }
-
-        if (! empty($cambios)) {
-            $logActual = $registro->log_cambios ?? [];
-            if (! is_array($logActual)) {
-                $logActual = json_decode($logActual, true) ?? [];
-            }
-            $nuevoEntry = [
-                'id_empleado' => $idEmpleado,
-                'motivo' => null,
-                'update_at' => Carbon::now()->toDateTimeString(),
-                'cambios' => $cambios,
-            ];
-            array_unshift($logActual, $nuevoEntry);
-            $registro->log_cambios = $logActual;
-        }
-    }
-
-    /**
-     * Actualizar todas las filas de un grupo de análisis no desplegable en un lote.
-     */
-    public static function actualizar_leyes_no_desplegables(
-        int $idLoteMineral,
-        int $idGrupoAnalisisDetalle,
-        float $ley,
-        bool $estaConfirmada,
-        int $idEmpleadoRegistro
-    ): int {
-        $registros = AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
-            ->where('id_grupo_analisis_detalle', $idGrupoAnalisisDetalle)
-            ->get();
-
-        if ($registros->isEmpty()) {
-            return 0;
-        }
-
-        foreach ($registros as $registro) {
-            self::generar_log_cambio($registro, $ley, $estaConfirmada, null, $idEmpleadoRegistro);
-            $registro->ley = $ley;
-            $registro->esta_confirmada = $estaConfirmada ? 1 : 0;
-            $registro->id_empleado_registro = $idEmpleadoRegistro;
-            $registro->save();
-        }
-
-        return $registros->count();
-    }
-
-    /**
-     * Crear un nuevo registro en la tabla analisis_mineral.
-     *
-     * @param  array{id_lote_mineral: int, id_grupo_analisis_detalle: int, tipo_origen: string|null, uuid_fila: string, ley: float, esta_confirmada: int, id_empleado_registro: int}  $datos
-     */
-    public static function crear_analisis_mineral(array $datos): AnalisisMineral
-    {
-        $ley = isset($datos['ley']) ? (float) $datos['ley'] : 0.0;
-        $estaConfirmada = isset($datos['esta_confirmada']) ? (bool) $datos['esta_confirmada'] : false;
-        $tipoOrigen = $datos['tipo_origen'] ?? null;
-        $idEmpleado = $datos['id_empleado_registro'] ?? 1;
-
-        $cambios = [];
-
-        if ($ley > 0) {
-            $cambios[] = [
-                'campo_bd' => 'ley',
-                'campo' => 'Ley',
-                'valor_anterior' => 0.0,
-                'valor_nuevo' => $ley,
-            ];
-        }
-
-        if ($estaConfirmada) {
-            $cambios[] = [
-                'campo_bd' => 'esta_confirmada',
-                'campo' => 'Estado Confirmado',
-                'valor_anterior' => false,
-                'valor_nuevo' => true,
-            ];
-        }
-
-        if ($tipoOrigen !== null) {
-            $cambios[] = [
-                'campo_bd' => 'tipo_origen',
-                'campo' => 'Tipo de origen',
-                'valor_anterior' => '—',
-                'valor_nuevo' => $tipoOrigen,
-            ];
-        }
-
-        if (! empty($cambios)) {
-            $datos['log_cambios'] = [
-                [
-                    'id_empleado' => $idEmpleado,
-                    'motivo' => null,
-                    'update_at' => Carbon::now()->toDateTimeString(),
-                    'cambios' => $cambios,
-                ],
-            ];
-        }
-
-        return AnalisisMineral::create($datos);
-    }
-
-    /**
-     * Obtener un registro individual de analisis_mineral por su ID.
-     */
-    public static function get_registro_analisis_by_id(int $id): ?AnalisisMineral
-    {
-        return AnalisisMineral::find($id);
-    }
-
-    /**
-     * Actualizar un registro existente de analisis_mineral.
-     */
-    public static function actualizar_registro_analisis(
-        AnalisisMineral $registro,
-        float $ley,
-        bool $estaConfirmada,
-        int $idEmpleadoRegistro
-    ): void {
-        self::generar_log_cambio($registro, $ley, $estaConfirmada, null, $idEmpleadoRegistro);
-        $registro->ley = $ley;
-        $registro->esta_confirmada = $estaConfirmada ? 1 : 0;
-        $registro->id_empleado_registro = $idEmpleadoRegistro;
-        $registro->save();
-    }
-
-    /**
-     * Eliminar un registro individual de analisis_mineral.
-     */
-    public static function eliminar_registro_analisis(AnalisisMineral $registro): void
-    {
-        $registro->delete();
-    }
-
-    /**
-     * Eliminar todas las celdas de análisis de una corrida por uuid_fila.
-     */
-    public static function eliminar_fila_analisis(int $idLoteMineral, string $uuidFila): void
-    {
-        AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
-            ->where('uuid_fila', $uuidFila)
-            ->delete();
-    }
-
-    /**
-     * Actualizar el tipo de origen para todas las celdas de una corrida de análisis.
-     */
-    public static function actualizar_origen_fila(int $idLoteMineral, string $uuidFila, ?string $tipoOrigen, int $idEmpleado = 1): void
-    {
-        $registros = AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
-            ->where('uuid_fila', $uuidFila)
-            ->get();
-
-        foreach ($registros as $registro) {
-            self::generar_log_cambio($registro, null, null, $tipoOrigen, $idEmpleado);
-            $registro->tipo_origen = $tipoOrigen;
-            $registro->save();
-        }
-    }
-
-    /**
-     * Obtener todas las filas de analisis_mineral pertenecientes a un lote.
-     */
-    public static function get_filas_analisis_por_lote(int $idLote): Collection
-    {
-        return AnalisisMineral::where('id_lote_mineral', $idLote)->get();
-    }
-
-    /**
-     * Obtener únicamente las filas de analisis_mineral confirmadas para un lote.
-     */
-    public static function get_analisis_confirmados_por_lote(int $idLote): Collection
-    {
-        return AnalisisMineral::where('id_lote_mineral', $idLote)
-            ->where('esta_confirmada', 1)
-            ->get();
-    }
-
-    /**
-     * Obtener TODAS las filas de humedad y recuperación de un lote con `ley` definido
-     * (cualquier valor, incluyendo 0). NO filtra por `esta_confirmada` porque las filas
-     * migradas desde muestras externas siempre llegan con `esta_confirmada=0` (la tabla
-     * de muestra no tiene check de confirmar). Usado en `asociar_muestra_a_lote`
-     * para mantener `lote.ley_humedad` / `lote.ley_recuperacion` sincronizados con
-     * el promedio de las filas reales del lote después de cada asociación.
-     */
-    public static function get_humedad_recuperacion_rows_for_lote(int $idLote): Collection
-    {
-        $detallesIds = DB::table('grupo_analisis_detalle')
+        $analisisPrevio = DB::table('analisis_mineral')
+            ->where('id_grupo_analisis', $idGrupo)
             ->where(function ($q) {
-                $q->where('para_valorizacion_humedad', 1)
-                    ->orWhere('para_valorizacion_recuperacion', 1);
+                $q->where('ley_humedad', '>', 0)
+                  ->orWhere('ley_recuperacion', '>', 0);
             })
-            ->pluck('id');
+            ->first();
 
-        return AnalisisMineral::where('id_lote_mineral', $idLote)
-            ->whereIn('id_grupo_analisis_detalle', $detallesIds)
-            ->whereNotNull('ley')
-            ->get();
-    }
+        $grupo = DB::table('grupo_analisis')->where('id', $idGrupo)->first();
 
-    /**
-     * Actualizar el lote mineral al confirmar y cerrar las leyes.
-     *
-     * @param  array{ley_oro: float, ley_plata: float, ley_humedad: float, ley_recuperacion: float}  $leyesValores
-     */
-    public static function confirmar_y_cerrar_lote(
-        LoteMineral $lote,
-        array $leyesValores,
-        bool $conValorComercial,
-        int $idEmpleado
-    ): void {
-        $lote->ley_oro = $leyesValores['ley_oro'];
-        $lote->ley_plata = $leyesValores['ley_plata'];
-        $lote->ley_humedad = $leyesValores['ley_humedad'];
-        $lote->ley_recuperacion = $leyesValores['ley_recuperacion'];
+        $leyHumedad = $grupo && (float) $grupo->ley_humedad_cierre > 0
+            ? (float) $grupo->ley_humedad_cierre
+            : ($analisisPrevio ? (float) $analisisPrevio->ley_humedad : 0.000);
 
-        $lote->estado_leyes = EstadoLeyes::Confirmado;
-        $lote->con_valor_comercial = $conValorComercial ? 1 : 0;
-        $lote->id_empleado_confirmacion_analisis = $idEmpleado;
-        $lote->fecha_hora_confirmacion_analisis = Carbon::now();
-        $lote->save();
-    }
+        $leyRecuperacion = $grupo && (float) $grupo->ley_recuperacion_cierre > 0
+            ? (float) $grupo->ley_recuperacion_cierre
+            : ($analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000);
 
-    /**
-     * Actualizar SOLO las leyes de humedad/recuperacion del lote. NO toca estado,
-     * con_valor_comercial, ni los datos de confirmación. Usado tras asociar muestras
-     * para mantener el promedio parcial visible en la UI sin alterar el ciclo de vida
-     * del lote (sigue En Proceso o Pendiente). Acepta un mapa parcial: solo se aplican
-     * las claves presentes (verificadas con array_key_exists).
-     *
-     * @param  array{ley_humedad?: float, ley_recuperacion?: float}  $leyesValores
-     */
-    public static function actualizar_leyes_lote(
-        LoteMineral $lote,
-        array $leyesValores
-    ): void {
-        if (array_key_exists('ley_humedad', $leyesValores)) {
-            $lote->ley_humedad = $leyesValores['ley_humedad'];
-        }
-        if (array_key_exists('ley_recuperacion', $leyesValores)) {
-            $lote->ley_recuperacion = $leyesValores['ley_recuperacion'];
-        }
-        $lote->save();
-    }
-
-    /**
-     * Reemplazar el `ley` de TODAS las filas de humedad y recuperación del lote por el
-     * valor consolidado calculado. Se ejecuta tras asociar una muestra para que las
-     * filas que aún tienen 0 (recién creadas al iniciar la muestra) adopten el promedio
-     * del lote, manteniendo el grupo sincronizado.
-     *
-     * Solo aplica a detalles marcados con `para_valorizacion_humedad` o
-     * `para_valorizacion_recuperacion`. No toca oro/plata.
-     *
-     * @param  float  $leyHumedad        Promedio calculado para humedad
-     * @param  float  $leyRecuperacion   Promedio calculado para recuperación
-     */
-    public static function actualizar_filas_humedad_recuperacion_a_promedio(
-        int $idLote,
-        float $leyHumedad,
-        float $leyRecuperacion
-    ): void {
-        $detallesHumedad = DB::table('grupo_analisis_detalle')
-            ->where('para_valorizacion_humedad', 1)
-            ->pluck('id')
-            ->all();
-
-        $detallesRecuperacion = DB::table('grupo_analisis_detalle')
-            ->where('para_valorizacion_recuperacion', 1)
-            ->pluck('id')
-            ->all();
-
-        if (! empty($detallesHumedad)) {
-            AnalisisMineral::where('id_lote_mineral', $idLote)
-                ->whereIn('id_grupo_analisis_detalle', $detallesHumedad)
-                ->update(['ley' => $leyHumedad]);
-        }
-
-        if (! empty($detallesRecuperacion)) {
-            AnalisisMineral::where('id_lote_mineral', $idLote)
-                ->whereIn('id_grupo_analisis_detalle', $detallesRecuperacion)
-                ->update(['ley' => $leyRecuperacion]);
-        }
-    }
-
-    // ===== MUESTRAS EXTERNAS =====
-
-    /**
-     * Crear la cabecera de una muestra externa con su correlativo.
-     *
-     * @param  array{id_empleado_registro: int, id_proveedor_minero: int, correlativo: string, numero_correlativo: int}  $datos
-     */
-    public static function crear_muestra_externa(array $datos): int
-    {
-        return (int) DB::table('muestra_externa')->insertGetId([
-            'id_empleado_registro' => $datos['id_empleado_registro'],
-            'id_proveedor_minero' => $datos['id_proveedor_minero'],
-            'correlativo' => $datos['correlativo'],
-            'numero_correlativo' => $datos['numero_correlativo'],
-            'codigo_cliente' => $datos['codigo_cliente'] ?? null,
-            'fecha_hora_ingreso' => $datos['fecha_hora_ingreso'] ?? Carbon::now(),
-            'created_at' => Carbon::now(),
+        return (int) DB::table('analisis_mineral')->insertGetId([
+            'id_grupo_analisis' => $idGrupo,
+            'id_laboratorio' => $idLaboratorio,
+            'asumido_por' => $asumidoPor,
+            'numero_ensayo' => $numeroEnsayo,
+            'documentos' => json_encode($documentos),
+            'ley_oro' => 0.000,
+            'ley_plata' => 0.000,
+            'ley_humedad' => $leyHumedad,
+            'ley_recuperacion' => $leyRecuperacion,
+            'ley_oro_confirmada' => 0,
+            'ley_plata_confirmada' => 0,
+            'id_muestra_externa' => $idMuestra,
+            'id_empleado_registro' => $idEmpleado,
+            'tipo_origen' => $tipoOrigen,
+            'sin_lote' => $sinLote ? 1 : 0,
+            'log_cambios' => json_encode([]),
+            'created_at' => now(),
         ]);
     }
 
     /**
-     * Crear registros iniciales de analisis_mineral para una muestra externa (sin lote asociado).
+     * Guardar valores de leyes en una fila de análisis
      */
-    public static function crear_registros_vacios_analisis_muestra(int $idMuestra, string $uuidFila, int $idEmpleado): void
-    {
-        $detallesActivos = self::get_detalles_activos_analisis();
-
-        foreach ($detallesActivos as $detalle) {
-            AnalisisMineral::create([
-                'id_lote_mineral' => null,
-                'id_muestra_externa' => $idMuestra,
-                'id_grupo_analisis_detalle' => $detalle->detalle_id,
-                'tipo_origen' => null,
-                'uuid_fila' => $uuidFila,
-                'ley' => 0.0,
-                'esta_confirmada' => 0,
-                'id_empleado_registro' => $idEmpleado,
-                'sin_lote' => 1,
-            ]);
+    public static function guardar_valores_analisis(
+        int $idAnalisis,
+        array $valores,
+        int $idEmpleado,
+        string $motivo = 'Actualización de leyes'
+    ): bool {
+        $actual = DB::table('analisis_mineral')->where('id', $idAnalisis)->first();
+        if (! $actual) {
+            return false;
         }
+
+        $cambios = [];
+        $updateData = [];
+
+        $campos = [
+            'ley_oro' => 'Ley Oro',
+            'ley_plata' => 'Ley Plata',
+            'ley_humedad' => 'Ley Humedad',
+            'ley_recuperacion' => 'Ley Recuperación',
+            'ley_oro_confirmada' => 'Confirmación Oro',
+            'ley_plata_confirmada' => 'Confirmación Plata',
+            'tipo_origen' => 'Tipo Origen',
+            'asumido_por' => 'Asumido Por',
+            'numero_ensayo' => 'Número Ensayo',
+            'id_laboratorio' => 'Laboratorio',
+        ];
+
+        foreach ($campos as $campoBd => $nombreCampo) {
+            if (array_key_exists($campoBd, $valores)) {
+                $valorAnterior = $actual->{$campoBd};
+                $valorNuevo = $valores[$campoBd];
+
+                if (in_array($campoBd, ['ley_oro', 'ley_plata', 'ley_humedad', 'ley_recuperacion'])) {
+                    $valorNuevo = (float) $valorNuevo;
+                    $valorAnterior = (float) $valorAnterior;
+                } elseif (in_array($campoBd, ['ley_oro_confirmada', 'ley_plata_confirmada'])) {
+                    $valorNuevo = (bool) $valorNuevo ? 1 : 0;
+                    $valorAnterior = (bool) $valorAnterior ? 1 : 0;
+                }
+
+                if ($valorAnterior != $valorNuevo) {
+                    $esConfirmacion = in_array($campoBd, ['ley_oro_confirmada', 'ley_plata_confirmada']);
+                    $cambios[] = [
+                        'campo_bd' => $campoBd,
+                        'campo' => $nombreCampo,
+                        'valor_anterior' => $esConfirmacion ? ($valorAnterior ? 'Sí' : 'No') : (string) $valorAnterior,
+                        'valor_nuevo' => $esConfirmacion ? ($valorNuevo ? 'Sí' : 'No') : (string) $valorNuevo,
+                    ];
+                    $updateData[$campoBd] = $valorNuevo;
+                }
+            }
+        }
+
+        if (! empty($cambios)) {
+            $logActual = isset($actual->log_cambios) ? (is_array($actual->log_cambios) ? $actual->log_cambios : (json_decode($actual->log_cambios, true) ?? [])) : [];
+            $nuevoLog = RES_CambiosLog::crear($idEmpleado, $motivo, $cambios);
+            $logActual[] = $nuevoLog;
+            $updateData['log_cambios'] = json_encode($logActual);
+        }
+
+        if (! empty($updateData)) {
+            DB::table('analisis_mineral')->where('id', $idAnalisis)->update($updateData);
+
+            // Si se actualizó humedad o recuperación y pertenece a una muestra externa, mantener sincronizadas todas las filas de esa muestra
+            if ($actual->id_muestra_externa && (isset($updateData['ley_humedad']) || isset($updateData['ley_recuperacion']))) {
+                $syncMuestra = [];
+                if (isset($updateData['ley_humedad'])) {
+                    $syncMuestra['ley_humedad'] = $updateData['ley_humedad'];
+                }
+                if (isset($updateData['ley_recuperacion'])) {
+                    $syncMuestra['ley_recuperacion'] = $updateData['ley_recuperacion'];
+                }
+                DB::table('analisis_mineral')
+                    ->where('id_muestra_externa', $actual->id_muestra_externa)
+                    ->where('id', '!=', $idAnalisis)
+                    ->update($syncMuestra);
+            }
+        }
+
+        return true;
     }
 
     /**
-     * Obtener una muestra externa por ID con cabecera, proveedor y análisis asociados.
+     * Guardar leyes de cierre en el grupo de análisis
      */
-    public static function get_muestra_externa_by_id(int $idMuestra): ?array
+    public static function guardar_leyes_cierre_grupo(
+        int $idGrupo,
+        array $leyes,
+        int $idEmpleado,
+        string $motivo = 'Cierre de leyes de grupo'
+    ): bool {
+        $actual = DB::table('grupo_analisis')->where('id', $idGrupo)->first();
+        if (! $actual) {
+            return false;
+        }
+
+        $cambios = [];
+        $updateData = [];
+
+        $campos = [
+            'ley_oro_cierre' => 'Ley Oro Cierre',
+            'ley_plata_cierre' => 'Ley Plata Cierre',
+            'ley_humedad_cierre' => 'Ley Humedad Cierre',
+            'ley_recuperacion_cierre' => 'Ley Recuperación Cierre',
+        ];
+
+        foreach ($campos as $campoBd => $nombreCampo) {
+            if (array_key_exists($campoBd, $leyes)) {
+                $valorAnterior = (float) ($actual->{$campoBd} ?? 0);
+                $valorNuevo = (float) $leyes[$campoBd];
+
+                if ($valorAnterior !== $valorNuevo) {
+                    $cambios[] = [
+                        'campo_bd' => $campoBd,
+                        'campo' => $nombreCampo,
+                        'valor_anterior' => (string) $valorAnterior,
+                        'valor_nuevo' => (string) $valorNuevo,
+                    ];
+                    $updateData[$campoBd] = $valorNuevo;
+                }
+            }
+        }
+
+        if (! empty($cambios)) {
+            $logActual = isset($actual->log_cambios) ? (is_array($actual->log_cambios) ? $actual->log_cambios : (json_decode($actual->log_cambios, true) ?? [])) : [];
+            $nuevoLog = RES_CambiosLog::crear($idEmpleado, $motivo, $cambios);
+            $logActual[] = $nuevoLog;
+            $updateData['log_cambios'] = json_encode($logActual);
+        }
+
+        if (! empty($updateData)) {
+            DB::table('grupo_analisis')->where('id', $idGrupo)->update($updateData);
+        }
+
+        return true;
+    }
+
+    /**
+     * Adjuntar nuevos documentos a un análisis
+     */
+    public static function adjuntar_documentos_analisis(int $idAnalisis, array $nuevosDocs): array|false
     {
-        $row = DB::selectOne('
+        $actual = DB::table('analisis_mineral')->where('id', $idAnalisis)->first();
+        if (! $actual) {
+            return false;
+        }
+
+        $docsActuales = isset($actual->documentos) ? (is_array($actual->documentos) ? $actual->documentos : (json_decode($actual->documentos, true) ?? [])) : [];
+        $docsFinales = array_merge($docsActuales, $nuevosDocs);
+
+        DB::table('analisis_mineral')->where('id', $idAnalisis)->update([
+            'documentos' => json_encode($docsFinales),
+        ]);
+
+        return $docsFinales;
+    }
+
+    /**
+     * Eliminar análisis
+     */
+    public static function eliminar_analisis(int $idAnalisis): bool
+    {
+        return DB::table('analisis_mineral')->where('id', $idAnalisis)->delete() > 0;
+    }
+
+    /**
+     * Confirmar cierre del lote mineral (indicador informativo de valor comercial)
+     */
+    public static function confirmar_lote(int $idLote, bool $conValorComercial, int $idEmpleado): bool
+    {
+        return DB::table('lote_mineral')->where('id', $idLote)->update([
+            'con_valor_comercial' => $conValorComercial ? 1 : 0,
+        ]) >= 0;
+    }
+
+    /**
+     * Muestras externas pendientes
+     */
+    public static function get_muestras_externas(): array
+    {
+        $muestras = DB::select('
             SELECT
                 me.id,
+                me.id AS id_muestra_externa,
                 me.id_empleado_registro,
-                me.id_proveedor_minero,
+                me.id_proveedor_minero AS id_proveedor,
+                p.razon_social AS proveedor_nombre,
                 me.correlativo,
                 me.numero_correlativo,
                 me.codigo_cliente,
+                COALESCE(me.codigo_cliente, me.correlativo) AS nombre,
                 me.fecha_hora_ingreso,
                 me.created_at,
-                p.razon_social AS proveedor_razon_social,
                 CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
             FROM muestra_externa me
             LEFT JOIN proveedor p ON me.id_proveedor_minero = p.id
             LEFT JOIN empleado emp ON me.id_empleado_registro = emp.id
-            WHERE me.id = :id
-        ', ['id' => $idMuestra]);
-
-        if (! $row) {
-            return null;
-        }
-
-        $row->id = (int) $row->id;
-        $row->id_empleado_registro = (int) $row->id_empleado_registro;
-        $row->id_proveedor_minero = (int) $row->id_proveedor_minero;
-        $row->numero_correlativo = (int) $row->numero_correlativo;
-
-        $row->analisis = DB::select('
-            SELECT
-                am.id,
-                am.id_grupo_analisis_detalle,
-                gad.id_grupo_analisis AS id_grupo_analisis,
-                gad.id_analito AS id_analito,
-                am.uuid_fila,
-                am.ley,
-                am.esta_confirmada,
-                am.tipo_origen,
-                am.log_cambios,
-                am.created_at
-            FROM analisis_mineral am
-            INNER JOIN grupo_analisis_detalle gad ON am.id_grupo_analisis_detalle = gad.id
-            WHERE am.id_muestra_externa = :id
-            ORDER BY am.id ASC
-        ', ['id' => $idMuestra]);
-
-        foreach ($row->analisis as $a) {
-            $a->id = (int) $a->id;
-            $a->id_grupo_analisis_detalle = (int) $a->id_grupo_analisis_detalle;
-            $a->id_grupo_analisis = (int) $a->id_grupo_analisis;
-            $a->id_analito = (int) $a->id_analito;
-            $a->ley = (float) $a->ley;
-            $a->esta_confirmada = (bool) $a->esta_confirmada;
-            $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
-        }
-
-        return (array) $row;
-    }
-
-    /**
-     * Listar las muestras externas activas: las que aún tienen al menos un análisis
-     * con sin_lote=1 (todavía no migrado a lote). Si se borraron todos los análisis
-     * o se migraron todos, la muestra NO aparece (se considera "consumida").
-     */
-    public static function get_muestras_externas_activas(): array
-    {
-        $rows = DB::select('
-            SELECT
-                me.id,
-                me.id_empleado_registro,
-                me.id_proveedor_minero,
-                me.correlativo,
-                me.numero_correlativo,
-                me.codigo_cliente,
-                me.fecha_hora_ingreso,
-                me.created_at,
-                p.razon_social AS proveedor_razon_social,
-                CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
-            FROM muestra_externa me
-            LEFT JOIN proveedor p ON me.id_proveedor_minero = p.id
-            LEFT JOIN empleado emp ON me.id_empleado_registro = emp.id
-            WHERE EXISTS (
+            WHERE NOT EXISTS (
                 SELECT 1 FROM analisis_mineral am
                 WHERE am.id_muestra_externa = me.id
-                  AND am.sin_lote = 1
+                  AND am.id_grupo_analisis IS NOT NULL
+                  AND am.id_grupo_analisis > 0
             )
             ORDER BY me.id DESC
         ');
 
-        foreach ($rows as $row) {
-            $row->id = (int) $row->id;
-            $row->id_empleado_registro = (int) $row->id_empleado_registro;
-            $row->id_proveedor_minero = (int) $row->id_proveedor_minero;
-            $row->numero_correlativo = (int) $row->numero_correlativo;
+        foreach ($muestras as $m) {
+            $m->id = (int) $m->id;
+            $m->id_muestra_externa = (int) $m->id_muestra_externa;
+            $m->id_empleado_registro = (int) $m->id_empleado_registro;
+            $m->numero_correlativo = (int) ($m->numero_correlativo ?? $m->id);
+            $m->id_proveedor = ! empty($m->id_proveedor) ? (int) $m->id_proveedor : null;
 
-            $row->analisis = DB::select('
+            $analisis = DB::select('
                 SELECT
                     am.id,
-                    am.id_grupo_analisis_detalle,
-                    gad.id_grupo_analisis AS id_grupo_analisis,
-                    gad.id_analito AS id_analito,
-                    am.uuid_fila,
-                    am.ley,
-                    am.esta_confirmada,
+                    am.id_grupo_analisis,
+                    am.id_muestra_externa,
+                    am.id_laboratorio,
+                    lab.nombre AS laboratorio_nombre,
+                    am.asumido_por,
+                    am.numero_ensayo,
+                    am.documentos,
+                    am.ley_oro,
+                    am.ley_plata,
+                    am.ley_humedad,
+                    am.ley_recuperacion,
+                    am.ley_oro_confirmada,
+                    am.ley_plata_confirmada,
                     am.tipo_origen,
+                    am.sin_lote,
                     am.log_cambios,
                     am.created_at
                 FROM analisis_mineral am
-                INNER JOIN grupo_analisis_detalle gad ON am.id_grupo_analisis_detalle = gad.id
-                WHERE am.id_muestra_externa = :id
-                ORDER BY am.id ASC
-            ', ['id' => $row->id]);
+                LEFT JOIN laboratorio lab ON am.id_laboratorio = lab.id
+                WHERE am.id_muestra_externa = :id_muestra
+                  AND (am.id_grupo_analisis IS NULL OR am.id_grupo_analisis = 0)
+                ORDER BY am.numero_ensayo ASC, am.id ASC
+            ', ['id_muestra' => $m->id]);
 
-            foreach ($row->analisis as $a) {
+            foreach ($analisis as $a) {
                 $a->id = (int) $a->id;
-                $a->id_grupo_analisis_detalle = (int) $a->id_grupo_analisis_detalle;
-                $a->id_grupo_analisis = (int) $a->id_grupo_analisis;
-                $a->id_analito = (int) $a->id_analito;
-                $a->ley = (float) $a->ley;
-                $a->esta_confirmada = (bool) $a->esta_confirmada;
+                $a->id_grupo_analisis = $a->id_grupo_analisis ? (int) $a->id_grupo_analisis : null;
+                $a->id_muestra_externa = $a->id_muestra_externa ? (int) $a->id_muestra_externa : null;
+                $a->id_laboratorio = $a->id_laboratorio !== null ? (int) $a->id_laboratorio : null;
+                $a->numero_ensayo = $a->numero_ensayo !== null ? (int) $a->numero_ensayo : 1;
+                $a->ley_oro = (float) $a->ley_oro;
+                $a->ley_plata = (float) $a->ley_plata;
+                $a->ley_humedad = (float) $a->ley_humedad;
+                $a->ley_recuperacion = (float) $a->ley_recuperacion;
+                $a->ley_oro_confirmada = (bool) $a->ley_oro_confirmada;
+                $a->ley_plata_confirmada = (bool) $a->ley_plata_confirmada;
+                $a->sin_lote = (bool) $a->sin_lote;
+                $a->documentos = isset($a->documentos) ? (is_array($a->documentos) ? $a->documentos : (json_decode($a->documentos, true) ?? [])) : [];
                 $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
+            }
+
+            $m->analisis = $analisis;
+        }
+
+        return $muestras;
+    }
+
+    /**
+     * Asociar múltiples muestras externas a un grupo de análisis de un lote calculando promedios de humedad y recuperación
+     *
+     * @param  int[]  $idsMuestraExterna
+     */
+    public static function asociar_muestras_multiples_a_grupo(array $idsMuestraExterna, int $idGrupoDestino): bool
+    {
+        $grupoDestino = DB::table('grupo_analisis')->where('id', $idGrupoDestino)->first();
+        if (! $grupoDestino) {
+            return false;
+        }
+
+        // 1. Obtener valores de humedad y recuperación del grupo o de sus análisis actuales
+        $humedadGrupo = (float) ($grupoDestino->ley_humedad_cierre ?? 0);
+        $recupGrupo = (float) ($grupoDestino->ley_recuperacion_cierre ?? 0);
+
+        $existentesAnalisisGrupo = DB::table('analisis_mineral')
+            ->where('id_grupo_analisis', $idGrupoDestino)
+            ->get();
+
+        if ($humedadGrupo <= 0) {
+            foreach ($existentesAnalisisGrupo as $eg) {
+                if ((float) $eg->ley_humedad > 0) {
+                    $humedadGrupo = (float) $eg->ley_humedad;
+                    break;
+                }
             }
         }
 
-        return $rows;
+        if ($recupGrupo <= 0) {
+            foreach ($existentesAnalisisGrupo as $eg) {
+                if ((float) $eg->ley_recuperacion > 0) {
+                    $recupGrupo = (float) $eg->ley_recuperacion;
+                    break;
+                }
+            }
+        }
+
+        // 2. Recolectar valores válidos (> 0) de humedad y recuperación
+        $valoresHumedad = [];
+        if ($humedadGrupo > 0) {
+            $valoresHumedad[] = $humedadGrupo;
+        }
+
+        $valoresRecuperacion = [];
+        if ($recupGrupo > 0) {
+            $valoresRecuperacion[] = $recupGrupo;
+        }
+
+        $analisisMuestras = DB::table('analisis_mineral')
+            ->whereIn('id_muestra_externa', $idsMuestraExterna)
+            ->get();
+
+        foreach ($analisisMuestras as $am) {
+            $h = (float) $am->ley_humedad;
+            if ($h > 0) {
+                $valoresHumedad[] = $h;
+            }
+            $r = (float) $am->ley_recuperacion;
+            if ($r > 0) {
+                $valoresRecuperacion[] = $r;
+            }
+        }
+
+        // 3. Calcular promedios de los valores válidos (> 0)
+        $promedioHumedad = count($valoresHumedad) > 0 ? (array_sum($valoresHumedad) / count($valoresHumedad)) : null;
+        $promedioRecuperacion = count($valoresRecuperacion) > 0 ? (array_sum($valoresRecuperacion) / count($valoresRecuperacion)) : null;
+
+        // 4. Asociar análisis de cada muestra al grupo destino
+        $maxEnsayo = (int) (DB::table('analisis_mineral')
+            ->where('id_grupo_analisis', $idGrupoDestino)
+            ->max('numero_ensayo') ?? 0);
+
+        foreach ($idsMuestraExterna as $idMuestra) {
+            $idMuestra = (int) $idMuestra;
+            $analisisMuestra = DB::table('analisis_mineral')
+                ->where('id_muestra_externa', $idMuestra)
+                ->orderBy('id', 'asc')
+                ->get();
+
+            if ($analisisMuestra->count() > 0) {
+                foreach ($analisisMuestra as $am) {
+                    $maxEnsayo++;
+                    DB::table('analisis_mineral')
+                        ->where('id', $am->id)
+                        ->update([
+                            'id_grupo_analisis' => $idGrupoDestino,
+                            'numero_ensayo' => $maxEnsayo,
+                            'sin_lote' => 0,
+                        ]);
+                }
+            } else {
+                $yaAsociado = DB::table('analisis_mineral')
+                    ->where('id_muestra_externa', $idMuestra)
+                    ->where('id_grupo_analisis', $idGrupoDestino)
+                    ->exists();
+
+                if (! $yaAsociado) {
+                    $maxEnsayo++;
+                    DB::table('analisis_mineral')->insert([
+                        'id_grupo_analisis' => $idGrupoDestino,
+                        'id_muestra_externa' => $idMuestra,
+                        'id_laboratorio' => null,
+                        'asumido_por' => 'Proveedor',
+                        'numero_ensayo' => $maxEnsayo,
+                        'tipo_origen' => 'Externo',
+                        'sin_lote' => 0,
+                        'documentos' => json_encode([]),
+                        'ley_oro' => 0.000,
+                        'ley_plata' => 0.000,
+                        'ley_humedad' => 0.000,
+                        'ley_recuperacion' => 0.000,
+                        'ley_oro_confirmada' => 0,
+                        'ley_plata_confirmada' => 0,
+                        'id_empleado_registro' => (int) (auth()->id() ?? 1),
+                        'log_cambios' => json_encode([]),
+                        'created_at' => now(),
+                    ]);
+                }
+            }
+        }
+
+        // 5. Aplicar los promedios al grupo de análisis y a todos los análisis del grupo
+        $updateGrupo = [];
+        if ($promedioHumedad !== null) {
+            $promHumedad = round($promedioHumedad, 3);
+            $updateGrupo['ley_humedad_cierre'] = $promHumedad;
+            DB::table('analisis_mineral')
+                ->where('id_grupo_analisis', $idGrupoDestino)
+                ->update(['ley_humedad' => $promHumedad]);
+        }
+
+        if ($promedioRecuperacion !== null) {
+            $promRecup = round($promedioRecuperacion, 3);
+            $updateGrupo['ley_recuperacion_cierre'] = $promRecup;
+            DB::table('analisis_mineral')
+                ->where('id_grupo_analisis', $idGrupoDestino)
+                ->update(['ley_recuperacion' => $promRecup]);
+        }
+
+        if (! empty($updateGrupo)) {
+            DB::table('grupo_analisis')
+                ->where('id', $idGrupoDestino)
+                ->update($updateGrupo);
+        }
+
+        return true;
     }
 
     /**
-     * Listar las muestras externas que fueron asociadas a un lote específico
-     * (sus analisis_mineral tienen id_lote_mineral = X y sin_lote = 0, id_muestra_externa IS NULL).
+     * Asociar muestra externa a un grupo de análisis de un lote
      */
-    public static function get_muestras_asociadas_por_lote(int $idLoteMineral): array
+    public static function asociar_muestra_a_grupo(int $idMuestraExterna, int $idGrupoDestino): bool
     {
-        $rows = DB::select('
+        return self::asociar_muestras_multiples_a_grupo([$idMuestraExterna], $idGrupoDestino);
+    }
+
+    /**
+     * Obtener muestras asociadas por grupo de análisis agrupadas por muestra
+     */
+    public static function get_muestras_asociadas_por_grupo(int $idGrupo): array
+    {
+        return DB::select('
             SELECT
-                me.id,
-                me.id_empleado_registro,
-                me.id_proveedor_minero,
-                me.correlativo,
-                me.numero_correlativo,
-                me.codigo_cliente,
-                me.fecha_hora_ingreso,
-                me.created_at,
-                p.razon_social AS proveedor_razon_social,
-                CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
-            FROM muestra_externa me
-            INNER JOIN analisis_mineral am ON (
-                am.id_muestra_externa = me.id
-                OR (am.id_muestra_externa IS NULL AND am.log_cambios LIKE CONCAT("%", me.correlativo, "%"))
-            )
+                me.id AS id_muestra_externa,
+                COALESCE(me.codigo_cliente, me.correlativo) AS codigo_cliente,
+                p.razon_social AS proveedor_nombre,
+                GROUP_CONCAT(DISTINCT COALESCE(lab.nombre, "Sin Laboratorio") ORDER BY lab.nombre SEPARATOR ", ") AS laboratorio_nombre,
+                COUNT(am.id) AS total_ensayos,
+                MIN(am.created_at) AS created_at
+            FROM analisis_mineral am
+            INNER JOIN muestra_externa me ON am.id_muestra_externa = me.id
             LEFT JOIN proveedor p ON me.id_proveedor_minero = p.id
-            LEFT JOIN empleado emp ON me.id_empleado_registro = emp.id
-            WHERE am.id_lote_mineral = :id_lote
-              AND am.sin_lote = 0
-            GROUP BY me.id
-            ORDER BY me.id DESC
-        ', ['id_lote' => $idLoteMineral]);
-
-        foreach ($rows as $row) {
-            $row->id = (int) $row->id;
-            $row->id_empleado_registro = (int) $row->id_empleado_registro;
-            $row->id_proveedor_minero = (int) $row->id_proveedor_minero;
-            $row->numero_correlativo = (int) $row->numero_correlativo;
-
-            // Curar registros previos donde id_muestra_externa quedó null
-            AnalisisMineral::where('id_lote_mineral', $idLoteMineral)
-                ->whereNull('id_muestra_externa')
-                ->where('log_cambios', 'like', "%{$row->correlativo}%")
-                ->update(['id_muestra_externa' => $row->id]);
-        }
-
-        return $rows;
-    }
-
-    /**
-     * Crear un nuevo analisis_mineral asociado a una muestra externa.
-     *
-     * @param  array{id_muestra_externa: int, id_grupo_analisis_detalle: int, tipo_origen: string|null, uuid_fila: string, ley: float, esta_confirmada: int, id_empleado_registro: int}  $datos
-     */
-    public static function crear_analisis_mineral_muestra(array $datos): AnalisisMineral
-    {
-        $ley = isset($datos['ley']) ? (float) $datos['ley'] : 0.0;
-        $estaConfirmada = isset($datos['esta_confirmada']) ? (bool) $datos['esta_confirmada'] : false;
-        $tipoOrigen = $datos['tipo_origen'] ?? null;
-        $idEmpleado = $datos['id_empleado_registro'] ?? 1;
-
-        $cambios = [];
-
-        if ($ley > 0) {
-            $cambios[] = [
-                'campo_bd' => 'ley',
-                'campo' => 'Ley',
-                'valor_anterior' => 0.0,
-                'valor_nuevo' => $ley,
-            ];
-        }
-
-        if ($estaConfirmada) {
-            $cambios[] = [
-                'campo_bd' => 'esta_confirmada',
-                'campo' => 'Estado Confirmado',
-                'valor_anterior' => false,
-                'valor_nuevo' => true,
-            ];
-        }
-
-        if ($tipoOrigen !== null) {
-            $cambios[] = [
-                'campo_bd' => 'tipo_origen',
-                'campo' => 'Tipo de origen',
-                'valor_anterior' => '—',
-                'valor_nuevo' => $tipoOrigen,
-            ];
-        }
-
-        if (! empty($cambios)) {
-            $datos['log_cambios'] = [
-                [
-                    'id_empleado' => $idEmpleado,
-                    'motivo' => null,
-                    'update_at' => Carbon::now()->toDateTimeString(),
-                    'cambios' => $cambios,
-                ],
-            ];
-        }
-
-        // Marca la fila como "sin lote" porque pertenece a una muestra externa.
-        $datos['id_lote_mineral'] = null;
-        $datos['sin_lote'] = 1;
-
-        return AnalisisMineral::create($datos);
-    }
-
-    /**
-     * Actualizar las filas no-desplegables de una muestra externa para un detalle específico
-     * (mismo uuid_fila). Para muestras externas, cada corrida tiene su propio uuid_fila, así que
-     * NUNCA actualizamos otras corridas — solo la indicada.
-     */
-    public static function actualizar_leyes_no_desplegables_muestra(
-        int $idMuestraExterna,
-        int $idGrupoAnalisisDetalle,
-        float $ley,
-        bool $estaConfirmada,
-        int $idEmpleadoRegistro,
-        string $uuidFila
-    ): int {
-        $registros = AnalisisMineral::where('id_muestra_externa', $idMuestraExterna)
-            ->where('id_grupo_analisis_detalle', $idGrupoAnalisisDetalle)
-            ->where('uuid_fila', $uuidFila)
-            ->get();
-
-        if ($registros->isEmpty()) {
-            return 0;
-        }
-
-        foreach ($registros as $registro) {
-            self::generar_log_cambio($registro, $ley, $estaConfirmada, null, $idEmpleadoRegistro);
-            $registro->ley = $ley;
-            $registro->esta_confirmada = $estaConfirmada ? 1 : 0;
-            $registro->id_empleado_registro = $idEmpleadoRegistro;
-            $registro->save();
-        }
-
-        return $registros->count();
-    }
-
-    /**
-     * Eliminar todas las celdas de análisis de una corrida de una muestra externa.
-     */
-    public static function eliminar_fila_analisis_muestra(int $idMuestraExterna, string $uuidFila): void
-    {
-        AnalisisMineral::where('id_muestra_externa', $idMuestraExterna)
-            ->where('uuid_fila', $uuidFila)
-            ->delete();
-    }
-
-    /**
-     * Contar cuántos análisis quedan en la muestra (sin importar estado).
-     */
-    public static function count_analisis_by_muestra(int $idMuestraExterna): int
-    {
-        return (int) DB::table('analisis_mineral')
-            ->where('id_muestra_externa', $idMuestraExterna)
-            ->count();
-    }
-
-    /**
-     * Eliminar la cabecera de una muestra externa. Útil como cascade cuando ya no tiene análisis.
-     */
-    public static function eliminar_muestra_externa(int $idMuestra): void
-    {
-        DB::table('muestra_externa')->where('id', $idMuestra)->delete();
-    }
-
-    /**
-     * Actualizar el tipo de origen de una corrida de análisis de una muestra externa.
-     */
-    public static function actualizar_origen_fila_muestra(int $idMuestraExterna, string $uuidFila, ?string $tipoOrigen, int $idEmpleado = 1): void
-    {
-        $registros = AnalisisMineral::where('id_muestra_externa', $idMuestraExterna)
-            ->where('uuid_fila', $uuidFila)
-            ->get();
-
-        foreach ($registros as $registro) {
-            self::generar_log_cambio($registro, null, null, $tipoOrigen, $idEmpleado);
-            $registro->tipo_origen = $tipoOrigen;
-            $registro->save();
-        }
-    }
-
-    /**
-     * Migrar los analisis_mineral de una muestra externa al lote destino:
-     *  - id_lote_mineral = idLoteDestino
-     *  - id_muestra_externa = NULL
-     *  - sin_lote = 0
-     *  - uuid_fila se conserva
-     *  - Se agrega una entrada a log_cambios indicando la migración desde la muestra externa.
-     *
-     * @param  array  $muestra  Cabecera de muestra_externa con al menos 'correlativo'
-     * @return int  Cantidad de analisis_mineral actualizados.
-     */
-    public static function asociar_analisis_muestra_a_lote(int $idMuestraExterna, int $idLoteDestino, int $idEmpleado, array $muestra): int
-    {
-        $registros = AnalisisMineral::where('id_muestra_externa', $idMuestraExterna)
-            ->where('sin_lote', 1)
-            ->get();
-
-        foreach ($registros as $registro) {
-            // Mantenemos id_muestra_externa (no la nuleamos) para preservar la trazabilidad
-            // y permitir que get_muestras_asociadas_por_lote() siga relacionando las muestras
-            // con sus análisis. La distinción "activa vs asociada" se hace por sin_lote.
-            // NO se registra este cambio en log_cambios por requerimiento.
-            $registro->id_lote_mineral = $idLoteDestino;
-            $registro->sin_lote = 0;
-            $registro->save();
-        }
-
-        return $registros->count();
+            LEFT JOIN laboratorio lab ON am.id_laboratorio = lab.id
+            WHERE am.id_grupo_analisis = :id_grupo
+              AND am.id_muestra_externa IS NOT NULL
+              AND am.id_muestra_externa > 0
+            GROUP BY me.id, me.codigo_cliente, me.correlativo, p.razon_social
+            ORDER BY me.id ASC
+        ', ['id_grupo' => $idGrupo]);
     }
 }

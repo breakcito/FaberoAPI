@@ -53,6 +53,12 @@ class ContabilidadCompraController extends Controller
             'fecha_emision' => 'required|date_format:Y-m-d',
             'porcentaje_igv' => 'nullable|numeric|min:0|max:1',
             'porcentaje_detraccion' => 'nullable|numeric|min:0|max:1',
+            'es_al_contado' => 'nullable',
+            'es_al_credito' => 'nullable',
+            'plazo_credito' => 'nullable|integer|min:0',
+            'plazo_credito_periodo' => 'nullable|string|in:Días,Semanas,Meses',
+            'total_cuotas' => 'nullable|integer|min:1',
+            'metodo_pago' => 'nullable|string|in:Transferencia,Depósito,Efectivo',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
         ]);
@@ -67,6 +73,12 @@ class ContabilidadCompraController extends Controller
             'fecha_emision' => (string) $request->input('fecha_emision'),
             'porcentaje_igv' => $request->input('porcentaje_igv'),
             'porcentaje_detraccion' => $request->input('porcentaje_detraccion'),
+            'es_al_contado' => filter_var($request->input('es_al_contado'), FILTER_VALIDATE_BOOLEAN),
+            'es_al_credito' => filter_var($request->input('es_al_credito'), FILTER_VALIDATE_BOOLEAN),
+            'plazo_credito' => $request->filled('plazo_credito') ? (int) $request->input('plazo_credito') : null,
+            'plazo_credito_periodo' => $request->input('plazo_credito_periodo'),
+            'total_cuotas' => $request->filled('total_cuotas') ? (int) $request->input('total_cuotas') : null,
+            'metodo_pago' => $request->input('metodo_pago') ?? 'Transferencia',
             'id_empleado_registro' => (int) $idEmpleado,
         ];
 
@@ -85,12 +97,12 @@ class ContabilidadCompraController extends Controller
     }
 
     /**
-     * Otorgar una aprobación (Contabilidad / Comercial / Documentaria) sobre un comprobante.
+     * Otorgar una aprobación (Contabilidad / Comercial / Gerencia) sobre un comprobante.
      */
     public function aprobar_comprobante(Request $request, int $id): JsonResponse
     {
         $request->validate([
-            'tipo' => 'required|string|in:Contabilidad,Comercial,Documentaria',
+            'tipo' => 'required|string|in:Contabilidad,Comercial,Gerencia,Documentaria',
         ]);
 
         $authUser = $request->attributes->get('auth_user');

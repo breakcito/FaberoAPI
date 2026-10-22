@@ -82,8 +82,15 @@ class ContabilidadCompraService
             $valorVenta = (float) $tipoCambio->valor_venta;
 
             // 4. Calcular importes derivados
-            $porcentajeIgv = (float) ($payload['porcentaje_igv'] ?? 0.18);
-            $porcentajeDetraccion = (float) ($payload['porcentaje_detraccion'] ?? 0.11);
+            $rawIgv = isset($payload['porcentaje_igv']) && $payload['porcentaje_igv'] !== null
+                ? (float) $payload['porcentaje_igv']
+                : (float) ($valorizacion->porcentaje_igv ?? 18);
+            $porcentajeIgv = $rawIgv > 1.0 ? ($rawIgv / 100.0) : $rawIgv;
+
+            $rawDetraccion = isset($payload['porcentaje_detraccion']) && $payload['porcentaje_detraccion'] !== null
+                ? (float) $payload['porcentaje_detraccion']
+                : (float) ($valorizacion->porcentaje_detraccion ?? 10);
+            $porcentajeDetraccion = $rawDetraccion > 1.0 ? ($rawDetraccion / 100.0) : $rawDetraccion;
 
             $importes = ContabilidadCompraData::calcular_importes(
                 $idValorizacion,
@@ -113,9 +120,15 @@ class ContabilidadCompraService
                 'tipo_cambio_venta' => $valorVenta,
                 'porcentaje_igv' => $porcentajeIgv,
                 'porcentaje_detraccion' => $porcentajeDetraccion,
+                'es_al_contado' => ! empty($payload['es_al_contado']),
+                'es_al_credito' => ! empty($payload['es_al_credito']),
+                'plazo_credito' => $payload['plazo_credito'] ?? null,
+                'plazo_credito_periodo' => $payload['plazo_credito_periodo'] ?? null,
+                'total_cuotas' => $payload['total_cuotas'] ?? null,
+                'metodo_pago' => $payload['metodo_pago'] ?? 'Transferencia',
             ] + $importes;
 
-            $esSinValorComercial = ($importes['total_dolares'] <= 0.0001);
+            $esSinValorComercial = ($importes['total'] <= 0.0001);
             $estadoInicial = $esSinValorComercial
                 ? EstadoComprobanteCompra::Pagado
                 : EstadoComprobanteCompra::EnEspera;
@@ -141,7 +154,7 @@ class ContabilidadCompraService
     /**
      * Otorgar una aprobación (idempotente). Recalcula el estado del comprobante.
      *
-     * @param  array<string,mixed>  $payload  Contiene: 'tipo' (Contabilidad|Comercial|Documentaria)
+     * @param  array<string,mixed>  $payload  Contiene: 'tipo' (Contabilidad|Comercial|Gerencia)
      */
     public static function aprobar_comprobante(int $id, array $payload): array
     {
@@ -159,7 +172,7 @@ class ContabilidadCompraService
             $tipoStr = (string) ($payload['tipo'] ?? '');
             $tipoEnum = TipoAprobacionComprobante::tryFrom($tipoStr);
             if (! $tipoEnum) {
-                return ApiResponse::error('Tipo de aprobación inválido. Use Contabilidad, Comercial o Documentaria.');
+                return ApiResponse::error('Tipo de aprobación inválido. Use Comercial, Contabilidad o Gerencia.');
             }
 
             $idEmpleado = (int) ($payload['id_empleado'] ?? 0);
@@ -167,10 +180,14 @@ class ContabilidadCompraService
                 return ApiResponse::error('No se pudo identificar el empleado autenticado.');
             }
 
+            $targetTipos = ($tipoEnum === TipoAprobacionComprobante::Gerencia || $tipoEnum === TipoAprobacionComprobante::Documentaria)
+                ? [TipoAprobacionComprobante::Gerencia->value, TipoAprobacionComprobante::Documentaria->value]
+                : [$tipoEnum->value];
+
             $aprobaciones = $comprobante->aprobaciones ?? [];
             $encontrado = false;
             foreach ($aprobaciones as $idx => $ap) {
-                if (($ap['tipo'] ?? '') === $tipoEnum->value) {
+                if (in_array($ap['tipo'] ?? '', $targetTipos, true)) {
                     if (($ap['esta_aprobado'] ?? false) === true) {
                         DB::commit();
 

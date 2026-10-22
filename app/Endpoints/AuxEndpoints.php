@@ -94,5 +94,9 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/plantas-con-distribuciones-valorizacion', [AuxController::class, 'get_plantas_con_distribuciones_valorizacion']);
         Route::get('/distribuciones-detalles-disponibles-valorizacion', [AuxController::class, 'get_distribuciones_detalles_disponibles_valorizacion']);
         Route::get('/condiciones-comerciales-planta', [AuxController::class, 'get_condiciones_comerciales_planta']);
+
+        // laboratorios
+        Route::get('/laboratorios', [AuxController::class, 'get_laboratorios']);
+        Route::post('/laboratorios', [AuxController::class, 'crear_laboratorio']);
     });
 });

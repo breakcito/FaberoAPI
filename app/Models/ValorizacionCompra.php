@@ -34,6 +34,8 @@ class ValorizacionCompra extends Model
         'fecha_hora_solicitud_oc',
         'log_cambios',
         'fecha_hora_aprobacion',
+        'porcentaje_igv',
+        'porcentaje_detraccion',
         'created_at',
         'estado',
     ];
@@ -47,6 +49,8 @@ class ValorizacionCompra extends Model
         'id_empleado_aprobacion' => 'integer',
         'id_empleado_anulacion' => 'integer',
         'id_empleado_solicita_oc' => 'integer',
+        'porcentaje_igv' => 'float',
+        'porcentaje_detraccion' => 'float',
         'evidencias' => 'array',
         'evidencias_anulacion' => 'array',
         'log_cambios' => 'array',

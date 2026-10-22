@@ -4,7 +4,8 @@ namespace App\Shared\Enums\ContabilidadCompra;
 
 enum TipoAprobacionComprobante: string
 {
-    case Contabilidad = 'Contabilidad';
     case Comercial = 'Comercial';
-    case Documentaria = 'Documentaria';
+    case Contabilidad = 'Contabilidad';
+    case Gerencia = 'Gerencia';
+    case Documentaria = 'Documentaria'; // Retrocompatibilidad
 }

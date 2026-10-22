@@ -34,21 +34,26 @@ class ContabilidadCompraData
                 cc.tipo_cambio_venta,
                 cc.porcentaje_igv,
                 cc.porcentaje_detraccion,
-                cc.total_dolares_antes_descuento,
-                cc.total_soles_antes_descuento,
+                cc.subtotal_sin_descuento,
                 cc.descuento,
-                cc.total_dolares,
-                cc.total_soles,
-                cc.monto_igv_soles,
                 cc.monto_pagado_anticipos,
+                cc.valor_venta,
+                cc.monto_igv,
+                cc.total,
                 cc.monto_detraccion,
                 cc.monto_detraccion_soles,
                 cc.monto_neto,
                 cc.avance_pago_neto,
                 cc.avance_pago_detraccion,
+                cc.es_al_contado,
+                cc.es_al_credito,
+                cc.plazo_credito,
+                cc.plazo_credito_periodo,
+                cc.total_cuotas,
+                cc.metodo_pago,
                 vc.id_cuenta_bancaria AS id_cuenta_bancaria_proveedor_sugerida,
-                vc.monto_penalidad AS monto_penalidad,
-                vc.monto_flete AS monto_flete,
+                COALESCE((SELECT SUM(vcd.monto_penalidad) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS monto_penalidad,
+                COALESCE((SELECT SUM(vcd.monto_flete) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS monto_flete,
                 cc.aprobaciones,
                 cc.estado,
                 cc.created_at,
@@ -57,6 +62,7 @@ class ContabilidadCompraData
                 p.ruc AS proveedor_ruc,
                 c.nombre AS concesion_nombre,
                 CONCAT(emp_reg.nombre, " ", emp_reg.apellido) AS empleado_registro_nombre,
+                CONCAT(emp_sol_oc.nombre, " ", emp_sol_oc.apellido) AS empleado_solicita_oc_nombre,
                 COALESCE((SELECT SUM(pg.monto_pagado) FROM pago_comprobante_compra pg WHERE pg.id_comprobante_compra = cc.id AND pg.es_anulado = 0 AND pg.es_para_detraccion = 0), 0) AS total_pagado_neto,
                 COALESCE((SELECT SUM(pg.monto_pagado) FROM pago_comprobante_compra pg WHERE pg.id_comprobante_compra = cc.id AND pg.es_anulado = 0 AND pg.es_para_detraccion = 1), 0) AS total_pagado_detraccion
             FROM comprobante_compra cc
@@ -65,6 +71,7 @@ class ContabilidadCompraData
             INNER JOIN concesion c ON c.id = vc.id_concesion
             INNER JOIN tipo_cambio tc ON tc.id = cc.id_tipo_cambio
             INNER JOIN empleado emp_reg ON emp_reg.id = cc.id_empleado_registro
+            LEFT JOIN empleado emp_sol_oc ON emp_sol_oc.id = vc.id_empleado_solicita_oc
             WHERE 1 = 1
         ';
 
@@ -163,21 +170,26 @@ class ContabilidadCompraData
                 cc.tipo_cambio_venta,
                 cc.porcentaje_igv,
                 cc.porcentaje_detraccion,
-                cc.total_dolares_antes_descuento,
-                cc.total_soles_antes_descuento,
+                cc.subtotal_sin_descuento,
                 cc.descuento,
-                cc.total_dolares,
-                cc.total_soles,
-                cc.monto_igv_soles,
                 cc.monto_pagado_anticipos,
+                cc.valor_venta,
+                cc.monto_igv,
+                cc.total,
                 cc.monto_detraccion,
                 cc.monto_detraccion_soles,
                 cc.monto_neto,
                 cc.avance_pago_neto,
                 cc.avance_pago_detraccion,
+                cc.es_al_contado,
+                cc.es_al_credito,
+                cc.plazo_credito,
+                cc.plazo_credito_periodo,
+                cc.total_cuotas,
+                cc.metodo_pago,
                 vc.id_cuenta_bancaria AS id_cuenta_bancaria_proveedor_sugerida,
-                vc.monto_penalidad AS monto_penalidad,
-                vc.monto_flete AS monto_flete,
+                COALESCE((SELECT SUM(vcd.monto_penalidad) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS monto_penalidad,
+                COALESCE((SELECT SUM(vcd.monto_flete) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS monto_flete,
                 cc.aprobaciones,
                 cc.estado,
                 cc.created_at,
@@ -185,13 +197,15 @@ class ContabilidadCompraData
                 p.razon_social AS proveedor_nombre,
                 p.ruc AS proveedor_ruc,
                 c.nombre AS concesion_nombre,
-                CONCAT(emp_reg.nombre, " ", emp_reg.apellido) AS empleado_registro_nombre
+                CONCAT(emp_reg.nombre, " ", emp_reg.apellido) AS empleado_registro_nombre,
+                CONCAT(emp_sol_oc.nombre, " ", emp_sol_oc.apellido) AS empleado_solicita_oc_nombre
             FROM comprobante_compra cc
             INNER JOIN valorizacion_compra vc ON vc.id = cc.id_valorizacion_compra
             INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
             INNER JOIN concesion c ON c.id = vc.id_concesion
             INNER JOIN tipo_cambio tc ON tc.id = cc.id_tipo_cambio
             INNER JOIN empleado emp_reg ON emp_reg.id = cc.id_empleado_registro
+            LEFT JOIN empleado emp_sol_oc ON emp_sol_oc.id = vc.id_empleado_solicita_oc
             WHERE cc.id = :id
             LIMIT 1
         ';
@@ -259,18 +273,22 @@ class ContabilidadCompraData
         $row->tipo_cambio_venta = (float) $row->tipo_cambio_venta;
         $row->porcentaje_igv = (float) $row->porcentaje_igv;
         $row->porcentaje_detraccion = (float) $row->porcentaje_detraccion;
-        $row->total_dolares_antes_descuento = (float) ($row->total_dolares_antes_descuento ?? 0);
-        $row->total_soles_antes_descuento = (float) ($row->total_soles_antes_descuento ?? 0);
+        $row->subtotal_sin_descuento = (float) ($row->subtotal_sin_descuento ?? 0);
         $row->descuento = (float) ($row->descuento ?? 0);
-        $row->total_dolares = (float) $row->total_dolares;
-        $row->total_soles = (float) $row->total_soles;
-        $row->monto_igv_soles = (float) $row->monto_igv_soles;
-        $row->monto_pagado_anticipos = (float) $row->monto_pagado_anticipos;
-        $row->monto_detraccion = (float) $row->monto_detraccion;
-        $row->monto_detraccion_soles = (float) $row->monto_detraccion_soles;
-        $row->monto_neto = (float) $row->monto_neto;
+        $row->monto_pagado_anticipos = (float) ($row->monto_pagado_anticipos ?? 0);
+        $row->valor_venta = (float) ($row->valor_venta ?? 0);
+        $row->monto_igv = (float) ($row->monto_igv ?? 0);
+        $row->total = (float) ($row->total ?? 0);
+        $row->monto_detraccion = (float) ($row->monto_detraccion ?? 0);
+        $row->monto_detraccion_soles = (float) ($row->monto_detraccion_soles ?? 0);
+        $row->monto_neto = (float) ($row->monto_neto ?? 0);
         $row->avance_pago_neto = (float) $row->avance_pago_neto;
         $row->avance_pago_detraccion = (float) $row->avance_pago_detraccion;
+        $row->es_al_contado = (bool) ($row->es_al_contado ?? false);
+        $row->es_al_credito = (bool) ($row->es_al_credito ?? false);
+        $row->plazo_credito = isset($row->plazo_credito) && $row->plazo_credito !== null ? (int) $row->plazo_credito : null;
+        $row->total_cuotas = isset($row->total_cuotas) && $row->total_cuotas !== null ? (int) $row->total_cuotas : null;
+        $row->metodo_pago = $row->metodo_pago ?? 'Transferencia';
         if (isset($row->monto_penalidad)) {
             $row->monto_penalidad = (float) ($row->monto_penalidad ?? 0);
         }
@@ -430,12 +448,16 @@ class ContabilidadCompraData
     }
 
     /**
-     * Calcular todos los importes del comprobante a partir de la valorización y el TC.
-     * - total_dolares_antes_descuento = SUM(subtotal)
-     * - descuento = monto_penalidad + monto_flete (header valorizacion)
-     * - total_dolares = total_dolares_antes_descuento - descuento
-     * - total_soles = total_soles_antes_descuento - (descuento * tc_venta)
-     * - La base de detracción NO descuenta penalidad/flete (solo anticipos).
+     * Calcular todos los importes del comprobante a partir de la valorización y el TC:
+     * - subtotal_sin_descuento = SUM(subtotal de los detalles de la valorización)
+     * - descuento = SUM(descuento) o (penalidad + flete)
+     * - monto_pagado_anticipos = SUM(anticipos aprobados)
+     * - valor_venta = subtotal_sin_descuento - descuento - monto_pagado_anticipos
+     * - monto_igv = valor_venta * porcentaje_igv
+     * - total = valor_venta + monto_igv
+     * - monto_detraccion = total * porcentaje_detraccion
+     * - monto_detraccion_soles = monto_detraccion * tipoCambioVenta
+     * - monto_neto = total - monto_detraccion
      *
      * @return array<string,float>
      */
@@ -443,48 +465,61 @@ class ContabilidadCompraData
         int $idValorizacion,
         float $tipoCambioVenta,
         float $porcentajeIgv = 0.18,
-        float $porcentajeDetraccion = 0.11
+        float $porcentajeDetraccion = 0.10
     ): array {
-        $valorizacionRow = DB::table('valorizacion_compra')
-            ->where('id', $idValorizacion)
-            ->select('monto_penalidad', 'monto_flete')
-            ->first();
-        $montoPenalidad = (float) ($valorizacionRow->monto_penalidad ?? 0);
-        $montoFlete = (float) ($valorizacionRow->monto_flete ?? 0);
-        $descuento = $montoPenalidad + $montoFlete;
+        if ($porcentajeIgv > 1.0) {
+            $porcentajeIgv = $porcentajeIgv / 100.0;
+        }
+        if ($porcentajeDetraccion > 1.0) {
+            $porcentajeDetraccion = $porcentajeDetraccion / 100.0;
+        }
 
-        $totalDolaresAntesDescuento = (float) DB::table('valorizacion_compramineral_detalle')
+        $detallesTotales = DB::table('valorizacion_compramineral_detalle')
             ->where('id_valorizacion_compra', $idValorizacion)
-            ->sum('subtotal');
+            ->selectRaw('
+                SUM(COALESCE(subtotal_sin_descuento, subtotal)) as total_sin_descuento,
+                SUM(COALESCE(monto_penalidad, 0)) as total_penalidad,
+                SUM(COALESCE(monto_flete, 0)) as total_flete,
+                SUM(COALESCE(descuento, 0)) as total_descuento
+            ')
+            ->first();
 
-        $totalSolesAntesDescuento = $totalDolaresAntesDescuento * $tipoCambioVenta;
-        $montoIgvSoles = $totalSolesAntesDescuento * $porcentajeIgv;
+        $montoPenalidad = (float) ($detallesTotales->total_penalidad ?? 0);
+        $montoFlete = (float) ($detallesTotales->total_flete ?? 0);
+        $descuento = (float) ($detallesTotales->total_descuento ?? ($montoPenalidad + $montoFlete));
+        $subtotalSinDescuento = (float) ($detallesTotales->total_sin_descuento ?? 0);
 
         $montoAnticipos = (float) DB::table('transaccion_anticipo_proveedor')
             ->where('id_valorizacion_compra', $idValorizacion)
             ->where('estado', 'Aprobado')
             ->sum('monto_retirado');
 
-        $totalDolares = max($totalDolaresAntesDescuento - $descuento, 0.0);
-        $totalSoles = max($totalSolesAntesDescuento - ($descuento * $tipoCambioVenta), 0.0);
+        // valor_venta: subtotal_sin_descuento - descuento - monto_pagado_anticipos
+        $valorVenta = max(0.0, round($subtotalSinDescuento - $descuento - $montoAnticipos, 2));
 
-        $baseDetraccion = max($totalDolaresAntesDescuento - $montoAnticipos, 0.0);
-        $montoDetraccion = $baseDetraccion * $porcentajeDetraccion;
-        $montoDetraccionSoles = $montoDetraccion * $tipoCambioVenta;
+        // monto_igv: porcentaje de igv * valor_venta
+        $montoIgv = round($valorVenta * $porcentajeIgv, 2);
 
-        $montoNeto = $totalDolares - $montoAnticipos - $montoDetraccion;
+        // total: valor_venta + monto_igv
+        $total = round($valorVenta + $montoIgv, 2);
+
+        // monto_detraccion: porcentaje_detraccion * total
+        $montoDetraccion = round($total * $porcentajeDetraccion, 2);
+        $montoDetraccionSoles = round($montoDetraccion * $tipoCambioVenta, 2);
+
+        // monto_neto: total - monto_detraccion
+        $montoNeto = round($total - $montoDetraccion, 2);
 
         return [
-            'total_dolares_antes_descuento' => round($totalDolaresAntesDescuento, 2),
-            'total_soles_antes_descuento' => round($totalSolesAntesDescuento, 2),
+            'subtotal_sin_descuento' => round($subtotalSinDescuento, 2),
             'descuento' => round($descuento, 2),
-            'total_dolares' => round($totalDolares, 2),
-            'total_soles' => round($totalSoles, 2),
-            'monto_igv_soles' => round($montoIgvSoles, 2),
             'monto_pagado_anticipos' => round($montoAnticipos, 2),
-            'monto_detraccion' => round($montoDetraccion, 2),
-            'monto_detraccion_soles' => round($montoDetraccionSoles, 2),
-            'monto_neto' => round($montoNeto, 2),
+            'valor_venta' => $valorVenta,
+            'monto_igv' => $montoIgv,
+            'total' => $total,
+            'monto_detraccion' => $montoDetraccion,
+            'monto_detraccion_soles' => $montoDetraccionSoles,
+            'monto_neto' => $montoNeto,
         ];
     }
 
@@ -612,9 +647,9 @@ class ContabilidadCompraData
     public static function build_aprobaciones_iniciales(): array
     {
         return [
-            ['tipo' => TipoAprobacionComprobante::Contabilidad->value, 'id_empleado' => null, 'created_at' => null, 'esta_aprobado' => false],
             ['tipo' => TipoAprobacionComprobante::Comercial->value, 'id_empleado' => null, 'created_at' => null, 'esta_aprobado' => false],
-            ['tipo' => TipoAprobacionComprobante::Documentaria->value, 'id_empleado' => null, 'created_at' => null, 'esta_aprobado' => false],
+            ['tipo' => TipoAprobacionComprobante::Contabilidad->value, 'id_empleado' => null, 'created_at' => null, 'esta_aprobado' => false],
+            ['tipo' => TipoAprobacionComprobante::Gerencia->value, 'id_empleado' => null, 'created_at' => null, 'esta_aprobado' => false],
         ];
     }
 
