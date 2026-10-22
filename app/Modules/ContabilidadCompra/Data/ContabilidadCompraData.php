@@ -64,7 +64,8 @@ class ContabilidadCompraData
                 CONCAT(emp_reg.nombre, " ", emp_reg.apellido) AS empleado_registro_nombre,
                 CONCAT(emp_sol_oc.nombre, " ", emp_sol_oc.apellido) AS empleado_solicita_oc_nombre,
                 COALESCE((SELECT SUM(pg.monto_pagado) FROM pago_comprobante_compra pg WHERE pg.id_comprobante_compra = cc.id AND pg.es_anulado = 0 AND pg.es_para_detraccion = 0), 0) AS total_pagado_neto,
-                COALESCE((SELECT SUM(pg.monto_pagado) FROM pago_comprobante_compra pg WHERE pg.id_comprobante_compra = cc.id AND pg.es_anulado = 0 AND pg.es_para_detraccion = 1), 0) AS total_pagado_detraccion
+                COALESCE((SELECT SUM(pg.monto_pagado) FROM pago_comprobante_compra pg WHERE pg.id_comprobante_compra = cc.id AND pg.es_anulado = 0 AND pg.es_para_detraccion = 1), 0) AS total_pagado_detraccion,
+                (SELECT MAX(pg.fecha_hora_pago) FROM pago_comprobante_compra pg WHERE pg.id_comprobante_compra = cc.id AND pg.es_anulado = 0 AND pg.es_para_detraccion = 0) AS ultima_fecha_pago_neto
             FROM comprobante_compra cc
             INNER JOIN valorizacion_compra vc ON vc.id = cc.id_valorizacion_compra
             INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
@@ -198,7 +199,8 @@ class ContabilidadCompraData
                 p.ruc AS proveedor_ruc,
                 c.nombre AS concesion_nombre,
                 CONCAT(emp_reg.nombre, " ", emp_reg.apellido) AS empleado_registro_nombre,
-                CONCAT(emp_sol_oc.nombre, " ", emp_sol_oc.apellido) AS empleado_solicita_oc_nombre
+                CONCAT(emp_sol_oc.nombre, " ", emp_sol_oc.apellido) AS empleado_solicita_oc_nombre,
+                (SELECT MAX(pg.fecha_hora_pago) FROM pago_comprobante_compra pg WHERE pg.id_comprobante_compra = cc.id AND pg.es_anulado = 0 AND pg.es_para_detraccion = 0) AS ultima_fecha_pago_neto
             FROM comprobante_compra cc
             INNER JOIN valorizacion_compra vc ON vc.id = cc.id_valorizacion_compra
             INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
