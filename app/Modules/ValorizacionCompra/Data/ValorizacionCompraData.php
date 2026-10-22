@@ -99,14 +99,16 @@ class ValorizacionCompraData
         $guiaRemitenteStr = ! empty($guiasRemitente) ? implode(', ', array_unique($guiasRemitente)) : '—';
         $guiaTransportistaStr = ! empty($guiasTransportista) ? implode(', ', array_unique($guiasTransportista)) : '—';
 
-        // Cálculos económicos para el reporte de liquidación
+        // Cálculos económicos para el reporte de liquidación:
+        // El subtotal base para impuestos y detracción es tras descontar flete/penalidad y anticipos
         $pctIgv = $item->porcentaje_igv !== null ? (float) $item->porcentaje_igv : 18.00;
         $pctDetraccion = $item->porcentaje_detraccion !== null ? (float) $item->porcentaje_detraccion : 10.00;
 
-        $igv = round($totalSubtotal * ($pctIgv / 100), 2);
-        $totalConIgv = round($totalSubtotal + $igv, 2);
+        $subtotalNeto = max(0.0, round($totalSubtotal - $totalAnticipos, 2));
+        $igv = round($subtotalNeto * ($pctIgv / 100), 2);
+        $totalConIgv = round($subtotalNeto + $igv, 2);
         $detraccion = round($totalConIgv * ($pctDetraccion / 100), 2);
-        $netoAPagar = round($totalConIgv - $detraccion - $totalAnticipos, 2);
+        $netoAPagar = max(0.0, round($totalConIgv - $detraccion, 2));
 
         return [
             'id' => $item->id,
