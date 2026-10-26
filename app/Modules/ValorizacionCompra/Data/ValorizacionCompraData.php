@@ -2,14 +2,19 @@
 
 namespace App\Modules\ValorizacionCompra\Data;
 
+use App\Models\ComprobanteCompra;
 use App\Models\ValorizacionCompra;
+use App\Shared\Enums\ContabilidadCompra\EstadoComprobanteCompra;
+use Illuminate\Database\Eloquent\Builder;
 
 class ValorizacionCompraData
 {
     /**
      * Base query para relaciones de ValorizacionCompra
+     *
+     * @return Builder<ValorizacionCompra>
      */
-    private static function queryBase()
+    private static function queryBase(): Builder
     {
         return ValorizacionCompra::query()->with([
             'proveedor:id,razon_social,ruc,direccion',
@@ -29,6 +34,7 @@ class ValorizacionCompraData
             'detalles.loteGuia.guiaPrimerTramo:id,guia_remitente,guia_transportista,sin_guia_transportista,fecha_en_planta',
             'transaccionesAnticipo',
             'transaccionesAnticipo.anticipo:id,serie_factura,numero_factura,saldo_inicial,saldo_actual',
+            'comprobanteCompra:id,id_valorizacion_compra,serie,numero,fecha_emision,estado',
         ]);
     }
 
@@ -110,6 +116,24 @@ class ValorizacionCompraData
         $detraccion = round($totalConIgv * ($pctDetraccion / 100), 2);
         $netoAPagar = max(0.0, round($totalConIgv - $detraccion, 2));
 
+        // Comprobante / Factura asociada
+        $comprobante = $item->relationLoaded('comprobanteCompra')
+            ? $item->comprobanteCompra
+            : ComprobanteCompra::where('id_valorizacion_compra', $item->id)
+                ->where('estado', '!=', EstadoComprobanteCompra::Anulado->value)
+                ->first();
+
+        $facturaCodigo = null;
+        $facturaFecha = null;
+        if ($comprobante && ($comprobante->estado instanceof EstadoComprobanteCompra ? $comprobante->estado !== EstadoComprobanteCompra::Anulado : $comprobante->estado !== EstadoComprobanteCompra::Anulado->value)) {
+            $serie = trim((string) $comprobante->serie);
+            $numero = trim((string) $comprobante->numero);
+            $facturaCodigo = ($serie !== '' && $numero !== '') ? "{$serie}-{$numero}" : ($serie ?: $numero);
+            $facturaFecha = $comprobante->fecha_emision instanceof \DateTimeInterface
+                ? $comprobante->fecha_emision->format('Y-m-d')
+                : (string) $comprobante->fecha_emision;
+        }
+
         return [
             'id' => $item->id,
             'numero_correlativo' => $item->numero_correlativo,
@@ -138,7 +162,9 @@ class ValorizacionCompraData
             'lugar_compra' => 'KM. 573 OTR. PANAMERICANA NORTE (B083464-13-01) LA LIBERTAD - TRUJILLO - HUANCHACO',
             'tmh_total_gr' => round($tmhTotalGr, 3),
             'tmh_total_balanza' => round($tmhTotalBalanza, 3),
-            'factura_asociada' => '—',
+            'factura_asociada' => $facturaCodigo,
+            'fecha_factura' => $facturaFecha,
+            'tiene_factura' => ! empty($facturaCodigo),
             'igv' => $igv,
             'total_con_igv' => $totalConIgv,
             'monto_detraccion' => $detraccion,
@@ -285,7 +311,13 @@ class ValorizacionCompraData
             $query->where('id_proveedor_minero', $idProveedor);
         }
 
-        return $query->get()->map(fn (ValorizacionCompra $item) => self::format_valorizacion($item))->toArray();
+        /** @var \Illuminate\Database\Eloquent\Collection<int, ValorizacionCompra> $items */
+        $items = $query->get();
+
+        return $items->map(function ($item) {
+            /** @var ValorizacionCompra $item */
+            return self::format_valorizacion($item);
+        })->toArray();
     }
 
     /**

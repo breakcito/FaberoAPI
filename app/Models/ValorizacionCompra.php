@@ -112,4 +112,10 @@ class ValorizacionCompra extends Model
     {
         return $this->hasMany(TransaccionAnticipoProveedor::class, 'id_valorizacion_compra');
     }
+
+    public function comprobanteCompra(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(ComprobanteCompra::class, 'id_valorizacion_compra')
+            ->where('estado', '!=', \App\Shared\Enums\ContabilidadCompra\EstadoComprobanteCompra::Anulado->value);
+    }
 }
