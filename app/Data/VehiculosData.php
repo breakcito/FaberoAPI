@@ -7,6 +7,26 @@ use Illuminate\Support\Facades\DB;
 class VehiculosData
 {
     /**
+     * Obtener un vehículo por ID (solo columnas de identificación y capacidad).
+     */
+    public static function get_vehiculo_by_id(int $id): ?object
+    {
+        return DB::table('vehiculo')
+            ->where('id', $id)
+            ->first(['id', 'placa', 'capacidad']);
+    }
+
+    /**
+     * Actualizar la capacidad (TN) de un vehículo.
+     */
+    public static function actualizar_capacidad_vehiculo(int $id, float $capacidad): void
+    {
+        DB::table('vehiculo')
+            ->where('id', $id)
+            ->update(['capacidad' => $capacidad]);
+    }
+
+    /**
      * Obtener listado global de vehículos simplificado, filtrable por placa y/o ID.
      */
     public static function get_vehiculos(?string $placa = null, ?int $id = null, ?bool $esCarreta = null)

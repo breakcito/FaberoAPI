@@ -245,6 +245,28 @@ class RecepcionUnidadesData
     }
 
     /**
+     * Obtener los datos de guías (documentos y textos) de una recepción.
+     * Usado por gui-primer-tramo para autocompletar inputs de archivo al
+     * registrar una guía cuando los items seleccionados pertenecen a una sola
+     * recepción.
+     */
+    public static function get_archivos_guias_recepcion(int $idRecepcion): ?object
+    {
+        return DB::table('recepcion_unidad')
+            ->where('id', $idRecepcion)
+            ->first([
+                'id',
+                'documentos_programacion',
+                'guia_remitente',
+                'guia_transportista',
+                'id_vehiculo',
+                'id_vehiculo_carreta',
+                'id_conductor',
+                'id_empresa_transporte',
+            ]);
+    }
+
+    /**
      * Normalizar la columna JSON documentos_programacion.
      * Estructura esperada: { guia_remitente: IArchivo|null, guia_transportista: IArchivo|null }
      * Cada IArchivo: { url, path_relativo, nombre_original, extension }

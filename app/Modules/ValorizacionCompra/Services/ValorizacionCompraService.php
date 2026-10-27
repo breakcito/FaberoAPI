@@ -15,6 +15,7 @@ use App\Shared\Enums\ValorizacionCompra\EstadoValorizacionCompra;
 use App\Shared\Enums\ValorizacionCompra\TipoPagoValorizacionCompra;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Helpers\CorrelativoHelper;
+use App\Shared\Responses\_Generic\RES_CambiosLog;
 use App\Shared\Responses\ApiResponse;
 use Exception;
 use Illuminate\Support\Facades\DB;
@@ -45,7 +46,7 @@ class ValorizacionCompraService
     }
 
     /**
-     * Crear una nueva valorización en estado Pendiente
+     * Crear una nueva valorización en estado Propuesta
      *
      * @param  array<string,mixed>  $data
      * @param  \Illuminate\Http\UploadedFile[]  $archivos
@@ -132,7 +133,7 @@ class ValorizacionCompraService
                 }
 
                 $idGrupo = ! empty($det['id_grupo_analisis']) ? (int) $det['id_grupo_analisis'] : null;
-                $grupo = $idGrupo ? DB::table('grupo_analisis')->where('id', $idGrupo)->first() : null;
+                $grupo = $idGrupo ? ValorizacionCompraData::get_grupo_analisis($idGrupo) : null;
 
                 $pesoNeto = (float) ($lote->peso_neto ?? 0);
                 if ($grupo && $grupo->ley_humedad_cierre > 0) {
@@ -155,22 +156,19 @@ class ValorizacionCompraService
                 if ($grupo && abs($ley - $leyBase) > 0.0001 && ! empty($data['id_empleado_registro'])) {
                     $campoLey = $elementoEnum === ElementoQuimicoValorizacion::Oro ? 'ley_oro_cierre' : 'ley_plata_cierre';
                     $logGrupo = isset($grupo->log_cambios) ? (is_array($grupo->log_cambios) ? $grupo->log_cambios : (json_decode((string) $grupo->log_cambios, true) ?? [])) : [];
-                    $logGrupo[] = [
-                        'id_empleado' => (int) $data['id_empleado_registro'],
-                        'fecha_hora' => now()->toDateTimeString(),
-                        'update_at' => now()->toIso8601String(),
-                        'accion' => 'Ajuste de Ley desde Propuesta de Valorización',
-                        'motivo' => "Ley {$elementoEnum->value} ajustada para propuesta {$correlativoStr}: {$leyBase} -> {$ley}",
-                        'cambios' => [
+                    $logGrupo[] = RES_CambiosLog::crear(
+                        (int) $data['id_empleado_registro'],
+                        "Ajuste de Ley desde Propuesta de Valorización: Ley {$elementoEnum->value} ajustada para propuesta {$correlativoStr}: {$leyBase} -> {$ley}",
+                        [
                             [
                                 'campo_bd' => $campoLey,
                                 'campo' => "Ley {$elementoEnum->value}",
                                 'valor_anterior' => (string) $leyBase,
                                 'valor_nuevo' => (string) $ley,
                             ],
-                        ],
-                    ];
-                    DB::table('grupo_analisis')->where('id', $grupo->id)->update([
+                        ]
+                    );
+                    ValorizacionCompraData::actualizar_grupo_analisis((int) $grupo->id, [
                         $campoLey => $ley,
                         'log_cambios' => json_encode($logGrupo),
                     ]);
@@ -237,7 +235,7 @@ class ValorizacionCompraService
                 // Activar flag en grupo_analisis
                 if ($idGrupo) {
                     $campoFlag = $elementoEnum === ElementoQuimicoValorizacion::Oro ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
-                    DB::table('grupo_analisis')->where('id', $idGrupo)->update([$campoFlag => 1]);
+                    ValorizacionCompraData::marcar_grupo_analisis((int) $idGrupo, $campoFlag);
                 }
             }
 
@@ -263,13 +261,10 @@ class ValorizacionCompraService
                         'monto_retirado' => $montoRetirado,
                         'saldo_actual' => $saldoActualAnticipo,
                         'log_cambios' => [
-                            [
-                                'id_empleado' => (int) $data['id_empleado_registro'],
-                                'fecha_hora' => now()->toDateTimeString(),
-                                'update_at' => now()->toIso8601String(),
-                                'accion' => 'Asociación de Anticipo a Valorización',
-                                'motivo' => "Reserva de anticipo en Valorización {$numeroCorrelativo} - Retiro: \$ ".number_format($montoRetirado, 2),
-                                'cambios' => [
+                            RES_CambiosLog::crear(
+                                (int) $data['id_empleado_registro'],
+                                "Asociación de Anticipo a Valorización: Reserva de anticipo en Valorización {$numeroCorrelativo} - Retiro: \$ ".number_format($montoRetirado, 2),
+                                [
                                     [
                                         'campo_bd' => 'monto_retirado',
                                         'campo' => 'Monto Retirado',
@@ -288,8 +283,8 @@ class ValorizacionCompraService
                                         'valor_anterior' => '—',
                                         'valor_nuevo' => EstadoTransaccionAnticipo::Pendiente->value,
                                     ],
-                                ],
-                            ],
+                                ]
+                            ),
                         ],
                         'created_at' => now(),
                         'estado' => EstadoTransaccionAnticipo::Pendiente->value,
@@ -301,7 +296,7 @@ class ValorizacionCompraService
 
             $valDetalle = ValorizacionCompraData::get_valorizacion_by_id($valorizacion->id);
 
-            return ApiResponse::success($valDetalle, 'Valorización creada correctamente en estado Pendiente.');
+            return ApiResponse::success($valDetalle, 'Valorización creada correctamente en estado Propuesta.');
         } catch (Exception $e) {
             DB::rollBack();
 
@@ -310,7 +305,7 @@ class ValorizacionCompraService
     }
 
     /**
-     * Editar una valorización existente en estado Pendiente
+     * Editar una valorización existente en estado Propuesta
      *
      * @param  array<string,mixed>  $data
      * @param  \Illuminate\Http\UploadedFile[]  $archivos
@@ -459,14 +454,11 @@ class ValorizacionCompraService
             $logCambios = $valorizacion->log_cambios ?? [];
             if (! empty($cambios)) {
                 $motivoHeader = ! empty($data['motivo_edicion']) ? trim($data['motivo_edicion']) : 'Edición de Valorización de Compra';
-                $logCambios[] = [
-                    'fecha_hora' => now()->toDateTimeString(),
-                    'update_at' => now()->toIso8601String(),
-                    'id_empleado' => (int) $data['id_empleado_edicion'],
-                    'accion' => 'Edición de Valorización',
-                    'motivo' => $motivoHeader,
-                    'cambios' => $cambios,
-                ];
+                $logCambios[] = RES_CambiosLog::crear(
+                    (int) $data['id_empleado_edicion'],
+                    "Edición de Valorización: {$motivoHeader}",
+                    $cambios
+                );
             }
 
             $valorizacion->update([
@@ -488,7 +480,7 @@ class ValorizacionCompraService
             foreach ($oldDetalles as $oldDet) {
                 if ($oldDet->id_grupo_analisis) {
                     $flag = $oldDet->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
-                    DB::table('grupo_analisis')->where('id', $oldDet->id_grupo_analisis)->update([$flag => 0]);
+                    ValorizacionCompraData::desmarcar_grupo_analisis((int) $oldDet->id_grupo_analisis, $flag);
                 }
             }
             ValorizacionCompraData::delete_detalles_by_valorizacion($id);
@@ -504,7 +496,7 @@ class ValorizacionCompraService
                 }
 
                 $idGrupo = ! empty($det['id_grupo_analisis']) ? (int) $det['id_grupo_analisis'] : null;
-                $grupo = $idGrupo ? DB::table('grupo_analisis')->where('id', $idGrupo)->first() : null;
+                $grupo = $idGrupo ? ValorizacionCompraData::get_grupo_analisis($idGrupo) : null;
 
                 $pesoNeto = (float) ($lote->peso_neto ?? 0);
                 if ($grupo && $grupo->ley_humedad_cierre > 0) {
@@ -527,22 +519,19 @@ class ValorizacionCompraService
                 if ($grupo && abs($ley - $leyBase) > 0.0001 && ! empty($data['id_empleado_edicion'])) {
                     $campoLey = $elementoEnum === ElementoQuimicoValorizacion::Oro ? 'ley_oro_cierre' : 'ley_plata_cierre';
                     $logGrupo = isset($grupo->log_cambios) ? (is_array($grupo->log_cambios) ? $grupo->log_cambios : (json_decode((string) $grupo->log_cambios, true) ?? [])) : [];
-                    $logGrupo[] = [
-                        'id_empleado' => (int) $data['id_empleado_edicion'],
-                        'fecha_hora' => now()->toDateTimeString(),
-                        'update_at' => now()->toIso8601String(),
-                        'accion' => 'Ajuste de Ley desde Propuesta de Valorización (Edición)',
-                        'motivo' => "Ley {$elementoEnum->value} ajustada para propuesta {$valorizacion->correlativo}: {$leyBase} -> {$ley}",
-                        'cambios' => [
+                    $logGrupo[] = RES_CambiosLog::crear(
+                        (int) $data['id_empleado_edicion'],
+                        "Ajuste de Ley desde Propuesta de Valorización (Edición): Ley {$elementoEnum->value} ajustada para propuesta {$valorizacion->correlativo}: {$leyBase} -> {$ley}",
+                        [
                             [
                                 'campo_bd' => $campoLey,
                                 'campo' => "Ley {$elementoEnum->value}",
                                 'valor_anterior' => (string) $leyBase,
                                 'valor_nuevo' => (string) $ley,
                             ],
-                        ],
-                    ];
-                    DB::table('grupo_analisis')->where('id', $grupo->id)->update([
+                        ]
+                    );
+                    ValorizacionCompraData::actualizar_grupo_analisis((int) $grupo->id, [
                         $campoLey => $ley,
                         'log_cambios' => json_encode($logGrupo),
                     ]);
@@ -668,14 +657,11 @@ class ValorizacionCompraService
 
                     $logCambiosDetalle = $oldInfo['log_cambios'] ?? [];
                     if (! empty($cambiosDet)) {
-                        $logCambiosDetalle[] = [
-                            'fecha_hora' => now()->toDateTimeString(),
-                            'update_at' => now()->toIso8601String(),
-                            'id_empleado' => (int) $data['id_empleado_edicion'],
-                            'accion' => 'Edición de Parámetros de Lote',
-                            'motivo' => "Lote {$oldInfo['correlativo']} ({$oldInfo['elemento']}): Modificación de parámetros",
-                            'cambios' => $cambiosDet,
-                        ];
+                        $logCambiosDetalle[] = RES_CambiosLog::crear(
+                            (int) $data['id_empleado_edicion'],
+                            "Edición de Parámetros de Lote: Lote {$oldInfo['correlativo']} ({$oldInfo['elemento']}): Modificación de parámetros",
+                            $cambiosDet
+                        );
                     }
                 }
 
@@ -710,7 +696,7 @@ class ValorizacionCompraService
                 // Activar flag en grupo_analisis
                 if ($idGrupo) {
                     $campoFlag = $elementoEnum === ElementoQuimicoValorizacion::Oro ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
-                    DB::table('grupo_analisis')->where('id', $idGrupo)->update([$campoFlag => 1]);
+                    ValorizacionCompraData::marcar_grupo_analisis((int) $idGrupo, $campoFlag);
                 }
             }
 
@@ -740,7 +726,6 @@ class ValorizacionCompraService
 
                 $idEmpleadoEdicion = (int) $data['id_empleado_edicion'];
                 $now = now();
-                $nowIso = $now->toIso8601String();
 
                 // 1. Procesar transacciones eliminadas: registrar entrada de auditoria antes de borrar
                 foreach ($transaccionesExistentes as $transaccionExistente) {
@@ -749,21 +734,18 @@ class ValorizacionCompraService
                         if (! is_array($logExistente)) {
                             $logExistente = json_decode((string) $logExistente, true) ?? [];
                         }
-                        $logExistente[] = [
-                            'id_empleado' => $idEmpleadoEdicion,
-                            'fecha_hora' => $now->toDateTimeString(),
-                            'update_at' => $nowIso,
-                            'accion' => 'Eliminación de Asociación',
-                            'motivo' => "Anticipo removido de la Valorización {$valorizacion->numero_correlativo}",
-                            'cambios' => [
+                        $logExistente[] = RES_CambiosLog::crear(
+                            $idEmpleadoEdicion,
+                            "Eliminación de Asociación: Anticipo removido de la Valorización {$valorizacion->numero_correlativo}",
+                            [
                                 [
                                     'campo_bd' => 'id_valorizacion_compra',
                                     'campo' => 'Asociación con Valorización',
                                     'valor_anterior' => $valorizacion->numero_correlativo,
                                     'valor_nuevo' => '—',
                                 ],
-                            ],
-                        ];
+                            ]
+                        );
                         $transaccionExistente->update(['log_cambios' => $logExistente]);
                         $transaccionExistente->delete();
                     }
@@ -792,28 +774,25 @@ class ValorizacionCompraService
                             ];
                         }
 
-                    $saldoActualAnticipo = (float) $anticipo->saldo_actual;
-                    $saldoActualFmt = '$ '.number_format($saldoActualAnticipo, 2);
-                    $montoCambio = abs($montoAnterior - $montoRetiradoNuevo) > 0.0001;
-                    $snapshotCambio = abs((float) $transaccionPrevia->saldo_actual - $saldoActualAnticipo) > 0.0001;
-                    if ($montoCambio && $snapshotCambio) {
-                        $cambiosEdicion[] = [
-                            'campo_bd' => 'saldo_actual',
-                            'campo' => 'Saldo Actual',
-                            'valor_anterior' => '$ '.number_format((float) $transaccionPrevia->saldo_actual, 2),
-                            'valor_nuevo' => $saldoActualFmt,
-                        ];
-                    }
+                        $saldoActualAnticipo = (float) $anticipo->saldo_actual;
+                        $saldoActualFmt = '$ '.number_format($saldoActualAnticipo, 2);
+                        $montoCambio = abs($montoAnterior - $montoRetiradoNuevo) > 0.0001;
+                        $snapshotCambio = abs((float) $transaccionPrevia->saldo_actual - $saldoActualAnticipo) > 0.0001;
+                        if ($montoCambio && $snapshotCambio) {
+                            $cambiosEdicion[] = [
+                                'campo_bd' => 'saldo_actual',
+                                'campo' => 'Saldo Actual',
+                                'valor_anterior' => '$ '.number_format((float) $transaccionPrevia->saldo_actual, 2),
+                                'valor_nuevo' => $saldoActualFmt,
+                            ];
+                        }
 
                         if (! empty($cambiosEdicion)) {
-                            $logExistente[] = [
-                                'id_empleado' => $idEmpleadoEdicion,
-                                'fecha_hora' => $now->toDateTimeString(),
-                                'update_at' => $nowIso,
-                                'accion' => 'Edición de Transacción de Anticipo',
-                                'motivo' => "Edición de monto en Valorización {$valorizacion->numero_correlativo}",
-                                'cambios' => $cambiosEdicion,
-                            ];
+                            $logExistente[] = RES_CambiosLog::crear(
+                                $idEmpleadoEdicion,
+                                "Edición de Transacción de Anticipo: Edición de monto en Valorización {$valorizacion->numero_correlativo}",
+                                $cambiosEdicion
+                            );
                         }
 
                         $transaccionPrevia->update([
@@ -832,13 +811,10 @@ class ValorizacionCompraService
                             'monto_retirado' => $montoRetiradoNuevo,
                             'saldo_actual' => $saldoActualAnticipo,
                             'log_cambios' => [
-                                [
-                                    'id_empleado' => $idEmpleadoEdicion,
-                                    'fecha_hora' => $now->toDateTimeString(),
-                                    'update_at' => $nowIso,
-                                    'accion' => 'Asociación de Anticipo a Valorización',
-                                    'motivo' => "Asociación agregada en edición de Valorización {$valorizacion->numero_correlativo} - Retiro: \$ ".number_format($montoRetiradoNuevo, 2),
-                                    'cambios' => [
+                                RES_CambiosLog::crear(
+                                    $idEmpleadoEdicion,
+                                    "Asociación de Anticipo a Valorización: Asociación agregada en edición de Valorización {$valorizacion->numero_correlativo} - Retiro: \$ ".number_format($montoRetiradoNuevo, 2),
+                                    [
                                         [
                                             'campo_bd' => 'monto_retirado',
                                             'campo' => 'Monto Retirado',
@@ -857,8 +833,8 @@ class ValorizacionCompraService
                                             'valor_anterior' => '—',
                                             'valor_nuevo' => EstadoTransaccionAnticipo::Pendiente->value,
                                         ],
-                                    ],
-                                ],
+                                    ]
+                                ),
                             ],
                             'created_at' => $now,
                             'estado' => EstadoTransaccionAnticipo::Pendiente->value,
@@ -874,21 +850,18 @@ class ValorizacionCompraService
                     if (! is_array($logExistente)) {
                         $logExistente = json_decode((string) $logExistente, true) ?? [];
                     }
-                    $logExistente[] = [
-                        'id_empleado' => (int) $data['id_empleado_edicion'],
-                        'fecha_hora' => now()->toDateTimeString(),
-                        'update_at' => now()->toIso8601String(),
-                        'accion' => 'Eliminación de Asociación',
-                        'motivo' => "Anticipo removido: tipo de pago cambiado en Valorización {$valorizacion->numero_correlativo}",
-                        'cambios' => [
+                    $logExistente[] = RES_CambiosLog::crear(
+                        (int) $data['id_empleado_edicion'],
+                        "Eliminación de Asociación: Anticipo removido: tipo de pago cambiado en Valorización {$valorizacion->numero_correlativo}",
+                        [
                             [
                                 'campo_bd' => 'id_valorizacion_compra',
                                 'campo' => 'Asociación con Valorización',
                                 'valor_anterior' => $valorizacion->numero_correlativo,
                                 'valor_nuevo' => '—',
                             ],
-                        ],
-                    ];
+                        ]
+                    );
                     $transaccionExistente->update(['log_cambios' => $logExistente]);
                     $transaccionExistente->delete();
                 }
@@ -1008,14 +981,11 @@ class ValorizacionCompraService
                 if (! is_array($logHeaderAnticipo)) {
                     $logHeaderAnticipo = json_decode((string) $logHeaderAnticipo, true) ?? [];
                 }
-                $logHeaderAnticipo[] = [
-                    'id_empleado' => $idEmpleadoAprobacion,
-                    'fecha_hora' => now()->toDateTimeString(),
-                    'update_at' => now()->toIso8601String(),
-                    'accion' => 'Descuento de Saldo por Valorización Aprobada',
-                    'motivo' => "Uso de Anticipo en Valorización {$valorizacion->numero_correlativo} - Retiro: \$ ".number_format($montoRetirado, 2),
-                    'cambios' => $cambiosHeader,
-                ];
+                $logHeaderAnticipo[] = RES_CambiosLog::crear(
+                    $idEmpleadoAprobacion,
+                    "Descuento de Saldo por Valorización Aprobada: Uso de Anticipo en Valorización {$valorizacion->numero_correlativo} - Retiro: \$ ".number_format($montoRetirado, 2),
+                    $cambiosHeader
+                );
 
                 $anticipo->update([
                     'saldo_actual' => $nuevoSaldoAnticipo,
@@ -1028,21 +998,18 @@ class ValorizacionCompraService
                 if (! is_array($logTrans)) {
                     $logTrans = json_decode((string) $logTrans, true) ?? [];
                 }
-                $logTrans[] = [
-                    'id_empleado' => $idEmpleadoAprobacion,
-                    'fecha_hora' => now()->toDateTimeString(),
-                    'update_at' => now()->toIso8601String(),
-                    'accion' => 'Aprobación de Transacción de Anticipo',
-                    'motivo' => "Uso de Anticipo en Valorización {$valorizacion->numero_correlativo} - Retiro: \$ ".number_format($montoRetirado, 2),
-                    'cambios' => [
+                $logTrans[] = RES_CambiosLog::crear(
+                    $idEmpleadoAprobacion,
+                    "Aprobación de Transacción de Anticipo: Uso de Anticipo en Valorización {$valorizacion->numero_correlativo} - Retiro: \$ ".number_format($montoRetirado, 2),
+                    [
                         [
                             'campo_bd' => 'estado',
                             'campo' => 'Estado Transacción',
                             'valor_anterior' => EstadoTransaccionAnticipo::Pendiente->value,
                             'valor_nuevo' => EstadoTransaccionAnticipo::Aprobado->value,
                         ],
-                    ],
-                ];
+                    ]
+                );
 
                 $transaccion->update([
                     'saldo_actual' => $saldoDisponible,
@@ -1052,21 +1019,18 @@ class ValorizacionCompraService
             }
 
             $logCambios = $valorizacion->log_cambios ?? [];
-            $logCambios[] = [
-                'fecha_hora' => now()->toDateTimeString(),
-                'update_at' => now()->toIso8601String(),
-                'id_empleado' => $idEmpleadoAprobacion,
-                'accion' => 'Aprobación de Valorización',
-                'motivo' => 'Aprobación exitosa de la valorización de compra',
-                'cambios' => [
+            $logCambios[] = RES_CambiosLog::crear(
+                $idEmpleadoAprobacion,
+                'Aprobación de Valorización: Aprobación exitosa de la valorización de compra',
+                [
                     [
                         'campo_bd' => 'estado',
                         'campo' => 'Estado',
                         'valor_anterior' => EstadoValorizacionCompra::Propuesta->value,
                         'valor_nuevo' => EstadoValorizacionCompra::Aprobado->value,
                     ],
-                ],
-            ];
+                ]
+            );
 
             $valorizacion->update([
                 'id_cuenta_bancaria' => $idCuentaBancaria,
@@ -1153,14 +1117,11 @@ class ValorizacionCompraService
                         if (! is_array($logHeaderAnticipo)) {
                             $logHeaderAnticipo = json_decode((string) $logHeaderAnticipo, true) ?? [];
                         }
-                        $logHeaderAnticipo[] = [
-                            'id_empleado' => $idEmpleadoAnulacion,
-                            'fecha_hora' => now()->toDateTimeString(),
-                            'update_at' => now()->toIso8601String(),
-                            'accion' => 'Restitución de Saldo por Anulación/Eliminación',
-                            'motivo' => "Restitución de saldo por anulación/eliminación de Valorización {$codigoDisplay} - Monto Restituido: \$ ".number_format($montoRestituir, 2),
-                            'cambios' => $cambiosHeader,
-                        ];
+                        $logHeaderAnticipo[] = RES_CambiosLog::crear(
+                            $idEmpleadoAnulacion,
+                            "Restitución de Saldo por Anulación/Eliminación: Restitución de saldo por anulación/eliminación de Valorización {$codigoDisplay} - Monto Restituido: \$ ".number_format($montoRestituir, 2),
+                            $cambiosHeader
+                        );
 
                         $anticipo->update([
                             'saldo_actual' => $nuevoSaldo,
@@ -1182,7 +1143,7 @@ class ValorizacionCompraService
                 foreach ($detallesParaLiberar as $det) {
                     if ($det->id_grupo_analisis) {
                         $flag = $det->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
-                        DB::table('grupo_analisis')->where('id', $det->id_grupo_analisis)->update([$flag => 0]);
+                        ValorizacionCompraData::desmarcar_grupo_analisis((int) $det->id_grupo_analisis, $flag);
                     }
                 }
 
@@ -1212,13 +1173,10 @@ class ValorizacionCompraService
             if (! is_array($logCambios)) {
                 $logCambios = json_decode((string) $logCambios, true) ?? [];
             }
-            $logCambios[] = [
-                'fecha_hora' => now()->toDateTimeString(),
-                'update_at' => now()->toIso8601String(),
-                'id_empleado' => $idEmpleadoAnulacion,
-                'accion' => 'Anulación Lógica de Valorización',
-                'motivo' => $motivoAnulacion,
-                'cambios' => [
+            $logCambios[] = RES_CambiosLog::crear(
+                $idEmpleadoAnulacion,
+                "Anulación Lógica de Valorización: {$motivoAnulacion}",
+                [
                     [
                         'campo_bd' => 'estado',
                         'campo' => 'Estado',
@@ -1231,8 +1189,8 @@ class ValorizacionCompraService
                         'valor_anterior' => null,
                         'valor_nuevo' => $motivoAnulacion,
                     ],
-                ],
-            ];
+                ]
+            );
 
             $valorizacion->update([
                 'estado' => EstadoValorizacionCompra::Anulado->value,
@@ -1247,7 +1205,7 @@ class ValorizacionCompraService
             foreach ($valorizacion->detalles as $det) {
                 if ($det->id_grupo_analisis) {
                     $flag = $det->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
-                    DB::table('grupo_analisis')->where('id', $det->id_grupo_analisis)->update([$flag => 0]);
+                    ValorizacionCompraData::desmarcar_grupo_analisis((int) $det->id_grupo_analisis, $flag);
                 }
             }
 
@@ -1263,24 +1221,6 @@ class ValorizacionCompraService
 
             return ApiResponse::error('Error al anular valorización: '.$e->getMessage());
         }
-    }
-
-    private static function obtenerEtiquetaCuenta(?int $idCuenta): string
-    {
-        if (! $idCuenta) {
-            return '—';
-        }
-        $c = DB::table('cuenta_bancaria_proveedor as cb')
-            ->leftJoin('banco as b', 'b.id', '=', 'cb.id_banco')
-            ->where('cb.id', $idCuenta)
-            ->select('cb.numero_cuenta', 'b.nombre as banco_nombre', 'b.abreviatura as banco_abrev')
-            ->first();
-        if (! $c) {
-            return "ID #{$idCuenta}";
-        }
-        $bancoStr = $c->banco_abrev ?: ($c->banco_nombre ?: '');
-
-        return ! empty($bancoStr) ? "{$bancoStr} - {$c->numero_cuenta}" : $c->numero_cuenta;
     }
 
     private static function procesarAuditoriaDetallesEdicion(int $idValorizacion, array $detalles): array
@@ -1445,7 +1385,7 @@ class ValorizacionCompraService
 
             foreach ($items as $item) {
                 $det = $item['detalle'];
-                $grupo = DB::table('grupo_analisis')->where('id', $det->id_grupo_analisis)->first();
+                $grupo = ValorizacionCompraData::get_grupo_analisis((int) $det->id_grupo_analisis);
                 if (! $grupo) {
                     continue;
                 }
@@ -1540,14 +1480,11 @@ class ValorizacionCompraService
                         $logLote = json_decode((string) $logLote, true) ?? [];
                     }
                     $strGrupos = implode(', ', array_unique($nombresGrupos));
-                    $logLote[] = [
-                        'id_empleado' => $idEmpleado,
-                        'fecha_hora' => now()->toDateTimeString(),
-                        'update_at' => now()->toIso8601String(),
-                        'accion' => 'Actualización de Leyes por Valorización Aprobada',
-                        'motivo' => "Leyes actualizadas desde {$strGrupos} al aprobar valorización {$correlativoVal}",
-                        'cambios' => $cambiosLote,
-                    ];
+                    $logLote[] = RES_CambiosLog::crear(
+                        $idEmpleado,
+                        "Actualización de Leyes por Valorización Aprobada: Leyes actualizadas desde {$strGrupos} al aprobar valorización {$correlativoVal}",
+                        $cambiosLote
+                    );
                     $updateData['log_cambios'] = $logLote;
                 }
 
@@ -1578,15 +1515,12 @@ class ValorizacionCompraService
             }
             $columna = $elemento === 'Oro' ? 'esta_valorizado_oro' : 'esta_valorizado_plata';
 
-            $existeOtra = DB::table('valorizacion_compramineral_detalle as vcd')
-                ->join('valorizacion_compra as vc', 'vc.id', '=', 'vcd.id_valorizacion_compra')
-                ->join('lote_guia as lg_check', 'lg_check.id', '=', 'vcd.id_lote_guia')
-                ->leftJoin('particion_lote_mineral as plm', 'plm.id', '=', 'lg_check.id_particion_lote_mineral')
-                ->whereRaw('COALESCE(lg_check.id_lote_mineral, plm.id_lote_mineral) = ?', [$lote->id])
-                ->where('vc.estado', '!=', $estadoAnulado)
-                ->where('vc.id', '!=', $idValorizacionActual)
-                ->where('vcd.elemento_quimico', $elemento)
-                ->exists();
+            $existeOtra = ValorizacionCompraData::existe_otra_valorizacion_con_lote(
+                (int) $lote->id,
+                $elemento,
+                $idValorizacionActual,
+                $estadoAnulado
+            );
 
             if (! $existeOtra) {
                 LoteMineral::where('id', $lote->id)->update([$columna => 0]);
@@ -1616,17 +1550,14 @@ class ValorizacionCompraService
             return ApiResponse::error("Valorización con ID {$id} no encontrada.");
         }
 
-        $empleado = DB::table('empleado')->where('id', $idEmpleado)->first();
+        $empleado = ValorizacionCompraData::get_empleado($idEmpleado);
         $nombreEmpleado = $empleado ? trim($empleado->nombre.' '.$empleado->apellido) : "Empleado #{$idEmpleado}";
 
         $logCambios = $valorizacion->log_cambios ?? [];
-        $logCambios[] = [
-            'fecha_hora' => now()->toDateTimeString(),
-            'update_at' => now()->toIso8601String(),
-            'id_empleado' => $idEmpleado,
-            'accion' => 'Solicitud de Orden de Compra',
-            'motivo' => "Solicitud de OC generada por {$nombreEmpleado}",
-            'cambios' => [
+        $logCambios[] = RES_CambiosLog::crear(
+            $idEmpleado,
+            "Solicitud de Orden de Compra: Solicitud de OC generada por {$nombreEmpleado}",
+            [
                 [
                     'campo_bd' => 'fecha_hora_solicitud_oc',
                     'campo' => 'Fecha de Solicitud OC',
@@ -1639,8 +1570,8 @@ class ValorizacionCompraService
                     'valor_anterior' => $valorizacion->empleadoSolicitaOc ? trim($valorizacion->empleadoSolicitaOc->nombre.' '.$valorizacion->empleadoSolicitaOc->apellido) : '—',
                     'valor_nuevo' => $nombreEmpleado,
                 ],
-            ],
-        ];
+            ]
+        );
 
         $valorizacion->update([
             'id_empleado_solicita_oc' => $idEmpleado,

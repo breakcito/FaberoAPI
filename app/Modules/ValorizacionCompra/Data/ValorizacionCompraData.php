@@ -5,7 +5,9 @@ namespace App\Modules\ValorizacionCompra\Data;
 use App\Models\ComprobanteCompra;
 use App\Models\ValorizacionCompra;
 use App\Shared\Enums\ContabilidadCompra\EstadoComprobanteCompra;
+use App\Shared\Responses\_Generic\RES_CambiosLog;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class ValorizacionCompraData
 {
@@ -359,17 +361,87 @@ class ValorizacionCompraData
         if (! $idCuenta) {
             return '—';
         }
-        $c = \Illuminate\Support\Facades\DB::table('cuenta_bancaria_proveedor as cb')
-            ->leftJoin('banco as b', 'b.id', '=', 'cb.id_banco')
-            ->where('cb.id', $idCuenta)
-            ->select('cb.numero_cuenta', 'b.nombre as banco_nombre', 'b.abreviatura as banco_abrev')
-            ->first();
+        $c = self::get_cuenta_bancaria_proveedor($idCuenta);
         if (! $c) {
             return "ID #{$idCuenta}";
         }
         $bancoStr = $c->banco_abrev ?: ($c->banco_nombre ?: '');
 
         return ! empty($bancoStr) ? "{$bancoStr} - {$c->numero_cuenta}" : $c->numero_cuenta;
+    }
+
+    /**
+     * Obtener un grupo de análisis por ID
+     */
+    public static function get_grupo_analisis(int $id): ?object
+    {
+        return DB::table('grupo_analisis')->where('id', $id)->first();
+    }
+
+    /**
+     * Actualizar campos de un grupo de análisis
+     *
+     * @param  array<string,mixed>  $campos
+     */
+    public static function actualizar_grupo_analisis(int $id, array $campos): void
+    {
+        DB::table('grupo_analisis')->where('id', $id)->update($campos);
+    }
+
+    /**
+     * Activar un flag de propuesta sobre un grupo de análisis
+     */
+    public static function marcar_grupo_analisis(int $id, string $flag): void
+    {
+        DB::table('grupo_analisis')->where('id', $id)->update([$flag => 1]);
+    }
+
+    /**
+     * Desactivar un flag de propuesta sobre un grupo de análisis
+     */
+    public static function desmarcar_grupo_analisis(int $id, string $flag): void
+    {
+        DB::table('grupo_analisis')->where('id', $id)->update([$flag => 0]);
+    }
+
+    /**
+     * Obtener cuenta bancaria de proveedor junto con los datos de su banco
+     */
+    public static function get_cuenta_bancaria_proveedor(int $id): ?object
+    {
+        return DB::table('cuenta_bancaria_proveedor as cb')
+            ->leftJoin('banco as b', 'b.id', '=', 'cb.id_banco')
+            ->where('cb.id', $id)
+            ->select('cb.numero_cuenta', 'b.nombre as banco_nombre', 'b.abreviatura as banco_abrev')
+            ->first();
+    }
+
+    /**
+     * Verificar si existe otra valorización viva que valorice el mismo lote y elemento químico
+     */
+    public static function existe_otra_valorizacion_con_lote(
+        int $idLoteMineral,
+        string $elemento,
+        int $idValorizacionActual,
+        string $estadoAnulado
+    ): bool {
+        return DB::table('valorizacion_compramineral_detalle as vcd')
+            ->join('valorizacion_compra as vc', 'vc.id', '=', 'vcd.id_valorizacion_compra')
+            ->join('lote_guia as lg_check', 'lg_check.id', '=', 'vcd.id_lote_guia')
+            ->leftJoin('particion_lote_mineral as plm', 'plm.id', '=', 'lg_check.id_particion_lote_mineral')
+            ->whereRaw('COALESCE(lg_check.id_lote_mineral, plm.id_lote_mineral) = ?', [$idLoteMineral])
+            ->where('vc.estado', '!=', $estadoAnulado)
+            ->where('vc.id', '!=', $idValorizacionActual)
+            ->where('vcd.elemento_quimico', $elemento)
+            ->exists();
+    }
+
+    /**
+     * Obtener un empleado por ID
+     */
+    public static function get_empleado(int $id): ?object
+    {
+        return DB::table('empleado')->where('id', $id)->first();
     }
 
     /**
@@ -440,21 +512,18 @@ class ValorizacionCompraData
         if (! is_array($logTrans)) {
             $logTrans = json_decode((string) $logTrans, true) ?? [];
         }
-        $logTrans[] = [
-            'id_empleado' => $idEmpleadoAnulacion,
-            'fecha_hora' => now()->toDateTimeString(),
-            'update_at' => now()->toIso8601String(),
-            'accion' => 'Anulación de Transacción de Anticipo',
-            'motivo' => "Transacción anulada por anulación de Valorización {$codigoValorizacion}",
-            'cambios' => [
+        $logTrans[] = RES_CambiosLog::crear(
+            $idEmpleadoAnulacion,
+            "Anulación de Transacción de Anticipo: Transacción anulada por anulación de Valorización {$codigoValorizacion}",
+            [
                 [
                     'campo_bd' => 'estado',
                     'campo' => 'Estado Transacción',
                     'valor_anterior' => $estadoAnteriorTrans,
                     'valor_nuevo' => \App\Shared\Enums\ValorizacionCompra\EstadoTransaccionAnticipo::Anulado->value,
                 ],
-            ],
-        ];
+            ]
+        );
 
         $transaccion->update([
             'estado' => \App\Shared\Enums\ValorizacionCompra\EstadoTransaccionAnticipo::Anulado->value,

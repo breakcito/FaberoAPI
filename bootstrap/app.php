@@ -18,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Endpoints/ArchivoEndpoints.php');
                 require base_path('app/Endpoints/AuxEndpoints.php');
                 require base_path('app/Endpoints/IAEndpoints.php');
+                require base_path('app/Modules/Dashboard/DashboardEndpoints.php');
                 require base_path('app/Modules/Empresas/EmpresasEndpoints.php');
                 require base_path('app/Modules/Organigrama/OrganigramaEndpoints.php');
                 require base_path('app/Modules/Empleados/EmpleadosEndpoints.php');
