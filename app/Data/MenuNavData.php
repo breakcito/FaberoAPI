@@ -7,83 +7,78 @@ use Illuminate\Support\Facades\DB;
 class MenuNavData
 {
     /**
-     * Obtener los modulos del sistema para el menu de navegacion
+     * Menus visibles para el rol. UNION entre:
+     * - Permiso directo en menu (mr.id_menu)
+     * - Permiso derivado de submenu (mr.id_submenu) para submenus hoja
+     * - Permiso derivado de modulo hijo (mr.id_modulo)
      */
     public static function get_menus_by_rol(int $id_rol): array
     {
         $sql = '
-        SELECT DISTINCT
-            mn.id AS id_menu,
-            mn.nombre,
-            mn.path,
-            mn.numero_orden
-        FROM menu mn
-        INNER JOIN submenu sb ON sb.id_menu = mn.id
-        INNER JOIN modulo md ON md.id_submenu = sb.id
-        INNER JOIN modulo_rol mr ON mr.id_modulo = md.id
-        WHERE
-            mr.id_rol = :id_rol AND
-            mn.estado = "Activo"
-        ORDER BY mn.numero_orden ASC;
+        (SELECT m.id AS id_menu, m.nombre, m.path, m.numero_orden, m.es_desplegable
+         FROM menu m
+         INNER JOIN modulo_rol mr ON mr.id_menu = m.id AND mr.id_rol = :rol_a
+         WHERE m.estado = "Activo")
+        UNION
+        (SELECT DISTINCT m.id AS id_menu, m.nombre, m.path, m.numero_orden, m.es_desplegable
+         FROM menu m
+         INNER JOIN submenu s ON s.id_menu = m.id AND s.estado = "Activo"
+         INNER JOIN modulo_rol mr ON mr.id_submenu = s.id AND mr.id_rol = :rol_b
+         WHERE m.estado = "Activo")
+        UNION
+        (SELECT DISTINCT m.id AS id_menu, m.nombre, m.path, m.numero_orden, m.es_desplegable
+         FROM menu m
+         INNER JOIN submenu s ON s.id_menu = m.id AND s.estado = "Activo"
+         INNER JOIN modulo md ON md.id_submenu = s.id AND md.estado = "Activo"
+         INNER JOIN modulo_rol mr ON mr.id_modulo = md.id AND mr.id_rol = :rol_c
+         WHERE m.estado = "Activo")
+        ORDER BY numero_orden ASC;
         ';
 
-        return DB::select($sql, ['id_rol' => $id_rol]);
+        return DB::select($sql, ['rol_a' => $id_rol, 'rol_b' => $id_rol, 'rol_c' => $id_rol]);
     }
 
     /**
-     * Obtener los submenus filtrados por múltiples IDs de menus
+     * Submenus visibles para el rol, filtrados por los menus dados. UNION ALL
+     * entre permiso directo (id_submenu en modulo_rol) y permiso derivado.
      */
     public static function get_submenus_by_rol_and_menus(int $id_rol, array $ids_menu): array
     {
-        if (empty($ids_menu)) {
-            return [];
-        }
+        if (empty($ids_menu)) return [];
         $placeholders = implode(',', array_fill(0, count($ids_menu), '?'));
 
         $sql = "
-        SELECT DISTINCT
-            sb.id as id_submenu,
-            sb.id_menu,
-            sb.nombre,
-            sb.path,
-            sb.numero_orden
-        FROM submenu sb
-        INNER JOIN modulo md ON md.id_submenu = sb.id
-        INNER JOIN modulo_rol mr ON mr.id_modulo = md.id
-        WHERE
-            mr.id_rol = ? AND 
-            sb.id_menu IN ($placeholders) AND
-            sb.estado = 'Activo' AND
-            md.estado = 'Activo'
-        ORDER BY sb.numero_orden ASC;
+        (SELECT s.id AS id_submenu, s.id_menu, s.nombre, s.path, s.numero_orden, s.es_desplegable
+         FROM submenu s
+         INNER JOIN modulo_rol mr ON mr.id_submenu = s.id AND mr.id_rol = ?
+         WHERE s.estado = 'Activo' AND s.id_menu IN ($placeholders))
+        UNION
+        (SELECT DISTINCT s.id AS id_submenu, s.id_menu, s.nombre, s.path, s.numero_orden, s.es_desplegable
+         FROM submenu s
+         INNER JOIN modulo md ON md.id_submenu = s.id AND md.estado = 'Activo'
+         INNER JOIN modulo_rol mr ON mr.id_modulo = md.id AND mr.id_rol = ?
+         WHERE s.estado = 'Activo' AND s.id_menu IN ($placeholders))
+        ORDER BY numero_orden ASC;
         ";
 
-        return DB::select($sql, array_merge([$id_rol], $ids_menu));
+        return DB::select($sql, array_merge([$id_rol], $ids_menu, [$id_rol], $ids_menu));
     }
 
     /**
-     * Obtener los modulos filtrados por múltiples IDs de submenus
+     * Modulos visibles para el rol. Los modulos son siempre hojas, sin UNION.
      */
     public static function get_modulos_by_rol_and_submenus(int $id_rol, array $ids_submenu): array
     {
-        if (empty($ids_submenu)) {
-            return [];
-        }
+        if (empty($ids_submenu)) return [];
         $placeholders = implode(',', array_fill(0, count($ids_submenu), '?'));
 
         $sql = "
         SELECT DISTINCT
-            md.id AS id_modulo,
-            md.id_submenu,
-            md.nombre,
-            md.path,
-            md.numero_orden
+          md.id AS id_modulo, md.id_submenu, md.nombre, md.path,
+          md.numero_orden, md.es_desplegable
         FROM modulo md
-        INNER JOIN modulo_rol mr ON mr.id_modulo = md.id
-        WHERE
-            mr.id_rol = ? AND
-            md.id_submenu IN ($placeholders) AND
-            md.estado = 'Activo'
+        INNER JOIN modulo_rol mr ON mr.id_modulo = md.id AND mr.id_rol = ?
+        WHERE md.estado = 'Activo' AND md.id_submenu IN ($placeholders)
         ORDER BY md.numero_orden ASC;
         ";
 

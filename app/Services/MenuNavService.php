@@ -7,73 +7,63 @@ use App\Shared\Responses\ApiResponse;
 
 class MenuNavService
 {
+    /**
+     * Construye el árbol de navegación. Cada nivel expone su `path` y
+     * `es_desplegable` para que el frontend decida si es hoja (Link directo)
+     * o contenedor (expandible). No se concatenan paths: la URL es
+     * `/${path}` siempre al nivel del nodo hoja.
+     */
     public static function get_menu_navegacion(int $idRol): array
     {
-        // 1. Obtener todos los menus
         $menus = MenuNavData::get_menus_by_rol($idRol);
-        if (empty($menus)) {
-            return ApiResponse::success([]);
-        }
+        if (empty($menus)) return ApiResponse::success([]);
 
         $idsMenus = array_column($menus, 'id_menu');
-
-        // 2. Obtener TODOS los submenus de esos menus
         $todosLosSubmenus = MenuNavData::get_submenus_by_rol_and_menus($idRol, $idsMenus);
         $idsSubmenus = array_column($todosLosSubmenus, 'id_submenu');
-
-        // 3. Obtener TODOS los modulos de esos submenus
         $todosLosModulos = ! empty($idsSubmenus)
             ? MenuNavData::get_modulos_by_rol_and_submenus($idRol, $idsSubmenus)
             : [];
 
-        // AGRUPACIÓN
-
-        // Agrupar modulos por su padre (id_submenu)
         $modulosAgrupados = [];
-        foreach ($todosLosModulos as $modulo) {
-            $modulosAgrupados[$modulo->id_submenu][] = $modulo;
+        foreach ($todosLosModulos as $mod) {
+            $modulosAgrupados[$mod->id_submenu][] = $mod;
         }
 
-        // Agrupar submenus por su padre (id_menu)
         $submenusAgrupados = [];
-        foreach ($todosLosSubmenus as $submenu) {
-            $submenusAgrupados[$submenu->id_menu][] = $submenu;
+        foreach ($todosLosSubmenus as $sub) {
+            $submenusAgrupados[$sub->id_menu][] = $sub;
         }
-
-        // CONSTRUCCIÓN DE LA ESTRUCTURA
 
         $estructura = [];
         foreach ($menus as $menu) {
             $submenusData = [];
-
             $misSubmenus = $submenusAgrupados[$menu->id_menu] ?? [];
 
-            foreach ($misSubmenus as $submenu) {
-                $misModulos = $modulosAgrupados[$submenu->id_submenu] ?? [];
-
+            foreach ($misSubmenus as $sub) {
+                $misModulos = $modulosAgrupados[$sub->id_submenu] ?? [];
                 $submenusData[] = [
-                    'id_submenu' => $submenu->id_submenu,
-                    'nombre' => $submenu->nombre,
-                    'path' => trim((string) $submenu->path),
-                    'modulos' => array_map(function ($modulo) use ($menu, $submenu) {
-                        $menuPath = trim((string) $menu->path);
-                        $submenuPath = trim((string) $submenu->path);
-                        $moduloPath = trim((string) $modulo->path);
-
-                        return [
-                            'id_modulo' => $modulo->id_modulo,
-                            'nombre' => $modulo->nombre,
-                            'url' => "/{$menuPath}/{$submenuPath}/{$moduloPath}",
-                        ];
-                    }, $misModulos),
+                    'id_submenu'     => (int) $sub->id_submenu,
+                    'nombre'         => $sub->nombre,
+                    // Si es contenedor, path es irrelevante: lo dejamos en null
+                    'path'           => $sub->es_desplegable ? null : $sub->path,
+                    'es_desplegable' => (bool) $sub->es_desplegable,
+                    'modulos'        => array_map(fn($m) => [
+                        'id_modulo'       => (int) $m->id_modulo,
+                        'nombre'          => $m->nombre,
+                        'path'            => $m->path,
+                        'es_desplegable'  => (bool) $m->es_desplegable,
+                    ], $misModulos),
                 ];
             }
 
             $estructura[] = [
-                'id_menu' => $menu->id_menu,
-                'nombre' => $menu->nombre,
-                'path' => trim((string) $menu->path),
-                'submenus' => $submenusData,
+                'id_menu'        => (int) $menu->id_menu,
+                'nombre'         => $menu->nombre,
+                // Si es contenedor, path es irrelevante: lo dejamos en null
+                'path'           => $menu->es_desplegable ? null : $menu->path,
+                'es_desplegable' => (bool) $menu->es_desplegable,
+                'submenus'       => $submenusData,
             ];
         }
 

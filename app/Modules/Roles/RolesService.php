@@ -30,70 +30,76 @@ class RolesService
     }
 
     /**
-     * Crear un rol y asignar sus modulos
+     * Crea un rol y asigna sus permisos (multi-nivel). Los permisos llegan
+     * como array de {tipo, id}. Si el backend rechaza alguno por
+     * es_desplegable=true, se hace rollback y se devuelve el error.
      */
     public static function crear_rol(array $data)
     {
         try {
             return DB::transaction(function () use ($data) {
-
-                // 1. Crear el objeto rol
                 $id_rol = RolesData::crear_rol([
                     'nombre' => $data['nombre'],
                     'descripcion' => $data['descripcion'] ?? null,
                     'estado' => 'Activo',
                 ]);
 
-                // 2. Asignar modulos
-                foreach ($data['modulos'] as $id_modulo) {
-                    PermisosData::asignar_modulo_a_rol($id_rol, $id_modulo);
+                foreach ($data['permisos'] as $permiso) {
+                    PermisosData::asignar_permiso_a_rol(
+                        $id_rol,
+                        (int) $permiso['id'],
+                        $permiso['tipo'],
+                    );
                 }
 
                 $nuevoRol = RolesData::get_rol_by_id($id_rol);
 
                 return ApiResponse::success($nuevoRol, 'Rol creado correctamente con sus permisos.');
             });
+        } catch (\DomainException $e) {
+            return ApiResponse::error($e->getMessage());
         } catch (\Exception $e) {
             return ApiResponse::error('Ocurrió un error al registrar el rol: '.$e->getMessage());
         }
     }
 
-    /**
-     * Obtener los IDs de los modulos asignados a un rol
-     */
     public static function get_permisos_rol(int $id_rol)
     {
-        $modulos = PermisosData::get_ids_modulos_por_rol($id_rol);
+        $permisos = PermisosData::get_permisos_por_rol($id_rol);
 
-        return ApiResponse::success($modulos);
+        return ApiResponse::success($permisos);
     }
 
     /**
-     * Actualizar los permisos de un rol (solo diferencias)
+     * Actualiza permisos por diff (multi-nivel).
      */
-    public static function actualizar_permisos_rol(int $id_rol, array $modulos_nuevos)
+    public static function actualizar_permisos_rol(int $id_rol, array $permisos_nuevos)
     {
         try {
-            return DB::transaction(function () use ($id_rol, $modulos_nuevos) {
-                // 1. Obtener permisos actuales
-                $actuales = PermisosData::get_ids_modulos_por_rol($id_rol);
+            return DB::transaction(function () use ($id_rol, $permisos_nuevos) {
+                $actuales = PermisosData::get_permisos_por_rol($id_rol);
 
-                // 2. Calcular diferencias
-                $agregar = array_diff($modulos_nuevos, $actuales);
-                $eliminar = array_diff($actuales, $modulos_nuevos);
+                $keyOf = fn ($p) => $p['tipo'].':'.$p['id'];
+                $setActual = array_map($keyOf, $actuales);
+                $setNuevo = array_map($keyOf, $permisos_nuevos);
 
-                // 3. Agregar solo los nuevos
-                foreach ($agregar as $id_modulo) {
-                    PermisosData::asignar_modulo_a_rol($id_rol, $id_modulo);
+                $agregar = array_diff($setNuevo, $setActual);
+                $eliminar = array_diff($setActual, $setNuevo);
+
+                foreach ($agregar as $k) {
+                    [$tipo, $id] = explode(':', $k);
+                    PermisosData::asignar_permiso_a_rol($id_rol, (int) $id, $tipo);
                 }
 
-                // 4. Eliminar solo los revocados
-                foreach ($eliminar as $id_modulo) {
-                    PermisosData::eliminar_modulo_de_rol($id_rol, $id_modulo);
+                foreach ($eliminar as $k) {
+                    [$tipo, $id] = explode(':', $k);
+                    PermisosData::eliminar_permiso_de_rol($id_rol, (int) $id, $tipo);
                 }
 
                 return ApiResponse::success(null, 'Permisos actualizados correctamente.');
             });
+        } catch (\DomainException $e) {
+            return ApiResponse::error($e->getMessage());
         } catch (\Exception $e) {
             return ApiResponse::error('Error al actualizar los permisos: '.$e->getMessage());
         }
