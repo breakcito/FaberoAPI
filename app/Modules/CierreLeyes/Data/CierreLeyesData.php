@@ -8,6 +8,8 @@ use App\Models\LoteMineral;
 use App\Shared\Enums\_Generic\CondicionIngreso;
 use App\Shared\Enums\_Generic\EstadoLeyes;
 use App\Shared\Enums\_Generic\EstadoPesaje;
+use App\Shared\Enums\_Generic\Periodo;
+use App\Shared\Helpers\CorrelativoHelper;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
 use Illuminate\Support\Facades\DB;
 
@@ -194,8 +196,10 @@ class CierreLeyesData
                     SELECT
                         am.id,
                         am.id_grupo_analisis,
+                        am.id_muestra_externa,
                         am.id_laboratorio,
                         lab.nombre AS laboratorio_nombre,
+                        lab.ruc AS laboratorio_ruc,
                         am.asumido_por,
                         am.numero_ensayo,
                         am.documentos,
@@ -208,9 +212,17 @@ class CierreLeyesData
                         am.tipo_origen,
                         am.sin_lote,
                         am.log_cambios,
-                        am.created_at
+                        am.created_at,
+                        CONCAT(emp_am.nombre, " ", emp_am.apellido) AS empleado_registro_nombre,
+                        me.correlativo AS muestra_correlativo,
+                        me.codigo_cliente AS muestra_codigo_cliente,
+                        prov_me.razon_social AS muestra_proveedor_nombre,
+                        me.fecha_hora_ingreso AS muestra_fecha_hora_ingreso
                     FROM analisis_mineral am
                     LEFT JOIN laboratorio lab ON am.id_laboratorio = lab.id
+                    LEFT JOIN empleado emp_am ON am.id_empleado_registro = emp_am.id
+                    LEFT JOIN muestra_externa me ON am.id_muestra_externa = me.id AND am.id_muestra_externa > 0
+                    LEFT JOIN proveedor prov_me ON me.id_proveedor_minero = prov_me.id
                     WHERE am.id_grupo_analisis = :id_grupo_analisis
                     ORDER BY am.numero_ensayo ASC, am.id ASC
                 ', ['id_grupo_analisis' => $grupo->id]);
@@ -218,6 +230,7 @@ class CierreLeyesData
                 foreach ($analisis as $a) {
                     $a->id = (int) $a->id;
                     $a->id_grupo_analisis = (int) $a->id_grupo_analisis;
+                    $a->id_muestra_externa = ! empty($a->id_muestra_externa) ? (int) $a->id_muestra_externa : null;
                     $a->id_laboratorio = $a->id_laboratorio !== null ? (int) $a->id_laboratorio : null;
                     $a->numero_ensayo = $a->numero_ensayo !== null ? (int) $a->numero_ensayo : 1;
                     $a->ley_oro = (float) $a->ley_oro;
@@ -226,6 +239,7 @@ class CierreLeyesData
                     $a->ley_recuperacion = (float) $a->ley_recuperacion;
                     $a->ley_oro_confirmada = (bool) $a->ley_oro_confirmada;
                     $a->ley_plata_confirmada = (bool) $a->ley_plata_confirmada;
+                    $a->sin_lote = (bool) $a->sin_lote;
                     $a->documentos = isset($a->documentos) ? (is_array($a->documentos) ? $a->documentos : (json_decode($a->documentos, true) ?? [])) : [];
                     $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
                 }
@@ -274,17 +288,49 @@ class CierreLeyesData
     }
 
     /**
+     * Obtener un grupo de análisis por ID
+     */
+    public static function get_grupo_by_id(int $idGrupo): ?object
+    {
+        return DB::table('grupo_analisis')->where('id', $idGrupo)->first();
+    }
+
+    /**
+     * Obtener un análisis mineral por ID
+     */
+    public static function get_analisis_by_id(int $idAnalisis): ?object
+    {
+        return DB::table('analisis_mineral')->where('id', $idAnalisis)->first();
+    }
+
+    /**
+     * Obtener una muestra externa por ID
+     */
+    public static function get_muestra_externa_by_id(int $idMuestra): ?object
+    {
+        return DB::table('muestra_externa')->where('id', $idMuestra)->first();
+    }
+
+    /**
      * Agregar un análisis a un grupo
      */
     public static function agregar_analisis_a_grupo(int $idGrupo, array $data, int $idEmpleado): int
     {
-        $idLaboratorio = isset($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null;
-        $asumidoPor = isset($data['asumido_por']) ? trim($data['asumido_por']) : 'Proveedor';
-        $numeroEnsayo = isset($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : 1;
-        $tipoOrigen = isset($data['tipo_origen']) ? trim($data['tipo_origen']) : 'Interno';
-        $documentos = isset($data['documentos']) ? (is_array($data['documentos']) ? $data['documentos'] : []) : [];
-        $sinLote = isset($data['sin_lote']) ? (bool) $data['sin_lote'] : false;
-        $idMuestra = isset($data['id_muestra_externa']) ? (int) $data['id_muestra_externa'] : null;
+        $idLaboratorio = ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null;
+        $asumidoPor = ! empty($data['asumido_por']) ? trim((string) $data['asumido_por']) : 'Proveedor';
+
+        $maxEnsayo = (int) (DB::table('analisis_mineral')
+            ->where('id_grupo_analisis', $idGrupo)
+            ->max('numero_ensayo') ?? 0);
+
+        $numeroEnsayo = ! empty($data['numero_ensayo']) && (int) $data['numero_ensayo'] > 0
+            ? (int) $data['numero_ensayo']
+            : ($maxEnsayo + 1);
+
+        $tipoOrigen = ! empty($data['tipo_origen']) ? trim((string) $data['tipo_origen']) : 'Interno';
+        $documentos = isset($data['documentos']) && is_array($data['documentos']) ? $data['documentos'] : [];
+        $sinLote = ! empty($data['sin_lote']);
+        $idMuestra = ! empty($data['id_muestra_externa']) ? (int) $data['id_muestra_externa'] : null;
 
         $analisisPrevio = DB::table('analisis_mineral')
             ->where('id_grupo_analisis', $idGrupo)
@@ -548,6 +594,7 @@ class CierreLeyesData
                     am.id_muestra_externa,
                     am.id_laboratorio,
                     lab.nombre AS laboratorio_nombre,
+                    lab.ruc AS laboratorio_ruc,
                     am.asumido_por,
                     am.numero_ensayo,
                     am.documentos,
@@ -560,9 +607,11 @@ class CierreLeyesData
                     am.tipo_origen,
                     am.sin_lote,
                     am.log_cambios,
-                    am.created_at
+                    am.created_at,
+                    CONCAT(emp_am.nombre, " ", emp_am.apellido) AS empleado_registro_nombre
                 FROM analisis_mineral am
                 LEFT JOIN laboratorio lab ON am.id_laboratorio = lab.id
+                LEFT JOIN empleado emp_am ON am.id_empleado_registro = emp_am.id
                 WHERE am.id_muestra_externa = :id_muestra
                   AND (am.id_grupo_analisis IS NULL OR am.id_grupo_analisis = 0)
                 ORDER BY am.numero_ensayo ASC, am.id ASC
@@ -583,12 +632,90 @@ class CierreLeyesData
                 $a->sin_lote = (bool) $a->sin_lote;
                 $a->documentos = isset($a->documentos) ? (is_array($a->documentos) ? $a->documentos : (json_decode($a->documentos, true) ?? [])) : [];
                 $a->log_cambios = isset($a->log_cambios) ? (is_array($a->log_cambios) ? $a->log_cambios : (json_decode($a->log_cambios, true) ?? [])) : [];
+                $a->muestra_correlativo = $m->correlativo;
+                $a->muestra_codigo_cliente = $m->codigo_cliente;
+                $a->muestra_proveedor_nombre = $m->proveedor_nombre;
+                $a->muestra_fecha_hora_ingreso = $m->fecha_hora_ingreso;
             }
 
             $m->analisis = $analisis;
         }
 
         return $muestras;
+    }
+
+    /**
+     * Crear un nuevo registro en muestra_externa
+     *
+     * @param  array{id_empleado_registro: int, id_proveedor_minero?: int|null, codigo_cliente?: string|null, fecha_hora_ingreso?: mixed}  $data
+     */
+    public static function crear_muestra_externa(array $data): int
+    {
+        $correlativoData = CorrelativoHelper::generar(
+            tabla: 'muestra_externa',
+            prefijo: 'RC',
+            filtros: [],
+            longitudCeros: 3,
+            reseteo: Periodo::Ninguno,
+        );
+
+        return (int) DB::table('muestra_externa')->insertGetId([
+            'id_empleado_registro' => (int) $data['id_empleado_registro'],
+            'id_proveedor_minero' => ! empty($data['id_proveedor_minero']) ? (int) $data['id_proveedor_minero'] : null,
+            'codigo_cliente' => ! empty($data['codigo_cliente']) ? trim((string) $data['codigo_cliente']) : null,
+            'correlativo' => $correlativoData['correlativo'],
+            'numero_correlativo' => $correlativoData['numero_correlativo'],
+            'fecha_hora_ingreso' => ! empty($data['fecha_hora_ingreso']) ? $data['fecha_hora_ingreso'] : now(),
+            'created_at' => now(),
+        ]);
+    }
+
+    /**
+     * Agregar un análisis mineral directamente a una muestra externa (sin lote)
+     */
+    public static function agregar_analisis_a_muestra_externa(int $idMuestraExterna, array $data, int $idEmpleado): int
+    {
+        $maxEnsayo = (int) (DB::table('analisis_mineral')
+            ->where('id_muestra_externa', $idMuestraExterna)
+            ->max('numero_ensayo') ?? 0);
+
+        $numeroEnsayo = ! empty($data['numero_ensayo']) && (int) $data['numero_ensayo'] > 0
+            ? (int) $data['numero_ensayo']
+            : ($maxEnsayo + 1);
+
+        $tipoOrigen = ! empty($data['tipo_origen']) ? trim((string) $data['tipo_origen']) : 'Externo';
+        $documentos = isset($data['documentos']) && is_array($data['documentos']) ? $data['documentos'] : [];
+
+        $analisisPrevio = DB::table('analisis_mineral')
+            ->where('id_muestra_externa', $idMuestraExterna)
+            ->where(function ($q) {
+                $q->where('ley_humedad', '>', 0)
+                    ->orWhere('ley_recuperacion', '>', 0);
+            })
+            ->first();
+
+        $humedadActual = $analisisPrevio ? (float) $analisisPrevio->ley_humedad : 0.000;
+        $recuperacionActual = $analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000;
+
+        return (int) DB::table('analisis_mineral')->insertGetId([
+            'id_grupo_analisis' => null,
+            'id_muestra_externa' => $idMuestraExterna,
+            'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
+            'asumido_por' => ! empty($data['asumido_por']) ? trim((string) $data['asumido_por']) : 'Proveedor',
+            'numero_ensayo' => $numeroEnsayo,
+            'tipo_origen' => $tipoOrigen,
+            'sin_lote' => 1,
+            'documentos' => json_encode($documentos),
+            'ley_oro' => 0.000,
+            'ley_plata' => 0.000,
+            'ley_humedad' => $humedadActual,
+            'ley_recuperacion' => $recuperacionActual,
+            'ley_oro_confirmada' => 0,
+            'ley_plata_confirmada' => 0,
+            'id_empleado_registro' => $idEmpleado,
+            'log_cambios' => json_encode([]),
+            'created_at' => now(),
+        ]);
     }
 
     /**
@@ -756,7 +883,9 @@ class CierreLeyesData
         return DB::select('
             SELECT
                 me.id AS id_muestra_externa,
+                me.correlativo,
                 COALESCE(me.codigo_cliente, me.correlativo) AS codigo_cliente,
+                me.fecha_hora_ingreso,
                 p.razon_social AS proveedor_nombre,
                 GROUP_CONCAT(DISTINCT COALESCE(lab.nombre, "Sin Laboratorio") ORDER BY lab.nombre SEPARATOR ", ") AS laboratorio_nombre,
                 COUNT(am.id) AS total_ensayos,
@@ -768,7 +897,7 @@ class CierreLeyesData
             WHERE am.id_grupo_analisis = :id_grupo
               AND am.id_muestra_externa IS NOT NULL
               AND am.id_muestra_externa > 0
-            GROUP BY me.id, me.codigo_cliente, me.correlativo, p.razon_social
+            GROUP BY me.id, me.codigo_cliente, me.correlativo, me.fecha_hora_ingreso, p.razon_social
             ORDER BY me.id ASC
         ', ['id_grupo' => $idGrupo]);
     }

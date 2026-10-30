@@ -45,16 +45,18 @@ class CierreLeyesService
     }
 
     /**
-     * Crear un grupo de análisis para un lote
+     * Crear un grupo de análisis para un lote (con 0..N análisis iniciales)
+     *
+     * @param  array<int, array<string, mixed>>  $analisisItems
      */
-    public static function crear_grupo(array $data, int $idEmpleado, array $archivos = []): array
+    public static function crear_grupo(array $data, int $idEmpleado, array $analisisItems = []): array
     {
         if (empty($data['id_lote_mineral']) && empty($data['id_muestra_externa'])) {
             return ApiResponse::error('Debe especificar un lote o una muestra externa.');
         }
 
         $idLote = ! empty($data['id_lote_mineral']) ? (int) $data['id_lote_mineral'] : null;
-        $nombre = ! empty($data['nombre']) ? trim($data['nombre']) : 'Grupo 1';
+        $nombre = ! empty($data['nombre']) ? trim((string) $data['nombre']) : 'Grupo 1';
 
         DB::beginTransaction();
         try {
@@ -65,18 +67,21 @@ class CierreLeyesService
                 'nombre' => $nombre,
             ]);
 
-            // Si se indicaron datos de análisis (laboratorio, ensayo, etc.), creamos el análisis inicial
-            if (! empty($data['id_laboratorio']) || ! empty($data['asumido_por']) || ! empty($data['numero_ensayo'])) {
+            foreach ($analisisItems as $item) {
                 $docs = [];
-                if (! empty($archivos)) {
-                    $docs = ArchivoHelper::guardarArchivos('cierre_leyes', $archivos);
+                if (! empty($item['archivos']) && is_array($item['archivos'])) {
+                    /** @var UploadedFile[] $archivosValidos */
+                    $archivosValidos = array_values(array_filter($item['archivos'], fn ($f) => $f instanceof UploadedFile));
+                    if (count($archivosValidos) > 0) {
+                        $docs = ArchivoHelper::guardarArchivos('cierre_leyes', $archivosValidos);
+                    }
                 }
 
                 CierreLeyesData::agregar_analisis_a_grupo($idGrupo, [
-                    'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
-                    'asumido_por' => ! empty($data['asumido_por']) ? trim($data['asumido_por']) : 'Proveedor',
-                    'numero_ensayo' => ! empty($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : 1,
-                    'tipo_origen' => ! empty($data['tipo_origen']) ? trim($data['tipo_origen']) : 'Interno',
+                    'id_laboratorio' => ! empty($item['id_laboratorio']) ? (int) $item['id_laboratorio'] : null,
+                    'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
+                    'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
+                    'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : 'Interno',
                     'documentos' => $docs,
                     'sin_lote' => empty($idLote),
                 ], $idEmpleado);
@@ -93,34 +98,55 @@ class CierreLeyesService
     }
 
     /**
-     * Agregar un análisis a un grupo existente
+     * Agregar uno o múltiples análisis a un grupo existente
+     *
+     * @param  array<int, array<string, mixed>>  $analisisItems
      */
-    public static function agregar_analisis_a_grupo(int $idGrupo, array $data, int $idEmpleado, array $archivos = []): array
+    public static function agregar_analisis_a_grupo(int $idGrupo, array $analisisItems, int $idEmpleado): array
     {
-        $grupo = DB::table('grupo_analisis')->where('id', $idGrupo)->first();
-        if ($grupo && ($grupo->tiene_propuesta_oro || $grupo->tiene_propuesta_plata)) {
+        $grupo = CierreLeyesData::get_grupo_by_id($idGrupo);
+        if (! $grupo) {
+            return ApiResponse::error('Grupo de análisis no encontrado.');
+        }
+
+        if ($grupo->tiene_propuesta_oro || $grupo->tiene_propuesta_plata) {
             return ApiResponse::error('No se puede agregar análisis a un grupo que ya se encuentra en una propuesta de valorización.');
+        }
+
+        if (empty($analisisItems)) {
+            return ApiResponse::error('Debe indicar al menos un análisis para registrar.');
         }
 
         DB::beginTransaction();
         try {
-            $docs = [];
-            if (! empty($archivos)) {
-                $docs = ArchivoHelper::guardarArchivos('cierre_leyes', $archivos);
-            }
+            $ids = [];
+            foreach ($analisisItems as $item) {
+                $docs = [];
+                if (! empty($item['archivos']) && is_array($item['archivos'])) {
+                    /** @var UploadedFile[] $archivosValidos */
+                    $archivosValidos = array_values(array_filter($item['archivos'], fn ($f) => $f instanceof UploadedFile));
+                    if (count($archivosValidos) > 0) {
+                        $docs = ArchivoHelper::guardarArchivos('cierre_leyes', $archivosValidos);
+                    }
+                }
 
-            $idAnalisis = CierreLeyesData::agregar_analisis_a_grupo($idGrupo, [
-                'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
-                'asumido_por' => ! empty($data['asumido_por']) ? trim($data['asumido_por']) : 'Proveedor',
-                'numero_ensayo' => ! empty($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : 1,
-                'tipo_origen' => ! empty($data['tipo_origen']) ? trim($data['tipo_origen']) : 'Interno',
-                'documentos' => $docs,
-                'sin_lote' => ! empty($data['sin_lote']),
-            ], $idEmpleado);
+                $ids[] = CierreLeyesData::agregar_analisis_a_grupo($idGrupo, [
+                    'id_laboratorio' => ! empty($item['id_laboratorio']) ? (int) $item['id_laboratorio'] : null,
+                    'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
+                    'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
+                    'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : 'Interno',
+                    'documentos' => $docs,
+                    'sin_lote' => ! empty($item['sin_lote']),
+                ], $idEmpleado);
+            }
 
             DB::commit();
 
-            return ApiResponse::success(['id' => $idAnalisis], 'Análisis agregado correctamente al grupo');
+            $msg = count($ids) === 1
+                ? 'Análisis agregado correctamente al grupo'
+                : count($ids).' análisis agregados correctamente al grupo';
+
+            return ApiResponse::success(['id' => $ids[0] ?? 0, 'ids' => $ids], $msg);
         } catch (\Exception $e) {
             DB::rollBack();
 
@@ -134,9 +160,9 @@ class CierreLeyesService
     public static function guardar_valores_analisis(int $idAnalisis, array $valores, int $idEmpleado, ?string $motivo = null): array
     {
         try {
-            $analisis = DB::table('analisis_mineral')->where('id', $idAnalisis)->first();
+            $analisis = CierreLeyesData::get_analisis_by_id($idAnalisis);
             if ($analisis && $analisis->id_grupo_analisis) {
-                $grupo = DB::table('grupo_analisis')->where('id', $analisis->id_grupo_analisis)->first();
+                $grupo = CierreLeyesData::get_grupo_by_id((int) $analisis->id_grupo_analisis);
                 if ($grupo) {
                     if ($grupo->tiene_propuesta_oro && (isset($valores['ley_oro']) || isset($valores['ley_oro_confirmada']))) {
                         return ApiResponse::error('No se puede modificar las leyes de oro porque el grupo se encuentra en una propuesta de valorización.');
@@ -170,7 +196,7 @@ class CierreLeyesService
     public static function guardar_leyes_cierre_grupo(int $idGrupo, array $leyes, int $idEmpleado, ?string $motivo = null): array
     {
         try {
-            $grupo = DB::table('grupo_analisis')->where('id', $idGrupo)->first();
+            $grupo = CierreLeyesData::get_grupo_by_id($idGrupo);
             if ($grupo) {
                 if ($grupo->tiene_propuesta_oro && isset($leyes['ley_oro_cierre'])) {
                     return ApiResponse::error('No se puede modificar la ley de cierre de oro porque el grupo se encuentra en una propuesta de valorización.');
@@ -226,9 +252,9 @@ class CierreLeyesService
     public static function eliminar_analisis(int $idAnalisis): array
     {
         try {
-            $analisis = DB::table('analisis_mineral')->where('id', $idAnalisis)->first();
+            $analisis = CierreLeyesData::get_analisis_by_id($idAnalisis);
             if ($analisis && $analisis->id_grupo_analisis) {
-                $grupo = DB::table('grupo_analisis')->where('id', $analisis->id_grupo_analisis)->first();
+                $grupo = CierreLeyesData::get_grupo_by_id((int) $analisis->id_grupo_analisis);
                 if ($grupo && ($grupo->tiene_propuesta_oro || $grupo->tiene_propuesta_plata)) {
                     return ApiResponse::error('No se puede eliminar un ensayo de un grupo que se encuentra en una propuesta de valorización.');
                 }
@@ -273,9 +299,11 @@ class CierreLeyesService
     }
 
     /**
-     * Iniciar muestra externa
+     * Iniciar muestra externa (con 0..N análisis iniciales)
+     *
+     * @param  array<int, array<string, mixed>>  $analisisItems
      */
-    public static function iniciar_muestra_externa(int $idEmpleado, array $data): array
+    public static function iniciar_muestra_externa(int $idEmpleado, array $data, array $analisisItems = []): array
     {
         DB::beginTransaction();
         try {
@@ -286,51 +314,30 @@ class CierreLeyesService
             $idProveedor = ! empty($data['id_proveedor']) ? (int) $data['id_proveedor'] : null;
             $fecha = ! empty($data['fecha']) ? $data['fecha'] : now();
 
-            $sigNumero = (int) (DB::table('muestra_externa')->max('numero_correlativo') ?? 0) + 1;
-            $correlativo = 'ME-' . str_pad((string) $sigNumero, 4, '0', STR_PAD_LEFT);
-
-            // Guardar en tabla muestra_externa (NO en grupo_analisis)
-            $idMuestra = DB::table('muestra_externa')->insertGetId([
+            $idMuestra = CierreLeyesData::crear_muestra_externa([
                 'id_empleado_registro' => $idEmpleado,
                 'id_proveedor_minero' => $idProveedor,
                 'codigo_cliente' => $codigoCliente,
-                'correlativo' => $correlativo,
-                'numero_correlativo' => $sigNumero,
                 'fecha_hora_ingreso' => $fecha,
-                'created_at' => now(),
             ]);
 
-            // Guardar documentos si fueron subidos
-            $docsJson = [];
-            if (! empty($data['documentos']) && is_array($data['documentos'])) {
-                /** @var UploadedFile[] $archivosSubidos */
-                $archivosSubidos = array_filter($data['documentos'], fn ($f) => $f instanceof UploadedFile);
-                if (count($archivosSubidos) > 0) {
-                    $docsJson = ArchivoHelper::guardarArchivos('analisis_mineral', $archivosSubidos);
+            foreach ($analisisItems as $item) {
+                $docsJson = [];
+                if (! empty($item['archivos']) && is_array($item['archivos'])) {
+                    /** @var UploadedFile[] $archivosSubidos */
+                    $archivosSubidos = array_values(array_filter($item['archivos'], fn ($f) => $f instanceof UploadedFile));
+                    if (count($archivosSubidos) > 0) {
+                        $docsJson = ArchivoHelper::guardarArchivos('analisis_mineral', $archivosSubidos);
+                    }
                 }
-            }
 
-            // Si se especificó laboratorio o número de ensayo o documentos, crear primer análisis asociado a la muestra externa (sin grupo)
-            if (! empty($data['id_laboratorio']) || ! empty($data['asumido_por']) || ! empty($docsJson)) {
-                DB::table('analisis_mineral')->insert([
-                    'id_grupo_analisis' => null,
-                    'id_muestra_externa' => $idMuestra,
-                    'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
-                    'asumido_por' => ! empty($data['asumido_por']) ? trim((string) $data['asumido_por']) : 'Proveedor',
-                    'numero_ensayo' => ! empty($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : 1,
-                    'tipo_origen' => 'Externo',
-                    'sin_lote' => 1,
-                    'documentos' => json_encode($docsJson),
-                    'ley_oro' => 0.000,
-                    'ley_plata' => 0.000,
-                    'ley_humedad' => 0.000,
-                    'ley_recuperacion' => 0.000,
-                    'ley_oro_confirmada' => 0,
-                    'ley_plata_confirmada' => 0,
-                    'id_empleado_registro' => $idEmpleado,
-                    'log_cambios' => json_encode([]),
-                    'created_at' => now(),
-                ]);
+                CierreLeyesData::agregar_analisis_a_muestra_externa($idMuestra, [
+                    'id_laboratorio' => ! empty($item['id_laboratorio']) ? (int) $item['id_laboratorio'] : null,
+                    'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
+                    'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
+                    'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : 'Externo',
+                    'documentos' => $docsJson,
+                ], $idEmpleado);
             }
 
             DB::commit();
@@ -347,62 +354,53 @@ class CierreLeyesService
     }
 
     /**
-     * Agregar análisis directamente a una muestra externa
+     * Agregar uno o múltiples análisis directamente a una muestra externa
+     *
+     * @param  array<int, array<string, mixed>>  $analisisItems
      */
-    public static function agregar_analisis_a_muestra_externa(int $idMuestraExterna, array $data, int $idEmpleado, array $archivos = []): array
+    public static function agregar_analisis_a_muestra_externa(int $idMuestraExterna, array $analisisItems, int $idEmpleado): array
     {
+        $muestra = CierreLeyesData::get_muestra_externa_by_id($idMuestraExterna);
+        if (! $muestra) {
+            return ApiResponse::error('Muestra externa no encontrada');
+        }
+
+        if (empty($analisisItems)) {
+            return ApiResponse::error('Debe indicar al menos un análisis para registrar.');
+        }
+
+        DB::beginTransaction();
         try {
-            $muestra = DB::table('muestra_externa')->where('id', $idMuestraExterna)->first();
-            if (! $muestra) {
-                return ApiResponse::error('Muestra externa no encontrada');
+            $ids = [];
+            foreach ($analisisItems as $item) {
+                $docs = [];
+                if (! empty($item['archivos']) && is_array($item['archivos'])) {
+                    /** @var UploadedFile[] $archivosValidos */
+                    $archivosValidos = array_values(array_filter($item['archivos'], fn ($f) => $f instanceof UploadedFile));
+                    if (count($archivosValidos) > 0) {
+                        $docs = ArchivoHelper::guardarArchivos('analisis_mineral', $archivosValidos);
+                    }
+                }
+
+                $ids[] = CierreLeyesData::agregar_analisis_a_muestra_externa($idMuestraExterna, [
+                    'id_laboratorio' => ! empty($item['id_laboratorio']) ? (int) $item['id_laboratorio'] : null,
+                    'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
+                    'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
+                    'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : 'Externo',
+                    'documentos' => $docs,
+                ], $idEmpleado);
             }
 
-            $docs = [];
-            if (! empty($archivos)) {
-                $docs = ArchivoHelper::guardarArchivos('analisis_mineral', $archivos);
-            }
+            DB::commit();
 
-            $maxEnsayo = (int) (DB::table('analisis_mineral')
-                ->where('id_muestra_externa', $idMuestraExterna)
-                ->max('numero_ensayo') ?? 0);
+            $msg = count($ids) === 1
+                ? 'Análisis agregado a la muestra externa correctamente'
+                : count($ids).' análisis agregados a la muestra externa correctamente';
 
-            $numeroEnsayo = ! empty($data['numero_ensayo']) ? (int) $data['numero_ensayo'] : ($maxEnsayo + 1);
-            $tipoOrigen = ! empty($data['tipo_origen']) ? trim((string) $data['tipo_origen']) : 'Externo';
-
-            // Obtener humedad y recuperación existentes de la muestra para mantenerlas idénticas
-            $analisisPrevio = DB::table('analisis_mineral')
-                ->where('id_muestra_externa', $idMuestraExterna)
-                ->where(function ($q) {
-                    $q->where('ley_humedad', '>', 0)
-                      ->orWhere('ley_recuperacion', '>', 0);
-                })
-                ->first();
-
-            $humedadActual = $analisisPrevio ? (float) $analisisPrevio->ley_humedad : 0.000;
-            $recuperacionActual = $analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000;
-
-            $idAnalisis = DB::table('analisis_mineral')->insertGetId([
-                'id_grupo_analisis' => null,
-                'id_muestra_externa' => $idMuestraExterna,
-                'id_laboratorio' => ! empty($data['id_laboratorio']) ? (int) $data['id_laboratorio'] : null,
-                'asumido_por' => ! empty($data['asumido_por']) ? trim((string) $data['asumido_por']) : 'Proveedor',
-                'numero_ensayo' => $numeroEnsayo,
-                'tipo_origen' => $tipoOrigen,
-                'sin_lote' => 1,
-                'documentos' => json_encode($docs),
-                'ley_oro' => 0.000,
-                'ley_plata' => 0.000,
-                'ley_humedad' => $humedadActual,
-                'ley_recuperacion' => $recuperacionActual,
-                'ley_oro_confirmada' => 0,
-                'ley_plata_confirmada' => 0,
-                'id_empleado_registro' => $idEmpleado,
-                'log_cambios' => json_encode([]),
-                'created_at' => now(),
-            ]);
-
-            return ApiResponse::success(['id' => $idAnalisis], 'Análisis agregado a la muestra externa correctamente');
+            return ApiResponse::success(['id' => $ids[0] ?? 0, 'ids' => $ids], $msg);
         } catch (\Exception $e) {
+            DB::rollBack();
+
             return ApiResponse::error('Error al agregar análisis a la muestra: '.$e->getMessage());
         }
     }

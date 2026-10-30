@@ -3,12 +3,104 @@
 namespace App\Modules\CierreLeyes\Controllers;
 
 use App\Modules\CierreLeyes\Services\CierreLeyesService;
-use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 
 class CierreLeyesController
 {
+    private function resolveIdEmpleado(Request $request): int
+    {
+        $authUser = $request->attributes->get('auth_user');
+        if ($authUser && ! empty($authUser->id_empleado)) {
+            return (int) $authUser->id_empleado;
+        }
+
+        $user = auth()->user();
+        if ($user && ! empty($user->id_empleado)) {
+            return (int) $user->id_empleado;
+        }
+
+        return (int) (auth()->id() ?? 1);
+    }
+
+    /**
+     * Normaliza la entrada de análisis en lote (`analisis[*]`) o individual plana.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function extractAnalisisItems(Request $request, string $defaultOrigen): array
+    {
+        $itemsInput = $request->input('analisis');
+        if (is_array($itemsInput) && count($itemsInput) > 0) {
+            $result = [];
+            foreach ($itemsInput as $idx => $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+
+                $files = $request->file("analisis.{$idx}.documentos") ?? [];
+                if (! is_array($files)) {
+                    $files = [$files];
+                }
+                $files = array_values(array_filter($files, fn ($f) => $f instanceof UploadedFile));
+
+                $result[] = [
+                    'id_laboratorio' => ! empty($item['id_laboratorio']) ? (int) $item['id_laboratorio'] : null,
+                    'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
+                    'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
+                    'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : $defaultOrigen,
+                    'archivos' => $files,
+                ];
+            }
+
+            return $result;
+        }
+
+        $flatFiles = $request->file('documentos') ?? [];
+        if (! is_array($flatFiles)) {
+            $flatFiles = [$flatFiles];
+        }
+        $flatFiles = array_values(array_filter($flatFiles, fn ($f) => $f instanceof UploadedFile));
+
+        if (
+            $request->filled('id_laboratorio') ||
+            $request->filled('asumido_por') ||
+            $request->filled('numero_ensayo') ||
+            count($flatFiles) > 0
+        ) {
+            return [[
+                'id_laboratorio' => $request->filled('id_laboratorio') ? (int) $request->input('id_laboratorio') : null,
+                'asumido_por' => $request->filled('asumido_por') ? trim((string) $request->input('asumido_por')) : 'Proveedor',
+                'numero_ensayo' => $request->filled('numero_ensayo') ? (int) $request->input('numero_ensayo') : null,
+                'tipo_origen' => $request->filled('tipo_origen') ? trim((string) $request->input('tipo_origen')) : $defaultOrigen,
+                'archivos' => $flatFiles,
+            ]];
+        }
+
+        return [];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function analisisValidationRules(): array
+    {
+        return [
+            'id_laboratorio' => 'nullable|integer',
+            'asumido_por' => 'nullable|string|max:20',
+            'numero_ensayo' => 'nullable|integer|min:1',
+            'tipo_origen' => 'nullable|string|in:Interno,Externo',
+            'documentos.*' => 'nullable|file|max:20480',
+            'analisis' => 'nullable|array',
+            'analisis.*.id_laboratorio' => 'nullable|integer',
+            'analisis.*.asumido_por' => 'nullable|string|max:20',
+            'analisis.*.numero_ensayo' => 'nullable|integer|min:1',
+            'analisis.*.tipo_origen' => 'nullable|string|in:Interno,Externo',
+            'analisis.*.documentos.*' => 'nullable|file|max:20480',
+        ];
+    }
+
     public function get_lotes_sugeridos(): JsonResponse
     {
         return response()->json(CierreLeyesService::get_lotes_sugeridos());
@@ -31,51 +123,33 @@ class CierreLeyesController
 
     public function crear_grupo(Request $request): JsonResponse
     {
-        $request->validate([
+        $request->validate(array_merge([
             'id_lote_mineral' => 'nullable|integer',
             'id_muestra_externa' => 'nullable|integer',
-            'nombre' => 'nullable|string|max:50',
-            'id_laboratorio' => 'nullable|integer',
-            'asumido_por' => 'nullable|string|max:20',
-            'numero_ensayo' => 'nullable|integer',
-            'tipo_origen' => 'nullable|string|in:Interno,Externo',
-            'documentos.*' => 'nullable|file',
-        ]);
+            'nombre' => 'nullable|string|max:20',
+        ], $this->analisisValidationRules()));
 
-        $idEmpleado = (int) auth()->id();
-        $archivos = $request->file('documentos') ?? [];
-        if (! is_array($archivos)) {
-            $archivos = [$archivos];
-        }
+        $idEmpleado = $this->resolveIdEmpleado($request);
+        $analisisItems = $this->extractAnalisisItems($request, 'Interno');
 
         return response()->json(CierreLeyesService::crear_grupo(
             $request->all(),
             $idEmpleado,
-            $archivos
+            $analisisItems
         ));
     }
 
     public function agregar_analisis_grupo(Request $request, int $idGrupo): JsonResponse
     {
-        $request->validate([
-            'id_laboratorio' => 'nullable|integer',
-            'asumido_por' => 'nullable|string|max:20',
-            'numero_ensayo' => 'nullable|integer',
-            'tipo_origen' => 'nullable|string|in:Interno,Externo',
-            'documentos.*' => 'nullable|file',
-        ]);
+        $request->validate($this->analisisValidationRules());
 
-        $idEmpleado = (int) auth()->id();
-        $archivos = $request->file('documentos') ?? [];
-        if (! is_array($archivos)) {
-            $archivos = [$archivos];
-        }
+        $idEmpleado = $this->resolveIdEmpleado($request);
+        $analisisItems = $this->extractAnalisisItems($request, 'Interno');
 
         return response()->json(CierreLeyesService::agregar_analisis_a_grupo(
             $idGrupo,
-            $request->all(),
-            $idEmpleado,
-            $archivos
+            $analisisItems,
+            $idEmpleado
         ));
     }
 
@@ -95,7 +169,7 @@ class CierreLeyesController
             'motivo' => 'nullable|string',
         ]);
 
-        $idEmpleado = (int) auth()->id();
+        $idEmpleado = $this->resolveIdEmpleado($request);
 
         return response()->json(CierreLeyesService::guardar_valores_analisis(
             $idAnalisis,
@@ -115,7 +189,7 @@ class CierreLeyesController
             'motivo' => 'nullable|string',
         ]);
 
-        $idEmpleado = (int) auth()->id();
+        $idEmpleado = $this->resolveIdEmpleado($request);
 
         return response()->json(CierreLeyesService::guardar_leyes_cierre_grupo(
             $idGrupo,
@@ -151,7 +225,7 @@ class CierreLeyesController
             'con_valor_comercial' => 'required|boolean',
         ]);
 
-        $idEmpleado = (int) auth()->id();
+        $idEmpleado = $this->resolveIdEmpleado($request);
 
         return response()->json(CierreLeyesService::confirmar_lote(
             $idLote,
@@ -167,44 +241,35 @@ class CierreLeyesController
 
     public function iniciar_muestra_externa(Request $request): JsonResponse
     {
-        $idEmpleado = (int) auth()->id();
-        $data = $request->validate([
-            'nombre' => 'nullable|string|max:100',
-            'codigo_cliente' => 'nullable|string|max:100',
+        $data = $request->validate(array_merge([
+            'nombre' => 'nullable|string|max:20',
+            'codigo_cliente' => 'nullable|string|max:20',
             'id_proveedor' => 'nullable|integer',
             'proveedor_nombre' => 'nullable|string|max:150',
             'fecha' => 'nullable|string',
-            'id_laboratorio' => 'nullable|integer',
-            'asumido_por' => 'nullable|string|max:50',
-            'numero_ensayo' => 'nullable|integer',
-            'documentos' => 'nullable|array',
-            'documentos.*' => 'file|max:20480',
-        ]);
+        ], $this->analisisValidationRules()));
 
-        return response()->json(CierreLeyesService::iniciar_muestra_externa($idEmpleado, $data));
+        $idEmpleado = $this->resolveIdEmpleado($request);
+        $analisisItems = $this->extractAnalisisItems($request, 'Externo');
+
+        return response()->json(CierreLeyesService::iniciar_muestra_externa(
+            $idEmpleado,
+            $data,
+            $analisisItems
+        ));
     }
 
     public function agregar_analisis_muestra_externa(Request $request, int $idMuestraExterna): JsonResponse
     {
-        $request->validate([
-            'id_laboratorio' => 'nullable|integer',
-            'asumido_por' => 'nullable|string|max:50',
-            'numero_ensayo' => 'nullable|integer',
-            'tipo_origen' => 'nullable|string|in:Interno,Externo',
-            'documentos.*' => 'nullable|file',
-        ]);
+        $request->validate($this->analisisValidationRules());
 
-        $idEmpleado = (int) auth()->id();
-        $archivos = $request->file('documentos') ?? [];
-        if (! is_array($archivos)) {
-            $archivos = [$archivos];
-        }
+        $idEmpleado = $this->resolveIdEmpleado($request);
+        $analisisItems = $this->extractAnalisisItems($request, 'Externo');
 
         return response()->json(CierreLeyesService::agregar_analisis_a_muestra_externa(
             $idMuestraExterna,
-            $request->all(),
-            $idEmpleado,
-            $archivos
+            $analisisItems,
+            $idEmpleado
         ));
     }
 

@@ -103,7 +103,7 @@ class CorrelativoHelper
         };
 
         $correlativo = match (true) {
-            $segmentoFecha === null && $incluirPrefijo => "{$numeroFormateado}-{$prefijo}",
+            $segmentoFecha === null && $incluirPrefijo => "{$prefijo}-{$numeroFormateado}",
             $segmentoFecha === null                    => $numeroFormateado,
             $incluirPrefijo                            => "{$segmentoFecha}-{$prefijo}-{$numeroFormateado}",
             default                                    => "{$segmentoFecha}-{$numeroFormateado}",
