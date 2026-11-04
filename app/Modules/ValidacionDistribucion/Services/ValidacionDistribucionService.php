@@ -129,6 +129,13 @@ class ValidacionDistribucionService
                     $copia = $parentRecepcion;
                     unset($copia->id);
                     $copia->es_recepcion_ficticia = 1;
+                    // La copia es la unidad técnica que hospeda la partición A
+                    // (el mismo viaje), NO una programación. Si hereda
+                    // es_programacion = 1 aparece duplicada en la lista de
+                    // Programar Recepción (mismo vehículo, guías y fecha
+                    // estimada), porque esa lista filtra por es_programacion.
+                    $copia->es_programacion = 0;
+                    $copia->created_at = now();
                     $copia->estado = 'Fuera de Planta';
                     $copia->estado_salida = 'Vacío';
                     $copia->estado_pesaje = 'Pesado';

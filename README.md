@@ -99,6 +99,19 @@ Aplican a **toda tabla nueva o modificada**. Si el código existente las viola, 
 7. **Contabilidad**: `ContabilidadCompra` registra `ComprobanteCompra` y los `PagoComprobanteCompra` (puede ser total o parcial, multi-moneda, multi-cuenta).
 8. **Despacho**: a `PlantasDestino` (plantas receptoras del mineral procesado). Modelos: `PlantaDestino`, `CuentasBancariasPlantaDestino`.
 
+## Guías y Ticket de Balanza
+
+Las guías viven en dos tramos y se registran en dos sitios distintos:
+
+| Tramo | Tabla | Se registra en | Enlace |
+|---|---|---|---|
+| 1er tramo (ingreso) | `guia_primer_tramo` | Al registrar la unidad de recepción **o** en el módulo de Guías de Primer Tramo | `guia_primer_tramo.id_recepcion_unidad` **o** `lote_guia` (`id_lote_mineral` / `id_particion_lote_mineral`) |
+| 2º tramo (embarque) | `guia_segundo_tramo` | Programación de Despachos | `guia_segundo_tramo.id_ditribucion` |
+
+Ojo: un `lote_guia` enlazado a una **partición** tiene `id_lote_mineral` NULL (el lote está en `id_particion_lote_mineral`). Cualquier resolución por `lote_guia` debe cubrir ambos casos.
+
+**Resolución en el ticket** (`App\Data\GuiasData::resolver_guia_ticket`): manda la guía del **2º tramo** (la que acompaña al embarque a la planta destino) si el lote tiene despacho con guía registrada; si no, la del **1er tramo**. Se aplica a los 5 endpoints de ticket (`recepcion-mineral/lotes/{id}/ticket-balanza`, `.../particiones/{id}/ticket-balanza`, `.../distribuciones-detalles/{id}/ticket-balanza`, `validacion-distribucion/lotes/{id}/ticket-balanza` y `.../particiones/{id}/ticket-balanza`).
+
 ## Edición de lotes y particiones (reglas de integridad)
 
 Aplican al módulo `RecepcionMineral` (edición desde el Resumen de Balanza) y a cualquier otra ruta que escriba sobre `lote_mineral` o `particion_lote_mineral`.

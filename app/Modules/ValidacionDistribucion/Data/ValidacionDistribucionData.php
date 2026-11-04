@@ -3,6 +3,7 @@
 namespace App\Modules\ValidacionDistribucion\Data;
 
 use App\Shared\Enums\_Generic\EstadoBase;
+use App\Data\GuiasData;
 use Illuminate\Support\Facades\DB;
 
 class ValidacionDistribucionData
@@ -427,9 +428,11 @@ class ValidacionDistribucionData
             NULL AS observacion_peso_inicial,
             NULL AS observacion_peso_final,
 
-            plm.fecha_hora_peso_inicial,
+            -- Aliases canónicos que consume el PDF del ticket: en RECEPCIÓN el
+            -- BRUTO es la 1ra pesada y la TARA la 2da.
+            plm.fecha_hora_peso_inicial                AS fecha_hora_peso_bruto,
             plm.peso_inicial AS peso_bruto,
-            plm.fecha_hora_peso_final,
+            plm.fecha_hora_peso_final                  AS fecha_hora_peso_tara,
             plm.peso_final AS peso_tara,
             plm.peso_neto AS peso_neto,
 
@@ -467,6 +470,14 @@ class ValidacionDistribucionData
             $item->peso_bruto = $item->peso_bruto !== null ? (float) $item->peso_bruto : null;
             $item->peso_tara = $item->peso_tara !== null ? (float) $item->peso_tara : null;
             $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
+
+            // La partición se pesa en el ingreso: la guía es la del primer tramo
+            // (la del lote padre o la enlazada a esta partición).
+            GuiasData::aplicar_guia_ticket(
+                $item,
+                (int) $item->id_lote,
+                $idParticion
+            );
 
             return (array) $item;
         }
@@ -735,9 +746,11 @@ class ValidacionDistribucionData
             NULL AS observacion_peso_inicial,
             NULL AS observacion_peso_final,
 
-            lot.fecha_hora_peso_inicial,
+            -- Aliases canónicos que consume el PDF del ticket: en RECEPCIÓN el
+            -- BRUTO es la 1ra pesada y la TARA la 2da.
+            lot.fecha_hora_peso_inicial                AS fecha_hora_peso_bruto,
             lot.peso_inicial AS peso_bruto,
-            lot.fecha_hora_peso_final,
+            lot.fecha_hora_peso_final                  AS fecha_hora_peso_tara,
             lot.peso_final AS peso_tara,
             lot.peso_neto AS peso_neto,
 
@@ -780,7 +793,7 @@ class ValidacionDistribucionData
             INNER JOIN distribucion di ON di.id = ddt.id_distribucion
             INNER JOIN despacho d ON d.id = di.id_despacho
             LEFT JOIN planta_destino pd ON pd.id = d.id_planta_destino
-            WHERE dd.id_lote_mineral = :id_lote
+            WHERE dd.id_lote_mineral = :id_lote_desp
             ORDER BY di.created_at DESC, ddt.id DESC
             LIMIT 1
         ) desp_info ON desp_info.id_lote_mineral = lot.id
@@ -811,6 +824,7 @@ class ValidacionDistribucionData
 
         $item = DB::selectOne($sql, [
             'id_lote' => $idLote,
+            'id_lote_desp' => $idLote,
             'id_lote_unidad' => $idLote,
         ]);
         if ($item) {
@@ -819,6 +833,10 @@ class ValidacionDistribucionData
             $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
             $item->despacho_correlativo = $item->despacho_correlativo !== null ? (string) $item->despacho_correlativo : null;
             $item->planta_destino_nombre = $item->planta_destino_nombre !== null ? (string) $item->planta_destino_nombre : null;
+
+            // La guía se resuelve por etapa: segundo tramo si el lote tiene
+            // despacho con guía registrada; si no, primer tramo (ingreso).
+            GuiasData::aplicar_guia_ticket($item, $idLote);
 
             return (array) $item;
         }

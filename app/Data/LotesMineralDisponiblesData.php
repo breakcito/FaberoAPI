@@ -114,6 +114,9 @@ class LotesMineralDisponiblesData
             $row->peso_inicial = $row->peso_inicial !== null ? (float) $row->peso_inicial : null;
             $row->peso_final = $row->peso_final !== null ? (float) $row->peso_final : null;
             $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
+            $row->id_recepcion_unidad = $row->id_recepcion_unidad !== null
+                ? (int) $row->id_recepcion_unidad
+                : null;
             $row->id_recepcion_unidad_padre = $row->id_recepcion_unidad_padre !== null
                 ? (int) $row->id_recepcion_unidad_padre
                 : null;
@@ -135,8 +138,15 @@ class LotesMineralDisponiblesData
             "PARTICION" AS tipo_item,
             plm.id_lote_mineral,
             plm.id AS id_particion_lote_mineral,
-            lm.id_recepcion_unidad,
-            lm.id_recepcion_unidad AS id_recepcion_unidad_padre,
+            -- Unidad donde vive la partición (puede ser una "recepción ficticia"
+            -- creada al particionar, que no tiene guías).
+            plm.id_recepcion_unidad,
+            -- Unidad del LOTE PADRE: es donde se capturaron las guías del viaje
+            -- (guia_remitente, guia_transportista y documentos_programacion).
+            -- Un padre particionado desde balanza tiene id_recepcion_unidad NULL
+            -- (la unidad original quedó en su partición A), por eso se cae a la
+            -- de la partición.
+            COALESCE(lm.id_recepcion_unidad, plm.id_recepcion_unidad) AS id_recepcion_unidad_padre,
             lm.id_proveedor_minero,
             plm.correlativo,
             lm.numero_correlativo,
@@ -219,6 +229,9 @@ class LotesMineralDisponiblesData
             $row->peso_inicial = $row->peso_inicial !== null ? (float) $row->peso_inicial : null;
             $row->peso_final = $row->peso_final !== null ? (float) $row->peso_final : null;
             $row->peso_neto = $row->peso_neto !== null ? (float) $row->peso_neto : null;
+            $row->id_recepcion_unidad = $row->id_recepcion_unidad !== null
+                ? (int) $row->id_recepcion_unidad
+                : null;
             $row->id_recepcion_unidad_padre = $row->id_recepcion_unidad_padre !== null
                 ? (int) $row->id_recepcion_unidad_padre
                 : null;

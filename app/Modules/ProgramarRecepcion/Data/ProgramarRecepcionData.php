@@ -39,6 +39,7 @@ class ProgramarRecepcionData
             ru.fecha_estimada_llegada,
             ru.observacion,
             ru.es_programacion,
+            ru.es_recepcion_ficticia,
             ru.id_empleado_recepcion,
             ru.fecha_hora_ingreso,
             ru.estado,
@@ -52,6 +53,10 @@ class ProgramarRecepcionData
         LEFT JOIN conductor c ON c.id = ru.id_conductor
         LEFT JOIN proveedor pr ON pr.id = ru.id_proveedor_minero
         WHERE ru.es_programacion = 1
+        -- Las recepciones ficticias (copias técnicas que alojan particiones)
+        -- heredan es_programacion de su origen, pero NO son programaciones:
+        -- mostrarlas duplicaba el registro en este listado.
+          AND ru.es_recepcion_ficticia = 0
         ';
 
         $params = [];

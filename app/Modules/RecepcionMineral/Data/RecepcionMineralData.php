@@ -3,6 +3,7 @@
 namespace App\Modules\RecepcionMineral\Data;
 
 use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
+use App\Data\GuiasData;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoPesaje;
 use App\Shared\Enums\ValorizacionCompra\EstadoValorizacionCompra;
@@ -1270,6 +1271,11 @@ class RecepcionMineralData
             $item->despacho_correlativo = $item->despacho_correlativo !== null ? (string) $item->despacho_correlativo : null;
             $item->planta_destino_nombre = $item->planta_destino_nombre !== null ? (string) $item->planta_destino_nombre : null;
 
+            // Las guías se resuelven aparte: pueden venir del primer tramo
+            // (definidas al registrar la unidad o en el módulo de Guías de
+            // Primer Tramo) o del segundo tramo (despacho).
+            GuiasData::aplicar_guia_ticket($item, $loteId);
+
             return (array) $item;
         }
 
@@ -1288,6 +1294,7 @@ class RecepcionMineralData
         $sql = "
         SELECT
             ddt.id AS id_distribucion_detalle,
+            di.id AS id_distribucion,
 
             COALESCE(lm.id, b.id)                    AS id_lote,
             COALESCE(lm.correlativo, b.correlativo)  AS correlativo,
@@ -1393,6 +1400,17 @@ class RecepcionMineralData
             $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
             $item->despacho_correlativo = $item->despacho_correlativo !== null ? (string) $item->despacho_correlativo : null;
             $item->planta_destino_nombre = $item->planta_destino_nombre !== null ? (string) $item->planta_destino_nombre : null;
+
+            // Ticket de despacho: la guía es la del SEGUNDO TRAMO de la
+            // distribución (la que acompaña al embarque a la planta destino).
+            if ($item->id_lote !== null) {
+                GuiasData::aplicar_guia_ticket(
+                    $item,
+                    (int) $item->id_lote,
+                    null,
+                    (int) $item->id_distribucion
+                );
+            }
 
             return (array) $item;
         }
@@ -1675,9 +1693,11 @@ class RecepcionMineralData
             NULL AS observacion_peso_inicial,
             NULL AS observacion_peso_final,
 
-            plm.fecha_hora_peso_inicial,
+            -- Aliases canónicos que consume el PDF del ticket: en RECEPCIÓN el
+            -- BRUTO es la 1ra pesada y la TARA la 2da.
+            plm.fecha_hora_peso_inicial                AS fecha_hora_peso_bruto,
             plm.peso_inicial AS peso_bruto,
-            plm.fecha_hora_peso_final,
+            plm.fecha_hora_peso_final                  AS fecha_hora_peso_tara,
             plm.peso_final AS peso_tara,
             plm.peso_neto AS peso_neto,
 
@@ -1718,6 +1738,14 @@ class RecepcionMineralData
         $item->peso_bruto = $item->peso_bruto !== null ? (float) $item->peso_bruto : null;
         $item->peso_tara = $item->peso_tara !== null ? (float) $item->peso_tara : null;
         $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
+
+        // La partición se pesa en el ingreso: la guía es la del primer tramo
+        // (la del lote padre o la enlazada a esta partición).
+        GuiasData::aplicar_guia_ticket(
+            $item,
+            (int) $item->id_lote,
+            $idParticion
+        );
 
         return (array) $item;
     }
