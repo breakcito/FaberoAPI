@@ -279,10 +279,12 @@ class CierreLeyesController
             'id_grupo_analisis' => 'required|integer',
         ]);
 
-        return response()->json(CierreLeyesService::asociar_muestra_a_grupo(
+        $resultado = CierreLeyesService::asociar_muestra_a_grupo(
             $idMuestraExterna,
             (int) $request->input('id_grupo_analisis')
-        ));
+        );
+
+        return response()->json($resultado, $this->http_status_from_service_result($resultado));
     }
 
     public function asociar_muestras_multiples_a_grupo(Request $request): JsonResponse
@@ -293,10 +295,32 @@ class CierreLeyesController
             'id_grupo_analisis' => 'required|integer',
         ]);
 
-        return response()->json(CierreLeyesService::asociar_muestras_multiples_a_grupo(
+        $resultado = CierreLeyesService::asociar_muestras_multiples_a_grupo(
             $request->input('ids_muestra_externa', []),
             (int) $request->input('id_grupo_analisis')
-        ));
+        );
+
+        return response()->json($resultado, $this->http_status_from_service_result($resultado));
+    }
+
+    /**
+     * Determina el status HTTP de la respuesta de un service según el código
+     * semántico puesto en `errors`. Mantiene el contrato de ApiResponse intacto.
+     *
+     * @param  array{success: bool, message?: string, errors?: mixed}  $result
+     */
+    private function http_status_from_service_result(array $result): int
+    {
+        if (($result['success'] ?? false) === true) {
+            return 200;
+        }
+
+        $errors = $result['errors'] ?? null;
+        if (is_array($errors) && isset($errors['codigo']) && $errors['codigo'] === 'PROVEEDOR_MUESTRA_GRUPO_INCONSISTENTE') {
+            return 422;
+        }
+
+        return 200;
     }
 
     public function get_muestras_asociadas_por_grupo(Request $request): JsonResponse

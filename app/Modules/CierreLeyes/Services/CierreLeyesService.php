@@ -424,6 +424,18 @@ class CierreLeyesService
 
         try {
             DB::beginTransaction();
+
+            // Regla de negocio: la muestra externa y el grupo destino deben
+            // ser del MISMO proveedor. Se valida antes de tocar nada.
+            $errorProveedor = CierreLeyesData::validar_proveedor_muestras_grupo($idsMuestraExterna, $idGrupoDestino);
+            if ($errorProveedor !== null) {
+                DB::rollBack();
+
+                return ApiResponse::error($errorProveedor, [
+                    'codigo' => 'PROVEEDOR_MUESTRA_GRUPO_INCONSISTENTE',
+                ]);
+            }
+
             $ok = CierreLeyesData::asociar_muestras_multiples_a_grupo($idsMuestraExterna, $idGrupoDestino);
             if (! $ok) {
                 DB::rollBack();

@@ -94,6 +94,7 @@ Aplican a **toda tabla nueva o modificada**. Si el código existente las viola, 
    - `RecepcionUnidades` — registro de unidades (vehículo) y `TicketBalanza` (peso en báscula).
    - Un `LoteMineral` puede **particionarse desde balanza**: las particiones viven en `particion_lote_mineral` y cada una tiene su propia `recepcion_unidad` (vehículo, conductor, transporte), su `ticket_balanza` y sus pesos. `finalizar_particion_lote` sella el lote padre (`particion_finalizada = 1`) y fija su `peso_neto` con el sumatorio de las particiones.
 4. **Análisis de leyes**: `GestionLeyes` (leyes por lote) → `CierreLeyes` (cierre con leyes finales). Modelos relacionados: `AnalisisMineral`, `Analito`, `GrupoAnalisis`, `GrupoAnalisisDetalle`.
+   - Una **muestra externa** solo puede asociarse a un grupo de análisis del **mismo proveedor** que la muestra (el grupo hereda el proveedor de su lote). Se valida en `CierreLeyesData::validar_proveedor_muestras_grupo()` antes de escribir nada; el backend responde 422 con el código `PROVEEDOR_MUESTRA_GRUPO_INCONSISTENTE`.
 5. **Blending**: `Blending` combina `LoteMineral` para obtener una ley objetivo. Modelos: `Blending`, `BlendingDetalle`.
 6. **Valorización**: `ValorizacionCompra` calcula el monto a pagar al proveedor según leyes, pesos, deducciones y anticipos (consume el saldo del anticipo). Modelos: `ValorizacionCompra`, `ValorizacionCompraDetalle`.
 7. **Contabilidad**: `ContabilidadCompra` registra `ComprobanteCompra` y los `PagoComprobanteCompra` (puede ser total o parcial, multi-moneda, multi-cuenta).

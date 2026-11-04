@@ -715,6 +715,72 @@ class CierreLeyesData
     }
 
     /**
+     * Verifica que TODAS las muestras externas pertenezcan al mismo proveedor
+     * que el grupo de análisis destino.
+     *
+     * Regla de negocio: una muestra externa sólo puede asociarse a un grupo de
+     * un lote del MISMO proveedor. Si no, la muestra contaminaría las leyes de
+     * cierre de otro proveedor.
+     *
+     * @param  int[]  $idsMuestraExterna
+     * @return string|null Mensaje de error, o null si la asociación es válida.
+     */
+    public static function validar_proveedor_muestras_grupo(array $idsMuestraExterna, int $idGrupoDestino): ?string
+    {
+        $grupo = DB::table('grupo_analisis as ga')
+            ->leftJoin('lote_mineral as lm', 'lm.id', '=', 'ga.id_lote_mineral')
+            ->leftJoin('proveedor as pg', 'pg.id', '=', 'lm.id_proveedor_minero')
+            ->where('ga.id', $idGrupoDestino)
+            ->first([
+                'ga.id',
+                'ga.nombre',
+                'lm.id_proveedor_minero',
+                'pg.razon_social AS proveedor_grupo_nombre',
+            ]);
+
+        if (! $grupo) {
+            return 'No se encontró el grupo de análisis destino.';
+        }
+
+        // El grupo no tiene proveedor definido: no hay contra qué comparar.
+        if ($grupo->id_proveedor_minero === null) {
+            return null;
+        }
+
+        $muestras = DB::table('muestra_externa as me')
+            ->leftJoin('proveedor as pm', 'pm.id', '=', 'me.id_proveedor_minero')
+            ->whereIn('me.id', $idsMuestraExterna)
+            ->get([
+                'me.id',
+                'me.correlativo',
+                'me.codigo_cliente',
+                'me.id_proveedor_minero',
+                'pm.razon_social AS proveedor_muestra_nombre',
+            ]);
+
+        $nombreGrupo = (string) ($grupo->nombre ?: "Grupo #{$grupo->id}");
+        $nombreProveedorGrupo = (string) ($grupo->proveedor_grupo_nombre ?: "proveedor #{$grupo->id_proveedor_minero}");
+
+        foreach ($muestras as $m) {
+            $codigo = (string) ($m->codigo_cliente ?: ($m->correlativo ?: "Muestra #{$m->id}"));
+
+            // Muestra sin proveedor: no se puede verificar la regla, y asociarla
+            // a un grupo con proveedor contaminaría el cierre de ese proveedor.
+            if ($m->id_proveedor_minero === null) {
+                return "La muestra \"{$codigo}\" no tiene proveedor asignado y no puede asociarse al grupo \"{$nombreGrupo}\", que es del proveedor \"{$nombreProveedorGrupo}\".";
+            }
+
+            if ((int) $m->id_proveedor_minero !== (int) $grupo->id_proveedor_minero) {
+                $nombreProveedorMuestra = (string) ($m->proveedor_muestra_nombre ?: "proveedor #{$m->id_proveedor_minero}");
+
+                return "La muestra \"{$codigo}\" pertenece al proveedor \"{$nombreProveedorMuestra}\" y no puede asociarse al grupo \"{$nombreGrupo}\", que es del proveedor \"{$nombreProveedorGrupo}\". Una muestra externa solo puede asociarse a un grupo del mismo proveedor.";
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Asociar múltiples muestras externas a un grupo de análisis de un lote calculando promedios de humedad y recuperación
      *
      * @param  int[]  $idsMuestraExterna
