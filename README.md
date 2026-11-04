@@ -97,6 +97,8 @@ Aplican a **toda tabla nueva o modificada**. Si el código existente las viola, 
    - Una **muestra externa** solo puede asociarse a un grupo de análisis del **mismo proveedor** que la muestra (el grupo hereda el proveedor de su lote). Se valida en `CierreLeyesData::validar_proveedor_muestras_grupo()` antes de escribir nada; el backend responde 422 con el código `PROVEEDOR_MUESTRA_GRUPO_INCONSISTENTE`.
 5. **Blending**: `Blending` combina `LoteMineral` para obtener una ley objetivo. Modelos: `Blending`, `BlendingDetalle`.
 6. **Valorización**: `ValorizacionCompra` calcula el monto a pagar al proveedor según leyes, pesos, deducciones y anticipos (consume el saldo del anticipo). Modelos: `ValorizacionCompra`, `ValorizacionCompraDetalle`.
+   - Cada detalle apunta a un **grupo de análisis** (`valorizacion_compramineral_detalle.id_grupo_analisis`). Al crear, editar o copiar una propuesta se marca `grupo_analisis.tiene_propuesta_oro` / `tiene_propuesta_plata`, lo que **bloquea ese grupo en el módulo de Cierre de Leyes**.
+   - Al **cambiar el grupo de análisis** de un detalle al editar una propuesta: el grupo anterior se libera (sólo si ninguna otra valorización viva lo usa) y el nuevo queda marcado con propuesta → bloqueado en Cierre de Leyes.
 7. **Contabilidad**: `ContabilidadCompra` registra `ComprobanteCompra` y los `PagoComprobanteCompra` (puede ser total o parcial, multi-moneda, multi-cuenta).
 8. **Despacho**: a `PlantasDestino` (plantas receptoras del mineral procesado). Modelos: `PlantaDestino`, `CuentasBancariasPlantaDestino`.
 
