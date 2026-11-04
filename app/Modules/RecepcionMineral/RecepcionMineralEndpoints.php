@@ -24,6 +24,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/particiones/{idParticion}', 'get_particion');
         Route::delete('/particiones/{idParticion}', 'eliminar_particion');
         Route::put('/particiones/{idParticion}/campos-no-peso', 'actualizar_campos_no_peso');
+        Route::put('/particiones/{idParticion}/actualizar', 'actualizar_particion');
         Route::post('/particiones/{idParticion}/peso-inicial', 'registrar_peso_inicial_particion');
         Route::post('/particiones/{idParticion}/peso-final', 'registrar_peso_final_particion');
         Route::post('/lotes/{idLote}/particion/finalizar', 'finalizar_particion_lote');

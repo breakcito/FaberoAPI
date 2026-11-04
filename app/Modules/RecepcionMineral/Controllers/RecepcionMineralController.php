@@ -395,6 +395,57 @@ class RecepcionMineralController extends Controller
     }
 
     /**
+     * Editar una partición: pesos y evidencias propias + campos no-peso del
+     * lote padre (cascada). Las fechas de pesaje no se modifican.
+     */
+    public function actualizar_particion(Request $request, int $idParticion): JsonResponse
+    {
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = $authUser ? (int) $authUser->id_empleado : null;
+
+        $request->validate([
+            'peso_inicial' => 'nullable|numeric|min:0.01',
+            'peso_final' => 'nullable|numeric|min:0.01',
+            'evidencias' => 'nullable|array',
+            'evidencias.*' => 'file',
+            'evidencias_existentes' => 'nullable',
+            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'id_zona_origen' => 'nullable|integer|exists:zona_origen,id',
+            'numero_contacto' => 'nullable|string|max:50',
+            'tipo_producto' => 'nullable|string|max:100',
+            'tipo_mineral' => 'nullable|string|max:100',
+            'motivo' => 'nullable|string',
+        ]);
+
+        $data = [
+            'peso_inicial' => $request->input('peso_inicial'),
+            'peso_final' => $request->input('peso_final'),
+            'evidencias_existentes' => $request->input('evidencias_existentes'),
+            'id_proveedor_minero' => $request->input('id_proveedor_minero'),
+            'id_zona_origen' => $request->input('id_zona_origen'),
+            'numero_contacto' => $request->input('numero_contacto'),
+            'tipo_producto' => $request->input('tipo_producto'),
+            'tipo_mineral' => $request->input('tipo_mineral'),
+            'motivo' => $request->input('motivo'),
+        ];
+
+        $archivos = [];
+        if ($request->hasFile('evidencias')) {
+            $archivos = $request->file('evidencias');
+            if (! is_array($archivos)) {
+                $archivos = [$archivos];
+            }
+        }
+
+        return response()->json(RecepcionMineralService::actualizar_particion(
+            $idParticion,
+            $data,
+            $archivos,
+            $idEmpleado,
+        ));
+    }
+
+    /**
      * Registrar peso inicial de una partición (crea ticket si no tiene).
      */
     public function registrar_peso_inicial_particion(Request $request, int $idParticion): JsonResponse

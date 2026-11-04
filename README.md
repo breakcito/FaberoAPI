@@ -92,11 +92,23 @@ Aplican a **toda tabla nueva o modificada**. Si el código existente las viola, 
    - `GuiasPrimerTramo` — guía del primer tramo del transporte.
    - `RecepcionMineral` — recepción física con su `LoteMineral`.
    - `RecepcionUnidades` — registro de unidades (vehículo) y `TicketBalanza` (peso en báscula).
+   - Un `LoteMineral` puede **particionarse desde balanza**: las particiones viven en `particion_lote_mineral` y cada una tiene su propia `recepcion_unidad` (vehículo, conductor, transporte), su `ticket_balanza` y sus pesos. `finalizar_particion_lote` sella el lote padre (`particion_finalizada = 1`) y fija su `peso_neto` con el sumatorio de las particiones.
 4. **Análisis de leyes**: `GestionLeyes` (leyes por lote) → `CierreLeyes` (cierre con leyes finales). Modelos relacionados: `AnalisisMineral`, `Analito`, `GrupoAnalisis`, `GrupoAnalisisDetalle`.
 5. **Blending**: `Blending` combina `LoteMineral` para obtener una ley objetivo. Modelos: `Blending`, `BlendingDetalle`.
 6. **Valorización**: `ValorizacionCompra` calcula el monto a pagar al proveedor según leyes, pesos, deducciones y anticipos (consume el saldo del anticipo). Modelos: `ValorizacionCompra`, `ValorizacionCompraDetalle`.
 7. **Contabilidad**: `ContabilidadCompra` registra `ComprobanteCompra` y los `PagoComprobanteCompra` (puede ser total o parcial, multi-moneda, multi-cuenta).
 8. **Despacho**: a `PlantasDestino` (plantas receptoras del mineral procesado). Modelos: `PlantaDestino`, `CuentasBancariasPlantaDestino`.
+
+## Edición de lotes y particiones (reglas de integridad)
+
+Aplican al módulo `RecepcionMineral` (edición desde el Resumen de Balanza) y a cualquier otra ruta que escriba sobre `lote_mineral` o `particion_lote_mineral`.
+
+1. **Bloqueo por valorización**. Un lote con valorización viva (`EstadoValorizacionCompra::Propuesta` o `::Aprobado`) **no es editable**. La comprobación vive en `RecepcionMineralData::get_valorizacion_viva_por_lote()` y se aplica en `RecepcionMineralService::actualizar_lote()` y `actualizar_campos_no_peso()` (respuesta `ApiResponse::error(..., 422)`). La ruta de resolución es `valorizacion_compramineral_detalle → valorizacion_compra → lote_guia → COALESCE(lg.id_lote_mineral, plm.id_lote_mineral)`: si lo valorizado fue una partición, el `COALESCE` resuelve al **lote padre** y el bloqueo alcanza a todo el lote. El alcance es la **edición de datos**: el pesaje (`registrar_peso_inicial` / `registrar_peso_final` y sus variantes de partición) no se bloquea.
+2. **Los pesos del padre particionado son un agregado**. `lote_mineral.peso_neto` es el sumatorio de los `peso_neto` de sus particiones (lo fija `finalizar_particion_lote`). La edición del padre **no** escribe pesos: `RecepcionMineralData::recalcular_peso_neto_lote_padre()` mantiene el agregado al día cuando cambia el peso de una partición.
+3. **Datos no-peso en cascada**. Proveedor, zona, contacto, tipo de producto y tipo de mineral viven en `lote_mineral` (el padre). `RecepcionMineralService::persistir_campos_no_peso_en_padre()` los propaga al padre cuando se edita una partición; el resto de particiones los hereda por JOIN.
+4. **El transporte es de la unidad**. Vehículo, empresa de transporte y conductor viven en `recepcion_unidad` (una por lote o por partición), no en `lote_mineral`. La edición de un lote los persiste sobre su unidad.
+5. **Correlativo de partición**. `particion_lote_mineral.correlativo` es `{correlativo_lote}-{letra}`. Si cambia la condición de ingreso del padre y se regenera su correlativo, hay que realinear el de sus particiones.
+6. **El resumen devuelve tres tipos de fila**: `LOTE_RECEPCION` (lote), `PARTICION` (una fila por partición de un lote particionado) y `DISTRIBUCION_DETALLE` (despacho). `get_resumen_balanza()` los arma con un `UNION ALL` de tres bloques con idéntica lista de columnas; cada fila trae `valorizacion` (valorización viva que bloquea la edición) cuando aplica.
 
 ## Comportamiento HTTP
 

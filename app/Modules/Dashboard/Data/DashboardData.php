@@ -8,486 +8,552 @@ use Illuminate\Support\Facades\DB;
  * Acceso a datos del dashboard de indicadores.
  *
  * La BD de producción es remota y cada round trip cuesta ~200 ms, por lo que
- * todo el paquete de indicadores se resuelve en UNA sola consulta que devuelve
- * una fila con columnas JSON. Los filtros de período y sucursal viajan en el
- * CTE `prm` para no repetir parámetros.
+ * el paquete se resuelve en DOS consultas (cada una devuelve una fila con
+ * columnas JSON):
+ *
+ *  1. `get_serie_mensual()` — evolución mes a mes (tn receptadas/despachadas/
+ *     compradas/vendidas, montos, costo por elemento y leyes promedio).
+ *  2. `get_snapshot()` — fotografía actual: cuentas por pagar/cobrar con su
+ *     desglose neto vs detracción, stock en cancha, días promedio en cancha y
+ *     valorizaciones aprobadas sin comprobante.
+ *
+ * UNIDADES (ver `RES_Dashboard` del frontend):
+ *  - La BD guarda los pesos en KILOGRAMOS; las toneladas se obtienen con /1000.
+ *  - `monto_*_usd` y `*_usd_t` están en dólares.
+ *  - `detraccion_pen` está en soles (la detracción se registra en PEN).
  */
 class DashboardData
 {
     /**
-     * Obtener el paquete completo de indicadores del dashboard.
+     * Evolución mensual de los indicadores de operación y valorización.
      *
-     * @return array<string,mixed>
+     * @return array<string,array<string,mixed>> Clave `YYYY-MM` => indicadores
      */
-    public static function get_dashboard(?int $idSucursal, string $fechaInicio, string $fechaFin): array
+    public static function get_serie_mensual(string $fechaInicio, string $fechaFin, ?int $idSucursal): array
     {
-        $sql = self::sql_ctes().self::sql_salida();
-
-        $row = DB::selectOne($sql, [$fechaInicio, $fechaFin, $idSucursal]);
-
-        return self::decodificar($row);
-    }
-
-    /**
-     * CTEs compartidos: filtros, grano diario y totales agregados.
-     */
-    private static function sql_ctes(): string
-    {
-        return '
-WITH
-prm AS (
-    SELECT ? AS fi, ? AS ff, ? AS suc
-),
-dias AS (
-    SELECT DATE(COALESCE(lm.fecha_hora_peso_final, lm.created_at)) AS dia
-    FROM lote_mineral lm
-    INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
-    CROSS JOIN prm p
-    WHERE COALESCE(lm.fecha_hora_peso_final, lm.created_at) BETWEEN p.fi AND p.ff
-      AND (p.suc IS NULL OR ru.id_sucursal = p.suc)
-    UNION
-    SELECT DATE(vc.fecha_hora_valorizacion) AS dia
-    FROM valorizacion_compra vc
-    CROSS JOIN prm p
-    WHERE vc.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
-      AND vc.estado <> \'Anulado\'
-    UNION
-    SELECT DATE(vv.fecha_hora_valorizacion) AS dia
-    FROM valorizacion_venta vv
-    CROSS JOIN prm p
-    WHERE vv.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
-      AND vv.estado <> \'Anulado\'
-    UNION
-    SELECT DATE(d.created_at) AS dia
-    FROM despacho d
-    CROSS JOIN prm p
-    WHERE d.created_at BETWEEN p.fi AND p.ff
-      AND d.es_anulado = 0
-),
-lote_confirmacion AS (
-    SELECT
-        ga.id_lote_mineral,
-        MAX(am.created_at) AS confirmado_at
-    FROM analisis_mineral am
-    INNER JOIN grupo_analisis ga ON ga.id = am.id_grupo_analisis
-    WHERE (am.ley_oro_confirmada = 1 OR am.ley_plata_confirmada = 1)
-      AND ga.id_lote_mineral IS NOT NULL
-    GROUP BY ga.id_lote_mineral
-),
-lote_aprobado AS (
-    SELECT DISTINCT COALESCE(lg.id_lote_mineral, plm.id_lote_mineral) AS id_lote_mineral
-    FROM valorizacion_compramineral_detalle vcd
-    INNER JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
-    INNER JOIN lote_guia lg ON lg.id = vcd.id_lote_guia
-    LEFT JOIN particion_lote_mineral plm ON plm.id = lg.id_particion_lote_mineral
-    WHERE vc.estado = \'Aprobado\'
-      AND COALESCE(lg.id_lote_mineral, plm.id_lote_mineral) IS NOT NULL
-),
-rec AS (
-    SELECT
-        DATE(COALESCE(lm.fecha_hora_peso_final, lm.created_at)) AS dia,
-        COUNT(*) AS lotes,
-        COALESCE(SUM(lm.peso_neto), 0) / 1000 AS toneladas,
-        COALESCE(SUM(lm.peso_neto), 0) AS peso_total,
-        COALESCE(SUM(CASE WHEN la.id_lote_mineral IS NOT NULL AND lm.ley_oro > 0 THEN lm.ley_oro * lm.peso_neto ELSE 0 END), 0) AS oro_pond,
-        COALESCE(SUM(CASE WHEN la.id_lote_mineral IS NOT NULL AND lm.ley_oro > 0 THEN lm.peso_neto ELSE 0 END), 0) AS peso_ley_oro,
-        COALESCE(SUM(CASE WHEN la.id_lote_mineral IS NOT NULL AND lm.ley_plata > 0 THEN lm.ley_plata * lm.peso_neto ELSE 0 END), 0) AS plata_pond,
-        COALESCE(SUM(CASE WHEN la.id_lote_mineral IS NOT NULL AND lm.ley_plata > 0 THEN lm.peso_neto ELSE 0 END), 0) AS peso_ley_plata,
-        COALESCE(SUM(CASE WHEN la.id_lote_mineral IS NOT NULL AND lm.ley_humedad > 0 THEN lm.ley_humedad * lm.peso_neto ELSE 0 END), 0) AS hum_pond,
-        COALESCE(SUM(CASE WHEN la.id_lote_mineral IS NOT NULL AND lm.ley_humedad > 0 THEN lm.peso_neto ELSE 0 END), 0) AS peso_ley_humedad,
-        SUM(CASE WHEN la.id_lote_mineral IS NOT NULL THEN 1 ELSE 0 END) AS lotes_aprobados,
-        SUM(CASE WHEN lm.esta_validado = 1 THEN 1 ELSE 0 END) AS validados,
-        SUM(CASE WHEN lc.id_lote_mineral IS NOT NULL THEN 1 ELSE 0 END) AS analizados,
-        SUM(CASE WHEN COALESCE(lm.con_valor_comercial, 0) = 1 THEN 1 ELSE 0 END) AS con_valor,
-        SUM(CASE WHEN lm.esta_valorizado_oro = 1 OR lm.esta_valorizado_plata = 1 THEN 1 ELSE 0 END) AS valorizados,
-        SUM(CASE WHEN EXISTS (SELECT 1 FROM grupo_analisis g WHERE g.id_lote_mineral = lm.id) THEN 1 ELSE 0 END) AS con_cierre_leyes,
-        SUM(CASE WHEN EXISTS (SELECT 1 FROM despacho_detalle dd WHERE dd.id_lote_mineral = lm.id) THEN 1 ELSE 0 END) AS despachados
-    FROM lote_mineral lm
-    INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
-    LEFT JOIN lote_aprobado la ON la.id_lote_mineral = lm.id
-    LEFT JOIN lote_confirmacion lc ON lc.id_lote_mineral = lm.id
-    CROSS JOIN prm p
-    WHERE COALESCE(lm.fecha_hora_peso_final, lm.created_at) BETWEEN p.fi AND p.ff
-      AND (p.suc IS NULL OR ru.id_sucursal = p.suc)
-    GROUP BY dia
-),
-val AS (
-    SELECT
-        DATE(vc.fecha_hora_valorizacion) AS dia,
-        COALESCE(SUM(vcd.subtotal), 0) AS valor_usd,
-        COALESCE(SUM(vcd.precio_por_tonelada * COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0)), 0) AS ptn_ponderado,
-        COALESCE(SUM(COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0)), 0) AS peso
-    FROM valorizacion_compra vc
-    INNER JOIN valorizacion_compramineral_detalle vcd ON vcd.id_valorizacion_compra = vc.id
-    LEFT JOIN lote_guia lg ON lg.id = vcd.id_lote_guia
-    LEFT JOIN lote_mineral lm ON lm.id = lg.id_lote_mineral
-    CROSS JOIN prm p
-    WHERE vc.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
-      AND vc.estado <> \'Anulado\'
-    GROUP BY dia
-),
-vta AS (
-    SELECT
-        DATE(vv.fecha_hora_valorizacion) AS dia,
-        COALESCE(SUM(vvd.subtotal), 0) AS valor_usd
-    FROM valorizacion_venta vv
-    INNER JOIN valorizacion_venta_detalle vvd ON vvd.id_valorizacion_venta = vv.id
-    CROSS JOIN prm p
-    WHERE vv.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
-      AND vv.estado <> \'Anulado\'
-    GROUP BY dia
-),
-des AS (
-    SELECT
-        DATE(d.created_at) AS dia,
-        COALESCE(SUM(dd.peso_tomado), 0) / 1000 AS toneladas,
-        COUNT(DISTINCT d.id) AS despachos
-    FROM despacho d
-    INNER JOIN despacho_detalle dd ON dd.id_despacho = d.id
-    CROSS JOIN prm p
-    WHERE d.created_at BETWEEN p.fi AND p.ff
-      AND d.es_anulado = 0
-    GROUP BY dia
-),
-serie AS (
-    SELECT
-        d.dia,
-        COALESCE(r.lotes, 0) AS lotes,
-        COALESCE(r.toneladas, 0) AS toneladas,
-        COALESCE(r.oro_pond, 0) AS oro_pond,
-        COALESCE(r.peso_ley_oro, 0) AS peso_ley_oro,
-        COALESCE(r.plata_pond, 0) AS plata_pond,
-        COALESCE(r.peso_ley_plata, 0) AS peso_ley_plata,
-        COALESCE(r.hum_pond, 0) AS hum_pond,
-        COALESCE(r.peso_ley_humedad, 0) AS peso_ley_humedad,
-        COALESCE(r.lotes_aprobados, 0) AS lotes_aprobados,
-        COALESCE(r.validados, 0) AS validados,
-        COALESCE(r.analizados, 0) AS analizados,
-        COALESCE(r.con_cierre_leyes, 0) AS con_cierre_leyes,
-        COALESCE(r.con_valor, 0) AS con_valor,
-        COALESCE(r.valorizados, 0) AS valorizados,
-        COALESCE(r.despachados, 0) AS despachados,
-        COALESCE(v.valor_usd, 0) AS valor_compra_usd,
-        COALESCE(v.ptn_ponderado, 0) AS ptn_ponderado,
-        COALESCE(v.peso, 0) AS peso_valorizado,
-        COALESCE(vt.valor_usd, 0) AS valor_venta_usd,
-        COALESCE(ds.toneladas, 0) AS toneladas_despachadas,
-        COALESCE(ds.despachos, 0) AS despachos
-    FROM dias d
-    LEFT JOIN rec r ON r.dia = d.dia
-    LEFT JOIN val v ON v.dia = d.dia
-    LEFT JOIN vta vt ON vt.dia = d.dia
-    LEFT JOIN des ds ON ds.dia = d.dia
-),
-tot AS (
-    SELECT
-        COALESCE(SUM(toneladas), 0) AS toneladas,
-        COALESCE(SUM(lotes), 0) AS lotes,
-        COALESCE(SUM(oro_pond), 0) AS oro_pond,
-        COALESCE(SUM(peso_ley_oro), 0) AS peso_ley_oro,
-        COALESCE(SUM(plata_pond), 0) AS plata_pond,
-        COALESCE(SUM(peso_ley_plata), 0) AS peso_ley_plata,
-        COALESCE(SUM(hum_pond), 0) AS hum_pond,
-        COALESCE(SUM(peso_ley_humedad), 0) AS peso_ley_humedad,
-        COALESCE(SUM(lotes_aprobados), 0) AS lotes_aprobados,
-        COALESCE(SUM(validados), 0) AS validados,
-        COALESCE(SUM(analizados), 0) AS analizados,
-        COALESCE(SUM(con_cierre_leyes), 0) AS con_cierre_leyes,
-        COALESCE(SUM(con_valor), 0) AS con_valor,
-        COALESCE(SUM(valorizados), 0) AS valorizados,
-        COALESCE(SUM(despachados), 0) AS despachados,
-        COALESCE(SUM(valor_compra_usd), 0) AS valor_compra_usd,
-        COALESCE(SUM(ptn_ponderado), 0) AS ptn_ponderado,
-        COALESCE(SUM(peso_valorizado), 0) AS peso_valorizado,
-        COALESCE(SUM(valor_venta_usd), 0) AS valor_venta_usd,
-        COALESCE(SUM(toneladas_despachadas), 0) AS toneladas_despachadas,
-        COALESCE(SUM(despachos), 0) AS despachos
-    FROM serie
-),
-emb AS (
-    SELECT 1 AS orden, \'Lotes generados\' AS etapa, COALESCE(SUM(lotes), 0) AS conteo FROM tot
-    UNION ALL SELECT 2, \'Validados\', validados FROM tot
-    UNION ALL SELECT 3, \'Análisis confirmado\', analizados FROM tot
-    UNION ALL SELECT 4, \'Cierre de leyes\', con_cierre_leyes FROM tot
-    UNION ALL SELECT 5, \'Con valor comercial\', con_valor FROM tot
-    UNION ALL SELECT 6, \'Propuesta de valorización\', valorizados FROM tot
-    UNION ALL SELECT 7, \'Valorización aprobada\', lotes_aprobados FROM tot
-    UNION ALL SELECT 8, \'Despachado\', despachados FROM tot
-)
-';
-    }
-
-    /**
-     * SELECT principal: una fila con columnas JSON.
-     */
-    private static function sql_salida(): string
-    {
-        return '
-SELECT
-    (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-        \'fecha\', s.dia,
-        \'toneladas\', s.toneladas,
-        \'lotes\', s.lotes,
-        \'ley_oro\', ROUND(CASE WHEN s.peso_ley_oro > 0 THEN s.oro_pond / s.peso_ley_oro ELSE 0 END, 4),
-        \'ley_plata\', ROUND(CASE WHEN s.peso_ley_plata > 0 THEN s.plata_pond / s.peso_ley_plata ELSE 0 END, 4),
-        \'ley_humedad\', ROUND(CASE WHEN s.peso_ley_humedad > 0 THEN s.hum_pond / s.peso_ley_humedad ELSE 0 END, 4),
-        \'valor_compra_usd\', s.valor_compra_usd,
-        \'valor_venta_usd\', s.valor_venta_usd,
-        \'toneladas_despachadas\', s.toneladas_despachadas
-    )) FROM serie s) AS serie,
-
-    JSON_OBJECT(
-        \'toneladas_receptadas\', tot.toneladas,
-        \'lotes_receptados\', tot.lotes,
-        \'ley_oro_prom\', ROUND(CASE WHEN tot.peso_ley_oro > 0 THEN tot.oro_pond / tot.peso_ley_oro ELSE 0 END, 4),
-        \'ley_plata_prom\', ROUND(CASE WHEN tot.peso_ley_plata > 0 THEN tot.plata_pond / tot.peso_ley_plata ELSE 0 END, 4),
-        \'ley_humedad_prom\', ROUND(CASE WHEN tot.peso_ley_humedad > 0 THEN tot.hum_pond / tot.peso_ley_humedad ELSE 0 END, 4),
-        \'lotes_aprobados\', tot.lotes_aprobados,
-        \'valorizacion_compra_usd\', tot.valor_compra_usd,
-        \'valor_por_tonelada_usd\', ROUND(CASE WHEN tot.peso_valorizado > 0 THEN tot.ptn_ponderado / tot.peso_valorizado ELSE 0 END, 2),
-        \'valorizacion_venta_usd\', tot.valor_venta_usd,
-        \'toneladas_despachadas\', tot.toneladas_despachadas,
-        \'despachos\', tot.despachos,
-        \'lotes_validados\', tot.validados,
-        \'lotes_analizados\', tot.analizados,
-        \'lotes_con_cierre_leyes\', tot.con_cierre_leyes,
-        \'lotes_con_valor_comercial\', tot.con_valor,
-        \'lotes_valorizados\', tot.valorizados,
-        \'lotes_despachados\', tot.despachados
-    ) AS kpis,
-
-    (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-        \'etapa\', e.etapa,
-        \'conteo\', e.conteo,
-        \'porcentaje\', e.porcentaje
-    )) FROM (
-        SELECT em.etapa, em.conteo,
-            ROUND(em.conteo * 100.0 / NULLIF(FIRST_VALUE(em.conteo) OVER (ORDER BY em.orden), 0), 2) AS porcentaje
-        FROM emb em
-    ) e) AS embudo,
-
-    (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-        \'razon_social\', t.razon_social,
-        \'valor_usd\', t.valor_usd,
-        \'toneladas\', t.toneladas
-    )) FROM (
-        SELECT p.razon_social,
-            COALESCE(SUM(vcd.subtotal), 0) AS valor_usd,
-            COALESCE(SUM(COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0)), 0) / 1000 AS toneladas
-        FROM valorizacion_compra vc
-        INNER JOIN valorizacion_compramineral_detalle vcd ON vcd.id_valorizacion_compra = vc.id
-        INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
-        LEFT JOIN lote_guia lg ON lg.id = vcd.id_lote_guia
-        LEFT JOIN lote_mineral lm ON lm.id = lg.id_lote_mineral
-        CROSS JOIN prm p2
-        WHERE vc.fecha_hora_valorizacion BETWEEN p2.fi AND p2.ff
-          AND vc.estado <> \'Anulado\'
-        GROUP BY p.id, p.razon_social
-        ORDER BY valor_usd DESC
-        LIMIT 8
-    ) t) AS por_proveedor,
-
-    (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-        \'elemento\', t.elemento_quimico,
-        \'valor_usd\', t.valor_usd
-    )) FROM (
-        SELECT vcd.elemento_quimico, COALESCE(SUM(vcd.subtotal), 0) AS valor_usd
-        FROM valorizacion_compra vc
-        INNER JOIN valorizacion_compramineral_detalle vcd ON vcd.id_valorizacion_compra = vc.id
-        CROSS JOIN prm p
-        WHERE vc.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
-          AND vc.estado <> \'Anulado\'
-        GROUP BY vcd.elemento_quimico
-    ) t) AS por_elemento,
-
-    (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-        \'estado\', t.estado,
-        \'lotes\', t.lotes,
-        \'toneladas\', t.toneladas
-    )) FROM (
-        SELECT CASE
-            WHEN lm.esta_valorizado_oro = 1 OR lm.esta_valorizado_plata = 1 THEN \'Valorizado\'
-            WHEN COALESCE(lm.con_valor_comercial, 0) = 1 THEN \'Con valor comercial\'
-            ELSE \'Sin valor comercial\'
-        END AS estado,
-        COUNT(*) AS lotes,
-        COALESCE(SUM(lm.peso_neto), 0) / 1000 AS toneladas
-        FROM lote_mineral lm
-        INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
-        CROSS JOIN prm p
-        WHERE COALESCE(lm.fecha_hora_peso_final, lm.created_at) BETWEEN p.fi AND p.ff
-          AND (p.suc IS NULL OR ru.id_sucursal = p.suc)
-        GROUP BY estado
-    ) t) AS por_estado_lote,
-
-    (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-        \'estado\', t.estado,
-        \'conteo\', t.conteo,
-        \'valor_usd\', t.valor_usd
-    )) FROM (
-        SELECT vc.estado,
-            COUNT(DISTINCT vc.id) AS conteo,
-            COALESCE(SUM(vcd.subtotal), 0) AS valor_usd
-        FROM valorizacion_compra vc
-        LEFT JOIN valorizacion_compramineral_detalle vcd ON vcd.id_valorizacion_compra = vc.id
-        CROSS JOIN prm p
-        WHERE vc.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
-        GROUP BY vc.estado
-    ) t) AS estado_valorizaciones,
-
-    (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-        \'correlativo\', t.correlativo,
-        \'guia_remitente\', t.guia_remitente,
-        \'peso_declarado_t\', t.peso_declarado_t,
-        \'peso_real_t\', t.peso_real_t,
-        \'merma_pct\', t.merma_pct
-    )) FROM (
-        SELECT lm.correlativo,
-            g.guia_remitente,
-            g.peso_guia_remision / 1000 AS peso_declarado_t,
-            COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0) / 1000 AS peso_real_t,
-            ROUND(((g.peso_guia_remision - COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0)) / NULLIF(g.peso_guia_remision, 0)) * 100, 3) AS merma_pct
-        FROM lote_mineral lm
-        INNER JOIN lote_guia lg ON lg.id_lote_mineral = lm.id
-        INNER JOIN guia_primer_tramo g ON g.id = lg.id_guia_primer_tramo
-        INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
-        CROSS JOIN prm p
-        WHERE g.peso_guia_remision > 0
-          AND COALESCE(lm.fecha_hora_peso_final, lm.created_at) BETWEEN p.fi AND p.ff
-          AND (p.suc IS NULL OR ru.id_sucursal = p.suc)
-        ORDER BY ABS(merma_pct) DESC
-        LIMIT 15
-    ) t) AS merma,
-
-    (SELECT JSON_OBJECT(
-        \'guias_total\', t.guias_total,
-        \'guias_no_conformidad\', t.no_conformidad,
-        \'porcentaje\', ROUND(t.no_conformidad * 100.0 / NULLIF(t.guias_total, 0), 2)
-    ) FROM (
-        SELECT COUNT(*) AS guias_total,
-            SUM(CASE WHEN g.con_no_conformidad = 1 THEN 1 ELSE 0 END) AS no_conformidad
-        FROM guia_primer_tramo g
-        INNER JOIN recepcion_unidad ru ON ru.id = g.id_recepcion_unidad
-        CROSS JOIN prm p
-        WHERE COALESCE(g.fecha_emision, g.created_at) BETWEEN p.fi AND p.ff
-          AND (p.suc IS NULL OR ru.id_sucursal = p.suc)
-    ) t) AS no_conformidad,
-
-    (SELECT JSON_OBJECT(
-        \'ingreso_a_pesaje_h\', (
-            SELECT ROUND(AVG(TIMESTAMPDIFF(MINUTE, ru.fecha_hora_ingreso, ru.fecha_hora_inicio_pesaje)) / 60, 2)
-            FROM recepcion_unidad ru
-            CROSS JOIN prm p
-            WHERE ru.fecha_hora_ingreso BETWEEN p.fi AND p.ff
-              AND ru.fecha_hora_inicio_pesaje IS NOT NULL
-              AND (p.suc IS NULL OR ru.id_sucursal = p.suc)
+        $sql = '
+        WITH
+        prm AS (
+            SELECT ? AS fi, ? AS ff, ? AS suc
         ),
-        \'pesaje_a_analisis_h\', (
-            SELECT ROUND(AVG(TIMESTAMPDIFF(MINUTE, lm.fecha_hora_peso_final, cf.confirmado_at)) / 60, 2)
+        rec AS (
+            SELECT
+                DATE_FORMAT(COALESCE(lm.fecha_hora_peso_final, lm.created_at), \'%Y-%m\') AS ym,
+                COALESCE(SUM(lm.peso_neto), 0) / 1000 AS tn
             FROM lote_mineral lm
             INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
-            INNER JOIN (
-                SELECT ga.id_lote_mineral, MAX(am.created_at) AS confirmado_at
-                FROM analisis_mineral am
-                INNER JOIN grupo_analisis ga ON ga.id = am.id_grupo_analisis
-                WHERE (am.ley_oro_confirmada = 1 OR am.ley_plata_confirmada = 1)
-                GROUP BY ga.id_lote_mineral
-            ) cf ON cf.id_lote_mineral = lm.id
             CROSS JOIN prm p
             WHERE COALESCE(lm.fecha_hora_peso_final, lm.created_at) BETWEEN p.fi AND p.ff
               AND (p.suc IS NULL OR ru.id_sucursal = p.suc)
-        )
-    )) AS tiempos,
-
-    (SELECT JSON_OBJECT(
-        \'unidades_en_planta\', (SELECT COUNT(*) FROM recepcion_unidad WHERE estado = \'En Planta\'),
-        \'visitas_abiertas\', (SELECT COUNT(*) FROM recepcion_visita WHERE fecha_hora_salida IS NULL),
-        \'guias_activas\', (SELECT COUNT(*) FROM guia_primer_tramo WHERE estado = \'Activo\'),
-        \'lotes_sin_validar\', (SELECT COUNT(*) FROM lote_mineral WHERE esta_validado = 0 AND (estado IS NULL OR estado <> \'Eliminado\')),
-        \'valorizaciones_pendientes\', (SELECT COUNT(*) FROM valorizacion_compra WHERE estado = \'Propuesta\')
-    )) AS operativo,
-
-    (SELECT JSON_OBJECT(
-        \'saldo_anticipos_pen\', (SELECT COALESCE(SUM(saldo_actual), 0) FROM anticipo_proveedor WHERE estado = \'Con Saldo\'),
-        \'deuda_proveedores_pen\', (
-            SELECT COALESCE(SUM(x.total - x.pagado), 0) FROM (
-                SELECT cc.total,
-                    (SELECT COALESCE(SUM(pg.monto_pagado), 0) FROM pago_comprobante_compra pg WHERE pg.id_comprobante_compra = cc.id AND pg.es_anulado = 0) AS pagado
-                FROM comprobante_compra cc
-                WHERE cc.estado <> \'Anulado\'
-            ) x
+              AND (lm.estado IS NULL OR lm.estado <> \'Eliminado\')
+            GROUP BY ym
         ),
-        \'comprobantes_emitidos\', (SELECT COUNT(*) FROM comprobante_compra WHERE estado <> \'Anulado\')
-    )) AS financiero,
+        des AS (
+            SELECT
+                DATE_FORMAT(d.created_at, \'%Y-%m\') AS ym,
+                COALESCE(SUM(dd.peso_tomado), 0) / 1000 AS tn
+            FROM despacho d
+            INNER JOIN despacho_detalle dd ON dd.id_despacho = d.id
+            CROSS JOIN prm p
+            WHERE d.created_at BETWEEN p.fi AND p.ff
+              AND d.es_anulado = 0
+            GROUP BY ym
+        ),
+        cmp AS (
+            SELECT
+                DATE_FORMAT(vc.fecha_hora_valorizacion, \'%Y-%m\') AS ym,
+                vcd.elemento_quimico AS el,
+                COALESCE(SUM(COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0)), 0) AS peso,
+                COALESCE(SUM(vcd.subtotal), 0) AS monto,
+                COALESCE(SUM(vcd.precio_por_tonelada * COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0)), 0) AS ptn_pond
+            FROM valorizacion_compra vc
+            INNER JOIN valorizacion_compramineral_detalle vcd ON vcd.id_valorizacion_compra = vc.id
+            LEFT JOIN lote_guia lg ON lg.id = vcd.id_lote_guia
+            LEFT JOIN lote_mineral lm ON lm.id = lg.id_lote_mineral
+            CROSS JOIN prm p
+            WHERE vc.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
+              AND vc.estado <> \'Anulado\'
+            GROUP BY ym, el
+        ),
+        vta AS (
+            SELECT
+                DATE_FORMAT(vv.fecha_hora_valorizacion, \'%Y-%m\') AS ym,
+                vvd.elemento_quimico AS el,
+                COALESCE(SUM(dd.peso_tomado), 0) AS peso,
+                COALESCE(SUM(vvd.subtotal), 0) AS monto,
+                COALESCE(SUM(vvd.precio_por_tonelada * dd.peso_tomado), 0) AS ptn_pond
+            FROM valorizacion_venta vv
+            INNER JOIN valorizacion_venta_detalle vvd ON vvd.id_valorizacion_venta = vv.id
+            INNER JOIN despacho_detalle dd ON dd.id = vvd.id_despacho_detalle
+            CROSS JOIN prm p
+            WHERE vv.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
+              AND vv.estado <> \'Anulado\'
+            GROUP BY ym, el
+        ),
+        ley_cmp AS (
+            SELECT
+                DATE_FORMAT(vc.fecha_hora_valorizacion, \'%Y-%m\') AS ym,
+                vcd.elemento_quimico AS el,
+                COALESCE(SUM(
+                    (CASE WHEN vcd.elemento_quimico = \'Oro\'
+                          THEN CASE WHEN ga.id IS NOT NULL THEN COALESCE(ga.ley_oro_cierre, 0) ELSE COALESCE(lm.ley_oro, 0) END
+                          ELSE CASE WHEN ga.id IS NOT NULL THEN COALESCE(ga.ley_plata_cierre, 0) ELSE COALESCE(lm.ley_plata, 0) END
+                     END) * COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0)
+                ), 0) AS ley_pond,
+                COALESCE(SUM(COALESCE(NULLIF(lg.peso_neto, 0), lm.peso_neto, 0)), 0) AS peso
+            FROM valorizacion_compra vc
+            INNER JOIN valorizacion_compramineral_detalle vcd ON vcd.id_valorizacion_compra = vc.id
+            LEFT JOIN lote_guia lg ON lg.id = vcd.id_lote_guia
+            LEFT JOIN lote_mineral lm ON lm.id = lg.id_lote_mineral
+            LEFT JOIN grupo_analisis ga ON ga.id = vcd.id_grupo_analisis
+            CROSS JOIN prm p
+            WHERE vc.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
+              AND vc.estado <> \'Anulado\'
+            GROUP BY ym, el
+        ),
+        ddt_ley AS (
+            SELECT
+                id_despacho_detalle,
+                AVG(ley_oro_cliente) AS ley_oro,
+                AVG(ley_plata_cliente) AS ley_plata
+            FROM distribucion_detalle
+            GROUP BY id_despacho_detalle
+        ),
+        ley_vta AS (
+            SELECT
+                DATE_FORMAT(vv.fecha_hora_valorizacion, \'%Y-%m\') AS ym,
+                vvd.elemento_quimico AS el,
+                COALESCE(SUM(
+                    (CASE WHEN vvd.elemento_quimico = \'Oro\'
+                          THEN COALESCE(dd.ley_oro_final, 0)
+                          ELSE COALESCE(dd.ley_plata_final, 0)
+                     END) * dd.peso_tomado
+                ), 0) AS final_pond,
+                COALESCE(SUM(
+                    (CASE WHEN vvd.elemento_quimico = \'Oro\'
+                          THEN COALESCE(dl.ley_oro, 0)
+                          ELSE COALESCE(dl.ley_plata, 0)
+                     END) * dd.peso_tomado
+                ), 0) AS cliente_pond,
+                COALESCE(SUM(dd.peso_tomado), 0) AS peso
+            FROM valorizacion_venta vv
+            INNER JOIN valorizacion_venta_detalle vvd ON vvd.id_valorizacion_venta = vv.id
+            INNER JOIN despacho_detalle dd ON dd.id = vvd.id_despacho_detalle
+            LEFT JOIN ddt_ley dl ON dl.id_despacho_detalle = dd.id
+            CROSS JOIN prm p
+            WHERE vv.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
+              AND vv.estado <> \'Anulado\'
+            GROUP BY ym, el
+        )
+        SELECT
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'tn\', tn)) FROM rec) AS rec,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'tn\', tn)) FROM des) AS des,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'peso\', peso, \'monto\', monto, \'ptn_pond\', ptn_pond)) FROM cmp) AS cmp,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'peso\', peso, \'monto\', monto, \'ptn_pond\', ptn_pond)) FROM vta) AS vta,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'ley_pond\', ley_pond, \'peso\', peso)) FROM ley_cmp) AS ley_cmp,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'final_pond\', final_pond, \'cliente_pond\', cliente_pond, \'peso\', peso)) FROM ley_vta) AS ley_vta
+        ';
 
-    (SELECT JSON_OBJECT(
-        \'fecha\', tc.fecha,
-        \'valor_compra\', tc.valor_compra,
-        \'valor_venta\', tc.valor_venta
-    ) FROM tipo_cambio tc WHERE tc.estado = \'Activo\' ORDER BY tc.fecha DESC LIMIT 1) AS tipo_cambio
+        $row = DB::selectOne($sql, [$fechaInicio, $fechaFin, $idSucursal]);
 
-FROM tot
-';
-    }
-
-    /**
-     * Decodificar la fila cruda de la consulta al contrato del dashboard.
-     *
-     * @return array<string,mixed>
-     */
-    private static function decodificar(?object $row): array
-    {
         if (! $row) {
-            return self::vacio();
+            return [];
         }
 
-        $decodificarJson = function ($valor, array $fallback) {
-            if ($valor === null || $valor === '') {
-                return $fallback;
-            }
-            $arr = json_decode((string) $valor, true);
+        return self::ensamblar_serie($row);
+    }
 
-            return is_array($arr) ? $arr : $fallback;
-        };
+    /**
+     * Traducir la fila cruda de la consulta a la serie mensual.
+     *
+     * @param  object  $row  Fila con las columnas JSON de la consulta.
+     * @return array<string,array<string,mixed>> Clave `YYYY-MM` => indicadores
+     */
+    private static function ensamblar_serie(object $row): array
+    {
+        $serie = [];
+
+        // Recepción y despacho: una fila por mes.
+        foreach (self::json($row->rec ?? null) as $r) {
+            $ym = self::ym($r);
+            self::mes($serie, $ym);
+            $serie[$ym]['tn_receptadas'] = (float) $r['tn'];
+        }
+        foreach (self::json($row->des ?? null) as $d) {
+            $ym = self::ym($d);
+            self::mes($serie, $ym);
+            $serie[$ym]['tn_despachadas'] = (float) $d['tn'];
+        }
+
+        // Compras y ventas: una fila por mes + elemento.
+        foreach (self::json($row->cmp ?? null) as $c) {
+            $ym = self::ym($c);
+            $el = self::el($c);
+            if ($el === null) {
+                continue;
+            }
+            $peso = (float) $c['peso'];
+            self::mes($serie, $ym);
+            $serie[$ym]['costos']['compra'][$el] = $peso > 0 ? (float) $c['ptn_pond'] / $peso : 0.0;
+            $serie[$ym]['costos']['compra_total'] += (float) $c['ptn_pond'];
+            $serie[$ym]['costos']['compra_peso'] += $peso;
+            $serie[$ym]['monto_compra_usd'] += (float) $c['monto'];
+            $serie[$ym]['tn_compradas'] += $peso / 1000;
+        }
+        foreach (self::json($row->vta ?? null) as $v) {
+            $ym = self::ym($v);
+            $el = self::el($v);
+            if ($el === null) {
+                continue;
+            }
+            $peso = (float) $v['peso'];
+            self::mes($serie, $ym);
+            $serie[$ym]['costos']['venta'][$el] = $peso > 0 ? (float) $v['ptn_pond'] / $peso : 0.0;
+            $serie[$ym]['costos']['venta_total'] += (float) $v['ptn_pond'];
+            $serie[$ym]['costos']['venta_peso'] += $peso;
+            $serie[$ym]['monto_venta_usd'] += (float) $v['monto'];
+            $serie[$ym]['tn_vendidas'] += $peso / 1000;
+        }
+
+        // Leyes de compra: cierre de leyes del grupo de análisis con fallback
+        // a la ley consolidada del lote.
+        foreach (self::json($row->ley_cmp ?? null) as $l) {
+            $ym = self::ym($l);
+            $el = self::el($l);
+            if ($el === null) {
+                continue;
+            }
+            $peso = (float) $l['peso'];
+            self::mes($serie, $ym);
+            $serie[$ym]['leyes']['compra'][$el] = $peso > 0 ? (float) $l['ley_pond'] / $peso : 0.0;
+        }
+
+        // Leyes de venta: la "final" es la de Fabero (despacho_detalle) y la
+        // "cliente" la que reporta la planta receptora (distribucion_detalle).
+        foreach (self::json($row->ley_vta ?? null) as $l) {
+            $ym = self::ym($l);
+            $el = self::el($l);
+            if ($el === null) {
+                continue;
+            }
+            $peso = (float) $l['peso'];
+            self::mes($serie, $ym);
+            if ($peso > 0) {
+                $serie[$ym]['leyes']['venta_final'][$el] = (float) $l['final_pond'] / $peso;
+                $serie[$ym]['leyes']['venta_cliente'][$el] = (float) $l['cliente_pond'] / $peso;
+            }
+        }
+
+        // Cierre: derivar los promedios ponderados de costo.
+        foreach ($serie as $ym => $mes) {
+            $costos = $mes['costos'];
+
+            $pesoCompra = (float) $costos['compra_peso'];
+            $pesoVenta = (float) $costos['venta_peso'];
+
+            $mes['costo_compra_usd_t'] = $pesoCompra > 0 ? (float) $costos['compra_total'] / $pesoCompra : 0.0;
+            $mes['costo_venta_usd_t'] = $pesoVenta > 0 ? (float) $costos['venta_total'] / $pesoVenta : 0.0;
+
+            unset($costos['compra_total'], $costos['compra_peso']);
+            unset($costos['venta_total'], $costos['venta_peso']);
+            $mes['costos'] = $costos;
+
+            $serie[$ym] = $mes;
+        }
+
+        return $serie;
+    }
+
+    /**
+     * Fotografía actual: cuentas por pagar/cobrar, stock y días en cancha,
+     * y valorizaciones aprobadas sin comprobante registrado.
+     *
+     * No lleva filtros de período: son saldos y pendientes acumulados a la
+     * fecha de consulta.
+     *
+     * @return array<string,mixed>
+     */
+    public static function get_snapshot(): array
+    {
+        $sql = '
+        WITH
+        tc AS (
+            SELECT fecha, valor_compra, valor_venta
+            FROM tipo_cambio
+            WHERE estado = \'Activo\'
+            ORDER BY fecha DESC
+            LIMIT 1
+        ),
+        cp AS (
+            SELECT
+                cc.id_valorizacion_compra,
+                GREATEST(COALESCE(cc.monto_neto, 0) - COALESCE(cc.avance_pago_neto, 0), 0) AS neto_usd,
+                GREATEST(COALESCE(cc.monto_detraccion_soles, 0) - COALESCE(cc.avance_pago_detraccion, 0), 0) AS detraccion_pen
+            FROM comprobante_compra cc
+            WHERE cc.estado <> \'Anulado\'
+        ),
+        cv AS (
+            SELECT
+                cv.id_planta_destino,
+                GREATEST(COALESCE(cv.monto_neto, 0) - COALESCE(cv.avance_pago_neto, 0), 0) AS neto_usd,
+                GREATEST(COALESCE(cv.monto_detraccion_soles, 0) - COALESCE(cv.avance_pago_detraccion, 0), 0) AS detraccion_pen
+            FROM comprobante_venta cv
+            WHERE cv.estado <> \'Anulado\'
+        ),
+        lotes AS (
+            SELECT
+                COALESCE(SUM(COALESCE(lm.peso_actual, lm.peso_neto)), 0) / 1000 AS tmh,
+                COALESCE(SUM(COALESCE(lm.peso_actual, lm.peso_neto) * (1 - COALESCE(lm.ley_humedad, 0) / 100)), 0) / 1000 AS tms
+            FROM lote_mineral lm
+            WHERE (lm.estado IS NULL OR lm.estado <> \'Eliminado\')
+              AND COALESCE(lm.peso_actual, lm.peso_neto) > 0
+              AND NOT EXISTS (SELECT 1 FROM blending_detalle bd WHERE bd.id_lote_mineral = lm.id)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM despacho_detalle dd
+                  INNER JOIN despacho d ON d.id = dd.id_despacho
+                  WHERE dd.id_lote_mineral = lm.id
+                    AND d.es_anulado = 0
+              )
+        ),
+        blends AS (
+            SELECT
+                COALESCE(SUM(b.peso_actual), 0) / 1000 AS tmh,
+                COALESCE(SUM(b.peso_actual * (1 - COALESCE(b.ley_humedad, 0) / 100)), 0) / 1000 AS tms
+            FROM blending b
+            WHERE b.peso_actual > 0
+        ),
+        por_salir AS (
+            SELECT
+                COALESCE(SUM(ddt.peso_tomado), 0) / 1000 AS tmh,
+                COALESCE(SUM(ddt.peso_tomado * (1 - COALESCE(
+                    CASE WHEN dd.id_lote_mineral IS NOT NULL THEN lm.ley_humedad ELSE b.ley_humedad END, 0) / 100)), 0) / 1000 AS tms
+            FROM distribucion_detalle ddt
+            INNER JOIN distribucion di ON di.id = ddt.id_distribucion
+            INNER JOIN despacho_detalle dd ON dd.id = ddt.id_despacho_detalle
+            INNER JOIN despacho d ON d.id = dd.id_despacho AND d.es_anulado = 0
+            LEFT JOIN recepcion_unidad ru ON ru.id_distribucion = di.id
+            LEFT JOIN lote_mineral lm ON lm.id = dd.id_lote_mineral
+            LEFT JOIN blending b ON b.id = dd.id_blending
+            WHERE ru.fecha_hora_salida IS NULL
+        ),
+        par_blending AS (
+            SELECT
+                bd.id_lote_mineral AS id_lote,
+                COALESCE(ru.fecha_hora_ingreso, lm.created_at) AS fecha_recepcion,
+                MIN(d_b.created_at) AS fecha_despacho
+            FROM blending_detalle bd
+            INNER JOIN lote_mineral lm ON lm.id = bd.id_lote_mineral
+            LEFT JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
+            LEFT JOIN despacho_detalle dd_b ON dd_b.id_blending = bd.id_blending
+            LEFT JOIN despacho d_b ON d_b.id = dd_b.id_despacho AND d_b.es_anulado = 0
+            GROUP BY bd.id_lote_mineral, bd.id_blending, ru.fecha_hora_ingreso, lm.created_at
+        ),
+        par_directo AS (
+            SELECT
+                dd.id_lote_mineral AS id_lote,
+                COALESCE(ru.fecha_hora_ingreso, lm.created_at) AS fecha_recepcion,
+                MIN(d.created_at) AS fecha_despacho
+            FROM despacho_detalle dd
+            INNER JOIN lote_mineral lm ON lm.id = dd.id_lote_mineral
+            LEFT JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
+            INNER JOIN despacho d ON d.id = dd.id_despacho AND d.es_anulado = 0
+            GROUP BY dd.id_lote_mineral, ru.fecha_hora_ingreso, lm.created_at
+        ),
+        ciclos AS (
+            SELECT fecha_recepcion, fecha_despacho, \'blending\' AS tipo
+            FROM par_blending
+            WHERE fecha_despacho IS NOT NULL
+            UNION ALL
+            SELECT fecha_recepcion, fecha_despacho, \'directo\' AS tipo
+            FROM par_directo
+            WHERE fecha_despacho IS NOT NULL
+        ),
+        sin_comp_compras AS (
+            SELECT
+                vc.correlativo AS documento,
+                p.razon_social AS contraparte,
+                vc.fecha_hora_valorizacion AS fecha,
+                COALESCE((SELECT SUM(vcd.subtotal) FROM valorizacion_compramineral_detalle vcd WHERE vcd.id_valorizacion_compra = vc.id), 0) AS monto
+            FROM valorizacion_compra vc
+            INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
+            WHERE vc.estado = \'Aprobado\'
+              AND NOT EXISTS (SELECT 1 FROM comprobante_compra cc2 WHERE cc2.id_valorizacion_compra = vc.id)
+        ),
+        sin_comp_ventas AS (
+            SELECT
+                vv.correlativo AS documento,
+                pd.razon_social AS contraparte,
+                vv.fecha_hora_valorizacion AS fecha,
+                COALESCE((SELECT SUM(vvd.subtotal) FROM valorizacion_venta_detalle vvd WHERE vvd.id_valorizacion_venta = vv.id), 0) AS monto
+            FROM valorizacion_venta vv
+            INNER JOIN planta_destino pd ON pd.id = vv.id_planta
+            WHERE vv.estado = \'Aprobado\'
+              AND EXISTS (
+                  SELECT 1 FROM valorizacion_venta_detalle vvd2
+                  WHERE vvd2.id_valorizacion_venta = vv.id
+                    AND vvd2.id NOT IN (
+                        SELECT dcv.id_valorizacion_venta_detalle
+                        FROM detalle_comprobante_venta dcv
+                        INNER JOIN comprobante_venta cv2 ON cv2.id = dcv.id_comprobante_venta
+                        WHERE cv2.estado <> \'Anulado\'
+                    )
+              )
+        )
+        SELECT
+            (SELECT JSON_OBJECT(
+                \'neto_usd\', (SELECT COALESCE(SUM(neto_usd), 0) FROM cp),
+                \'detraccion_pen\', (SELECT COALESCE(SUM(detraccion_pen), 0) FROM cp),
+                \'mayor_deudor\', (SELECT JSON_OBJECT(\'nombre\', x.nombre, \'monto_usd\', x.saldo)
+                    FROM (
+                        SELECT p.razon_social AS nombre, SUM(cp.neto_usd) AS saldo
+                        FROM cp
+                        INNER JOIN valorizacion_compra vc ON vc.id = cp.id_valorizacion_compra
+                        INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
+                        GROUP BY p.id, p.razon_social
+                        HAVING saldo > 0
+                        ORDER BY saldo DESC
+                        LIMIT 1
+                    ) x
+                )
+            )) AS por_pagar,
+            (SELECT JSON_OBJECT(
+                \'neto_usd\', (SELECT COALESCE(SUM(neto_usd), 0) FROM cv),
+                \'detraccion_pen\', (SELECT COALESCE(SUM(detraccion_pen), 0) FROM cv),
+                \'mayor_acreedor\', (SELECT JSON_OBJECT(\'nombre\', x.nombre, \'monto_usd\', x.saldo)
+                    FROM (
+                        SELECT pd.razon_social AS nombre, SUM(cv.neto_usd) AS saldo
+                        FROM cv
+                        INNER JOIN planta_destino pd ON pd.id = cv.id_planta_destino
+                        GROUP BY pd.id, pd.razon_social
+                        HAVING saldo > 0
+                        ORDER BY saldo DESC
+                        LIMIT 1
+                    ) x
+                )
+            )) AS por_cobrar,
+            (SELECT JSON_OBJECT(\'fecha\', tc.fecha, \'valor_compra\', tc.valor_compra, \'valor_venta\', tc.valor_venta) FROM tc) AS tipo_cambio,
+            (SELECT JSON_OBJECT(
+                \'lotes\', (SELECT JSON_OBJECT(\'tmh\', lotes.tmh, \'tms\', lotes.tms) FROM lotes),
+                \'blendings\', (SELECT JSON_OBJECT(\'tmh\', blends.tmh, \'tms\', blends.tms) FROM blends),
+                \'por_salir\', (SELECT JSON_OBJECT(\'tmh\', ps.tmh, \'tms\', ps.tms) FROM por_salir ps)
+            )) AS stock,
+            (SELECT JSON_OBJECT(
+                \'todo\', (SELECT COALESCE(ROUND(AVG(DATEDIFF(fecha_despacho, fecha_recepcion)), 2), 0) FROM ciclos),
+                \'blending\', (SELECT COALESCE(ROUND(AVG(DATEDIFF(fecha_despacho, fecha_recepcion)), 2), 0) FROM ciclos WHERE tipo = \'blending\'),
+                \'directo\', (SELECT COALESCE(ROUND(AVG(DATEDIFF(fecha_despacho, fecha_recepcion)), 2), 0) FROM ciclos WHERE tipo = \'directo\')
+            )) AS dias,
+            (SELECT JSON_OBJECT(
+                \'compras\', (SELECT JSON_OBJECT(\'conteo\', x.conteo, \'monto_usd\', x.monto) FROM (
+                    SELECT COUNT(*) AS conteo, COALESCE(SUM(monto), 0) AS monto FROM sin_comp_compras
+                ) x),
+                \'ventas\', (SELECT JSON_OBJECT(\'conteo\', x.conteo, \'monto_usd\', x.monto) FROM (
+                    SELECT COUNT(*) AS conteo, COALESCE(SUM(monto), 0) AS monto FROM sin_comp_ventas
+                ) x),
+                \'detalle\', (SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                    \'tipo\', y.tipo, \'documento\', y.documento, \'contraparte\', y.contraparte,
+                    \'dias\', y.dias, \'monto_usd\', y.monto
+                )) FROM (
+                    SELECT \'C\' AS tipo, documento, contraparte, fecha, DATEDIFF(CURRENT_DATE, DATE(fecha)) AS dias, monto
+                    FROM sin_comp_compras
+                    UNION ALL
+                    SELECT \'V\' AS tipo, documento, contraparte, fecha, DATEDIFF(CURRENT_DATE, DATE(fecha)) AS dias, monto
+                    FROM sin_comp_ventas
+                    ORDER BY dias DESC
+                    LIMIT 12
+                ) y)
+            )) AS sin_comprobante
+        ';
+
+        $row = DB::selectOne($sql);
+
+        if (! $row) {
+            return [];
+        }
 
         return [
-            'kpis' => $decodificarJson($row->kpis ?? null, []),
-            'serie' => $decodificarJson($row->serie ?? null, []),
-            'embudo' => $decodificarJson($row->embudo ?? null, []),
-            'por_proveedor' => $decodificarJson($row->por_proveedor ?? null, []),
-            'por_elemento' => $decodificarJson($row->por_elemento ?? null, []),
-            'por_estado_lote' => $decodificarJson($row->por_estado_lote ?? null, []),
-            'estado_valorizaciones' => $decodificarJson($row->estado_valorizaciones ?? null, []),
-            'merma' => $decodificarJson($row->merma ?? null, []),
-            'no_conformidad' => $decodificarJson($row->no_conformidad ?? null, []),
-            'tiempos' => $decodificarJson($row->tiempos ?? null, []),
-            'operativo' => $decodificarJson($row->operativo ?? null, []),
-            'financiero' => $decodificarJson($row->financiero ?? null, []),
-            'tipo_cambio' => $decodificarJson($row->tipo_cambio ?? null, []),
+            'por_pagar' => self::json($row->por_pagar ?? null),
+            'por_cobrar' => self::json($row->por_cobrar ?? null),
+            'tipo_cambio' => self::json($row->tipo_cambio ?? null),
+            'stock' => self::json($row->stock ?? null),
+            'dias' => self::json($row->dias ?? null),
+            'sin_comprobante' => self::json($row->sin_comprobante ?? null),
         ];
     }
 
     /**
-     * Estructura vacía para cuando la consulta no devuelve filas.
+     * Decodificar una columna JSON de MySQL.
      *
-     * @return array<string,mixed>
+     * @return array<int,array<string,mixed>>
      */
-    private static function vacio(): array
+    private static function json(mixed $valor): array
     {
-        return [
-            'kpis' => [],
-            'serie' => [],
-            'embudo' => [],
-            'por_proveedor' => [],
-            'por_elemento' => [],
-            'por_estado_lote' => [],
-            'estado_valorizaciones' => [],
-            'merma' => [],
-            'no_conformidad' => [],
-            'tiempos' => [],
-            'operativo' => [],
-            'financiero' => [],
-            'tipo_cambio' => [],
+        if ($valor === null || $valor === '') {
+            return [];
+        }
+
+        $arr = json_decode((string) $valor, true);
+
+        return is_array($arr) ? $arr : [];
+    }
+
+    /**
+     * Inicializar la estructura de un mes dentro de la serie.
+     *
+     * Todos los acumuladores se crean con 0 para que los `+=` posteriores no
+     * operen sobre claves inexistentes (PHP 8 lanza "Undefined array key").
+     *
+     * @param  array<string,array<string,mixed>>  $serie
+     */
+    private static function mes(array &$serie, string $ym): void
+    {
+        if (isset($serie[$ym])) {
+            return;
+        }
+
+        $serie[$ym] = [
+            'tn_receptadas' => 0.0,
+            'tn_despachadas' => 0.0,
+            'tn_compradas' => 0.0,
+            'tn_vendidas' => 0.0,
+            'monto_compra_usd' => 0.0,
+            'monto_venta_usd' => 0.0,
+            'costos' => [
+                'compra' => ['Oro' => 0.0, 'Plata' => 0.0],
+                'venta' => ['Oro' => 0.0, 'Plata' => 0.0],
+                'compra_total' => 0.0,
+                'compra_peso' => 0.0,
+                'venta_total' => 0.0,
+                'venta_peso' => 0.0,
+            ],
+            'leyes' => [
+                'compra' => ['Oro' => 0.0, 'Plata' => 0.0],
+                'venta_final' => ['Oro' => 0.0, 'Plata' => 0.0],
+                'venta_cliente' => ['Oro' => 0.0, 'Plata' => 0.0],
+            ],
         ];
+    }
+
+    /**
+     * Clave de mes `YYYY-MM` de una fila agregada.
+     */
+    private static function ym(array $fila): string
+    {
+        return (string) ($fila['ym'] ?? '');
+    }
+
+    /**
+     * Elemento químico normalizado (`Oro` / `Plata`).
+     * Devuelve null cuando la fila no corresponde a un elemento conocido.
+     */
+    private static function el(array $fila): ?string
+    {
+        $el = (string) ($fila['el'] ?? '');
+
+        return match ($el) {
+            'Oro' => 'Oro',
+            'Plata' => 'Plata',
+            default => null,
+        };
     }
 }

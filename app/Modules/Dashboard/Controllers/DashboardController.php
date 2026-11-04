@@ -9,24 +9,18 @@ use Illuminate\Http\Request;
 class DashboardController
 {
     /**
-     * Obtener el paquete completo de indicadores y métricas.
+     * Obtener el resumen de indicadores: evolución mensual de los últimos
+     * 12 meses cerrados (con su comparativo interanual) y la fotografía
+     * actual de planta y finanzas.
      */
-    public function get_indicadores(Request $request): JsonResponse
+    public function get_resumen(Request $request): JsonResponse
     {
         $request->validate([
-            'fecha_inicio' => 'nullable|date_format:Y-m-d',
-            'fecha_fin' => 'nullable|date_format:Y-m-d',
             'id_sucursal' => 'nullable|integer|min:1',
         ]);
 
         $idSucursal = $request->query('id_sucursal') ? (int) $request->query('id_sucursal') : null;
 
-        $result = DashboardService::get_indicadores(
-            $idSucursal,
-            $request->query('fecha_inicio'),
-            $request->query('fecha_fin'),
-        );
-
-        return response()->json($result);
+        return response()->json(DashboardService::get_resumen($idSucursal));
     }
 }

@@ -5,6 +5,7 @@ namespace App\Modules\RecepcionMineral\Data;
 use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoPesaje;
+use App\Shared\Enums\ValorizacionCompra\EstadoValorizacionCompra;
 use Illuminate\Support\Facades\DB;
 
 class RecepcionMineralData
@@ -552,7 +553,14 @@ class RecepcionMineralData
 
             lm.observaciones                           AS observaciones,
             NULL                                       AS observacion_peso_inicial,
-            NULL                                       AS observacion_peso_final
+            NULL                                       AS observacion_peso_final,
+            -- Campos exclusive de filas PARTICION (bloque C).
+            NULL                                       AS id_particion,
+            NULL                                       AS particion_letra,
+            NULL                                       AS particion_correlativo,
+            NULL                                       AS particion_evidencias,
+            CAST(NULL AS DECIMAL(20,4))                AS lote_peso_neto_total,
+            CAST(NULL AS SIGNED)                       AS particiones_total
         FROM lote_mineral lm
         -- LEFT JOIN porque el lote padre particionado tiene id_recepcion_unidad = NULL.
         LEFT JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
@@ -565,34 +573,15 @@ class RecepcionMineralData
         LEFT JOIN zona_origen zo     ON zo.id = lm.id_zona_origen
         LEFT JOIN conductor c        ON c.id = ru.id_conductor
         LEFT JOIN empleado emp_reg   ON emp_reg.id = ru.id_empleado_recepcion
-        WHERE (
-              -- (1) Lote regular pesado asignado a una unidad de la sucursal.
-              (lm.id_recepcion_unidad IS NOT NULL
-                 AND ru.id_sucursal = :id_sucursal_a
-                 AND ru.estado_pesaje = :estado_pesaje_a
-                 AND ru.tipo_ingreso = 'Recepción de Mineral')
-              OR
-              -- (2) Lote padre particionado y finalizado. No tiene unidad asignada,
-              -- pero sus particiones hijas sí están en unidades de la sucursal.
-              (lm.particionado_desde_balanza = 1
-                 AND lm.particion_finalizada = 1
-                 AND lm.id_recepcion_unidad IS NULL
-                 AND lm.peso_neto IS NOT NULL
-                 AND EXISTS (
-                     SELECT 1
-                     FROM particion_lote_mineral p
-                     INNER JOIN recepcion_unidad ru2 ON ru2.id = p.id_recepcion_unidad
-                     WHERE p.id_lote_mineral = lm.id
-                       AND ru2.id_sucursal = :id_sucursal_a_padre
-                       AND ru2.tipo_ingreso = 'Recepción de Mineral'
-                 ))
-          )
+        WHERE lm.id_recepcion_unidad IS NOT NULL
+          AND ru.id_sucursal = :id_sucursal_a
+          AND ru.estado_pesaje = :estado_pesaje_a
+          AND ru.tipo_ingreso = 'Recepción de Mineral'
           AND (lm.estado IS NULL OR lm.estado != 'Eliminado')
         ";
 
         $paramsA = [
             'id_sucursal_a' => $idSucursal,
-            'id_sucursal_a_padre' => $idSucursal,
             'estado_pesaje_a' => $estadoPesado,
         ];
 
@@ -608,9 +597,7 @@ class RecepcionMineralData
             $sqlA .= ' AND 1=0'; // filtro excluye este bloque
         }
         if (! empty($filters['placa'])) {
-            // El filtro de placa no aplica a lotes padre particionados (no tienen
-            // vehículo directo). Sólo filtra lotes regulares.
-            $sqlA .= ' AND (lm.id_recepcion_unidad IS NULL OR v.placa = :placa_a)';
+            $sqlA .= ' AND v.placa = :placa_a';
             $paramsA['placa_a'] = $filters['placa'];
         }
         if (! empty($filters['lote_correlativo'])) {
@@ -618,8 +605,7 @@ class RecepcionMineralData
             $paramsA['lote_correlativo_a'] = '%'.$filters['lote_correlativo'].'%';
         }
         if (! empty($filters['id_empresa_transporte'])) {
-            // Mismo razonamiento que el filtro de placa: sólo aplica a lotes regulares.
-            $sqlA .= ' AND (lm.id_recepcion_unidad IS NULL OR ru.id_empresa_transporte = :id_empresa_transporte_a)';
+            $sqlA .= ' AND ru.id_empresa_transporte = :id_empresa_transporte_a';
             $paramsA['id_empresa_transporte_a'] = (int) $filters['id_empresa_transporte'];
         }
 
@@ -704,7 +690,14 @@ class RecepcionMineralData
 
             ddt.observaciones                          AS observaciones,
             NULL                                       AS observacion_peso_inicial,
-            NULL                                       AS observacion_peso_final
+            NULL                                       AS observacion_peso_final,
+            -- Campos exclusive de filas PARTICION (bloque C).
+            NULL                                       AS id_particion,
+            NULL                                       AS particion_letra,
+            NULL                                       AS particion_correlativo,
+            NULL                                       AS particion_evidencias,
+            CAST(NULL AS DECIMAL(20,4))                AS lote_peso_neto_total,
+            CAST(NULL AS SIGNED)                       AS particiones_total
         FROM distribucion_detalle ddt
         INNER JOIN distribucion d            ON d.id  = ddt.id_distribucion
         INNER JOIN despacho ds               ON ds.id = d.id_despacho
@@ -759,72 +752,164 @@ class RecepcionMineralData
             $paramsB['id_empresa_transporte_b'] = (int) $filters['id_empresa_transporte'];
         }
 
+        // ────────────────────────────────────────────────────────────────────
+        // Bloque C: PARTICION (lote padre particionado desde balanza).
+        //   Cada partición es una fila propia del resumen: tiene su unidad real
+        //   (vehículo, conductor, transporte), su ticket y sus pesos. Los datos
+        //   no-peso (proveedor, zona, producto, mineral, condición) se heredan
+        //   del lote padre.
+        // ────────────────────────────────────────────────────────────────────
+        $sqlC = "
+        SELECT
+            'PARTICION'                                   AS tipo_pesaje,
+            'LOTE'                                        AS origen_tipo,
+            NULL                                          AS id_distribucion_detalle,
+            NULL                                          AS id_distribucion,
+            NULL                                          AS id_despacho,
+            NULL                                          AS id_despacho_detalle,
+            NULL                                          AS despacho_correlativo,
+            NULL                                          AS numero_particion,
+            NULL                                          AS origen_correlativo,
+            NULL                                          AS id_lote_origen,
+            NULL                                          AS id_blending_origen,
+            CONCAT('P-', p.id)                            AS id_row,
+
+            lm.id                                         AS id_lote,
+            lm.particionado_desde_balanza,
+            lm.particion_finalizada,
+            lm.correlativo                                AS lote_correlativo,
+            lm.numero_correlativo                         AS lote_numero_correlativo,
+            lm.numero_contacto                            AS lote_numero_contacto,
+            lm.tipo_producto                              AS lote_tipo_producto,
+            lm.tipo_mineral                               AS lote_tipo_mineral,
+            lm.condicion_ingreso                          AS lote_condicion_ingreso,
+            lm.evidencias                                 AS lote_evidencias,
+            lm.log_cambios                                AS lote_log_cambios,
+            lm.created_at                                 AS lote_fecha_creacion,
+
+            p.peso_inicial,
+            p.fecha_hora_peso_inicial,
+            p.peso_final,
+            p.fecha_hora_peso_final,
+            p.peso_neto                                   AS peso_neto,
+
+            p.peso_inicial                                AS peso_bruto,
+            p.fecha_hora_peso_inicial                     AS fecha_hora_peso_bruto,
+            p.peso_final                                  AS peso_tara,
+            p.fecha_hora_peso_final                       AS fecha_hora_peso_tara,
+
+            p.id_ticket_balanza,
+            COALESCE(p.fecha_hora_peso_inicial, p.fecha_hora_peso_final, lm.created_at) AS fecha_pesaje,
+
+            ru.tipo_ingreso,
+            ru.id                                         AS id_recepcion_unidad,
+            ru.fecha_hora_ingreso,
+            ru.fecha_hora_salida,
+            ru.id_vehiculo_carreta,
+            vc.placa                                      AS vehiculo_carreta_placa,
+            ru.estado_pesaje,
+
+            ru.id_vehiculo,
+            v.placa                                       AS vehiculo_placa,
+            ru.id_empresa_transporte,
+            et.razon_social                               AS empresa_transporte_razon_social,
+            ru.id_tipo_vehiculo,
+            tv.nombre                                     AS tipo_vehiculo_nombre,
+
+            prov.id                                       AS id_proveedor,
+            prov.razon_social                             AS proveedor_razon_social,
+            ru.id_proveedor_minero                        AS id_proveedor_minero_recepcion,
+            pr.razon_social                               AS proveedor_nombre_recepcion,
+            zo.id                                         AS id_zona_origen,
+            zo.nombre                                     AS zona_origen_nombre,
+            ru.id_conductor,
+            CONCAT(c.nombre, ' ', c.apellido)             AS conductor_nombre_completo,
+            c.dni                                         AS conductor_dni,
+            c.numero_licencia                             AS conductor_licencia,
+            CONCAT(emp_reg.nombre, ' ', emp_reg.apellido) AS empleado_registro_nombre,
+
+            lm.observaciones                              AS observaciones,
+            NULL                                          AS observacion_peso_inicial,
+            NULL                                          AS observacion_peso_final,
+
+            p.id                                          AS id_particion,
+            p.particion                                   AS particion_letra,
+            p.correlativo                                 AS particion_correlativo,
+            p.evidencias                                  AS particion_evidencias,
+            lm.peso_neto                                  AS lote_peso_neto_total,
+            (SELECT COUNT(*)
+               FROM particion_lote_mineral pc
+              WHERE pc.id_lote_mineral = lm.id
+                AND pc.estado = 'Activo')                AS particiones_total
+        FROM particion_lote_mineral p
+        INNER JOIN lote_mineral lm  ON lm.id = p.id_lote_mineral
+        INNER JOIN recepcion_unidad ru ON ru.id = p.id_recepcion_unidad
+        LEFT JOIN vehiculo v          ON v.id = ru.id_vehiculo
+        LEFT JOIN vehiculo vc         ON vc.id = ru.id_vehiculo_carreta
+        LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte
+        LEFT JOIN tipo_vehiculo tv    ON tv.id = ru.id_tipo_vehiculo
+        LEFT JOIN proveedor prov      ON prov.id = lm.id_proveedor_minero
+        LEFT JOIN proveedor pr        ON pr.id = ru.id_proveedor_minero
+        LEFT JOIN zona_origen zo      ON zo.id = lm.id_zona_origen
+        LEFT JOIN conductor c         ON c.id = ru.id_conductor
+        LEFT JOIN empleado emp_reg    ON emp_reg.id = ru.id_empleado_recepcion
+        WHERE p.estado = 'Activo'
+          AND lm.particionado_desde_balanza = 1
+          AND lm.particion_finalizada = 1
+          AND (lm.estado IS NULL OR lm.estado != 'Eliminado')
+          AND ru.id_sucursal = :id_sucursal_c
+          AND ru.estado_pesaje = :estado_pesaje_c
+          AND ru.tipo_ingreso = 'Recepción de Mineral'
+        ";
+
+        $paramsC = [
+            'id_sucursal_c' => $idSucursal,
+            'estado_pesaje_c' => $estadoPesado,
+        ];
+
+        if (! empty($filters['fecha_inicio'])) {
+            $sqlC .= ' AND DATE(lm.created_at) >= :fecha_inicio_c';
+            $paramsC['fecha_inicio_c'] = $filters['fecha_inicio'];
+        }
+        if (! empty($filters['fecha_fin'])) {
+            $sqlC .= ' AND DATE(lm.created_at) <= :fecha_fin_c';
+            $paramsC['fecha_fin_c'] = $filters['fecha_fin'];
+        }
+        if (! empty($filters['tipo_ingreso']) && $filters['tipo_ingreso'] === 'Despacho de Mineral') {
+            $sqlC .= ' AND 1=0'; // filtro excluye este bloque
+        }
+        if (! empty($filters['placa'])) {
+            $sqlC .= ' AND v.placa = :placa_c';
+            $paramsC['placa_c'] = $filters['placa'];
+        }
+        if (! empty($filters['lote_correlativo'])) {
+            // El filtro es por el correlativo del LOTE PADRE (muestra todas sus
+            // particiones) o por el correlativo propio de la partición.
+            $sqlC .= ' AND (lm.correlativo LIKE :lote_correlativo_c OR p.correlativo LIKE :lote_correlativo_c2)';
+            $paramsC['lote_correlativo_c'] = '%'.$filters['lote_correlativo'].'%';
+            $paramsC['lote_correlativo_c2'] = '%'.$filters['lote_correlativo'].'%';
+        }
+        if (! empty($filters['id_empresa_transporte'])) {
+            $sqlC .= ' AND ru.id_empresa_transporte = :id_empresa_transporte_c';
+            $paramsC['id_empresa_transporte_c'] = (int) $filters['id_empresa_transporte'];
+        }
+
         // Unificar params y SQL
-        $sql = $sqlA."\n UNION ALL \n".$sqlB."\n ORDER BY fecha_pesaje DESC";
-        $params = array_merge($paramsA, $paramsB);
+        $sql = $sqlA."\n UNION ALL \n".$sqlB."\n UNION ALL \n".$sqlC."\n ORDER BY fecha_pesaje DESC";
+        $params = array_merge($paramsA, $paramsB, $paramsC);
 
         $results = DB::select($sql, $params);
 
-        // Cargar particiones en bloque para los lotes particionados desde balanza
-        $lotesParticionadosIds = [];
+        // Cargar en bloque la valorización viva (Propuesta / Aprobado) de cada lote.
+        // Un lote queda bloqueado si se valorizó directamente o si se valorizó
+        // alguna de sus particiones (el COALESCE del query resuelve al padre).
+        $idsLotes = [];
         foreach ($results as $item) {
-            if ($item->tipo_pesaje === 'LOTE_RECEPCION' && !empty($item->particionado_desde_balanza) && !empty($item->id_lote)) {
-                $lotesParticionadosIds[] = (int) $item->id_lote;
+            if ($item->tipo_pesaje !== 'DISTRIBUCION_DETALLE' && ! empty($item->id_lote)) {
+                $idsLotes[(int) $item->id_lote] = true;
             }
         }
-
-        $particionesPorLote = [];
-        if (!empty($lotesParticionadosIds)) {
-            $particionesRows = DB::table('particion_lote_mineral as p')
-                ->leftJoin('ticket_balanza as tb', 'tb.id', '=', 'p.id_ticket_balanza')
-                ->leftJoin('recepcion_unidad as ru', 'ru.id', '=', 'p.id_recepcion_unidad')
-                ->leftJoin('vehiculo as v', 'v.id', '=', 'ru.id_vehiculo')
-                ->leftJoin('vehiculo as vc', 'vc.id', '=', 'ru.id_vehiculo_carreta')
-                ->leftJoin('empresa_transporte as et', 'et.id', '=', 'ru.id_empresa_transporte')
-                ->leftJoin('conductor as c', 'c.id', '=', 'ru.id_conductor')
-                ->whereIn('p.id_lote_mineral', $lotesParticionadosIds)
-                ->where('p.estado', 'Activo')
-                ->select([
-                    'p.id',
-                    'p.id_lote_mineral',
-                    'p.id_ticket_balanza',
-                    'tb.correlativo as ticket_correlativo',
-                    'p.id_recepcion_unidad',
-                    'ru.estado_pesaje as recepcion_estado_pesaje',
-                    'v.placa as vehiculo_placa',
-                    'vc.placa as vehiculo_carreta_placa',
-                    'et.razon_social as empresa_transporte_razon_social',
-                    'c.nombre as conductor_nombre',
-                    'c.apellido as conductor_apellido',
-                    'c.dni as conductor_dni',
-                    'c.numero_licencia as conductor_licencia',
-                    'p.correlativo',
-                    'p.particion',
-                    'p.peso_inicial',
-                    'p.fecha_hora_peso_inicial',
-                    'p.peso_final',
-                    'p.fecha_hora_peso_final',
-                    'p.peso_neto',
-                    'p.evidencias',
-                ])
-                ->orderBy('p.particion', 'asc')
-                ->get();
-
-            foreach ($particionesRows as $pRow) {
-                $pRow->id = (int) $pRow->id;
-                $pRow->id_lote_mineral = (int) $pRow->id_lote_mineral;
-                $pRow->id_ticket_balanza = $pRow->id_ticket_balanza !== null ? (int) $pRow->id_ticket_balanza : null;
-                $pRow->id_recepcion_unidad = $pRow->id_recepcion_unidad !== null ? (int) $pRow->id_recepcion_unidad : null;
-                $pRow->peso_inicial = $pRow->peso_inicial !== null ? (float) $pRow->peso_inicial : null;
-                $pRow->peso_final = $pRow->peso_final !== null ? (float) $pRow->peso_final : null;
-                $pRow->peso_neto = $pRow->peso_neto !== null ? (float) $pRow->peso_neto : null;
-                $pRow->conductor_nombre_completo = trim(($pRow->conductor_nombre ?? '').' '.($pRow->conductor_apellido ?? ''));
-                if (isset($pRow->evidencias) && is_string($pRow->evidencias)) {
-                    $pRow->evidencias = json_decode($pRow->evidencias, true) ?? [];
-                }
-                $particionesPorLote[$pRow->id_lote_mineral][] = $pRow;
-            }
-        }
+        $valorizacionesPorLote = self::get_valorizaciones_vivas_por_lotes(array_keys($idsLotes));
 
         foreach ($results as $item) {
             // JSON decode condicional
@@ -832,6 +917,11 @@ class RecepcionMineralData
                 $item->lote_evidencias = json_decode($item->lote_evidencias, true) ?? [];
             } else {
                 $item->lote_evidencias = $item->lote_evidencias ?? null;
+            }
+            if (isset($item->particion_evidencias) && is_string($item->particion_evidencias)) {
+                $item->particion_evidencias = json_decode($item->particion_evidencias, true) ?? [];
+            } else {
+                $item->particion_evidencias = $item->particion_evidencias ?? null;
             }
             if (isset($item->lote_log_cambios) && is_string($item->lote_log_cambios)) {
                 $item->lote_log_cambios = json_decode($item->lote_log_cambios, true) ?? [];
@@ -845,6 +935,8 @@ class RecepcionMineralData
             $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
             $item->peso_tara = $item->peso_tara !== null ? (float) $item->peso_tara : null;
             $item->peso_bruto = $item->peso_bruto !== null ? (float) $item->peso_bruto : null;
+            $item->lote_peso_neto_total = $item->lote_peso_neto_total !== null ? (float) $item->lote_peso_neto_total : null;
+            $item->particiones_total = $item->particiones_total !== null ? (int) $item->particiones_total : null;
             $item->id_recepcion_unidad = (int) $item->id_recepcion_unidad;
             $item->id_ticket_balanza = $item->id_ticket_balanza !== null ? (int) $item->id_ticket_balanza : null;
             $item->id_despacho = $item->id_despacho !== null ? (int) $item->id_despacho : null;
@@ -854,15 +946,105 @@ class RecepcionMineralData
             $item->id_lote_origen = $item->id_lote_origen !== null ? (int) $item->id_lote_origen : null;
             $item->id_blending_origen = $item->id_blending_origen !== null ? (int) $item->id_blending_origen : null;
             $item->numero_particion = $item->numero_particion !== null ? (int) $item->numero_particion : null;
+            $item->id_particion = $item->id_particion !== null ? (int) $item->id_particion : null;
             $item->particionado_desde_balanza = !empty($item->particionado_desde_balanza);
             $item->particion_finalizada = !empty($item->particion_finalizada);
-            $item->particiones = $particionesPorLote[(int) $item->id_lote] ?? [];
-            if ($item->particionado_desde_balanza) {
-                $item->tipo_ingreso = 'Recepción de Mineral';
-            }
+            $item->valorizacion = $valorizacionesPorLote[(int) $item->id_lote] ?? null;
         }
 
         return $results;
+    }
+
+    /**
+     * Valorización viva (Propuesta o Aprobado) que referencia un lote mineral,
+     * ya sea directamente o a través de una de sus particiones.
+     *
+     * El COALESCE resuelve al LOTE PADRE cuando lo valorizado fue una partición,
+     * de modo que el bloqueo alcanza a todo el lote (padre + particiones).
+     */
+    public static function get_valorizacion_viva_por_lote(int $idLoteMineral): ?array
+    {
+        $row = DB::selectOne(
+            'SELECT vc.id, vc.correlativo, vc.estado, vcd.elemento_quimico
+               FROM valorizacion_compramineral_detalle vcd
+               INNER JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
+               INNER JOIN lote_guia lg ON lg.id = vcd.id_lote_guia
+               LEFT JOIN particion_lote_mineral plm ON plm.id = lg.id_particion_lote_mineral
+              WHERE COALESCE(lg.id_lote_mineral, plm.id_lote_mineral) = :id_lote
+                AND vc.estado IN (:estado_propuesta, :estado_aprobado)
+              ORDER BY vc.id DESC
+              LIMIT 1',
+            [
+                'id_lote' => $idLoteMineral,
+                'estado_propuesta' => EstadoValorizacionCompra::Propuesta->value,
+                'estado_aprobado' => EstadoValorizacionCompra::Aprobado->value,
+            ]
+        );
+
+        return $row ? self::map_valorizacion_viva($row) : null;
+    }
+
+    /**
+     * Valorizaciones vivas (Propuesta o Aprobado) indexadas por lote mineral.
+     * Si un lote tiene más de una, se conserva la más reciente.
+     *
+     * @param  int[]  $idsLotes
+     * @return array<int, array{id: int, correlativo: string|null, estado: string, elemento_quimico: string|null}>
+     */
+    public static function get_valorizaciones_vivas_por_lotes(array $idsLotes): array
+    {
+        $idsLotes = array_values(array_unique(array_map('intval', $idsLotes)));
+        if (empty($idsLotes)) {
+            return [];
+        }
+
+        $placeholders = [];
+        $params = [
+            'estado_propuesta' => EstadoValorizacionCompra::Propuesta->value,
+            'estado_aprobado' => EstadoValorizacionCompra::Aprobado->value,
+        ];
+        foreach ($idsLotes as $i => $idLote) {
+            $key = 'id_lote_'.$i;
+            $placeholders[] = ':'.$key;
+            $params[$key] = $idLote;
+        }
+
+        $rows = DB::select(
+            'SELECT COALESCE(lg.id_lote_mineral, plm.id_lote_mineral) AS id_lote,
+                    vc.id, vc.correlativo, vc.estado, vcd.elemento_quimico
+               FROM valorizacion_compramineral_detalle vcd
+               INNER JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
+               INNER JOIN lote_guia lg ON lg.id = vcd.id_lote_guia
+               LEFT JOIN particion_lote_mineral plm ON plm.id = lg.id_particion_lote_mineral
+              WHERE COALESCE(lg.id_lote_mineral, plm.id_lote_mineral) IN ('.implode(', ', $placeholders).')
+                AND vc.estado IN (:estado_propuesta, :estado_aprobado)
+              ORDER BY vc.id DESC',
+            $params
+        );
+
+        $porLote = [];
+        foreach ($rows as $row) {
+            $idLote = (int) $row->id_lote;
+            if (isset($porLote[$idLote])) {
+                continue; // ya se conservó la más reciente (ORDER BY vc.id DESC)
+            }
+            $porLote[$idLote] = self::map_valorizacion_viva($row);
+        }
+
+        return $porLote;
+    }
+
+    /**
+     * Normaliza una fila de valorización viva al contrato devuelto al frontend.
+     */
+    private static function map_valorizacion_viva(object $row): array
+    {
+        return [
+            'id' => (int) $row->id,
+            'correlativo' => $row->correlativo !== null ? (string) $row->correlativo : null,
+            'estado' => (string) $row->estado,
+            'elemento_quimico' => $row->elemento_quimico !== null ? (string) $row->elemento_quimico : null,
+        ];
     }
 
     /**
@@ -1301,6 +1483,58 @@ class RecepcionMineralData
         }
 
         return $rows;
+    }
+
+    /**
+     * Actualizar los datos propios de una partición (pesos y evidencias).
+     * NO toca las fechas de pesaje: son el registro histórico del pesaje.
+     *
+     * @param  array{peso_inicial?: float|null, peso_final?: float|null, peso_neto?: float|null, evidencias?: array<int, mixed>|null}  $data
+     */
+    public static function actualizar_particion(int $idParticion, array $data): void
+    {
+        $update = [];
+
+        if (array_key_exists('peso_inicial', $data)) {
+            $update['peso_inicial'] = $data['peso_inicial'] !== null ? (float) $data['peso_inicial'] : null;
+        }
+        if (array_key_exists('peso_final', $data)) {
+            $update['peso_final'] = $data['peso_final'] !== null ? (float) $data['peso_final'] : null;
+        }
+        if (array_key_exists('peso_neto', $data)) {
+            $update['peso_neto'] = $data['peso_neto'] !== null ? (float) $data['peso_neto'] : null;
+        }
+        if (array_key_exists('evidencias', $data)) {
+            $update['evidencias'] = $data['evidencias'];
+        }
+
+        if (empty($update)) {
+            return;
+        }
+
+        DB::table('particion_lote_mineral')
+            ->where('id', $idParticion)
+            ->update($update);
+    }
+
+    /**
+     * Recalcular el peso neto agregado del lote padre a partir del sumatorio de
+     * los peso_neto de sus particiones activas (misma regla que
+     * `finalizar_particion_lote`).
+     */
+    public static function recalcular_peso_neto_lote_padre(int $idLote): float
+    {
+        $total = (float) DB::table('particion_lote_mineral')
+            ->where('id_lote_mineral', $idLote)
+            ->where('estado', EstadoBase::Activo->value)
+            ->sum('peso_neto');
+
+        DB::table('lote_mineral')->where('id', $idLote)->update([
+            'peso_neto' => round($total, 2),
+            'peso_actual' => round($total, 2),
+        ]);
+
+        return round($total, 2);
     }
 
     /**

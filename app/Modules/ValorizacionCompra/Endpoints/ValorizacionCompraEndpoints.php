@@ -10,6 +10,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::post('/', 'crear_valorizacion');
         Route::match(['put', 'post'], '/{id}', 'editar_valorizacion');
         Route::post('/{id}/aprobar', 'aprobar_valorizacion');
+        Route::post('/{id}/clonar', 'clonar_valorizacion');
         Route::post('/{id}/anular', 'anular_valorizacion');
         Route::post('/{id}/solicitar-oc', 'solicitar_oc');
     });

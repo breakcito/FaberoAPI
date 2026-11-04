@@ -3,10 +3,14 @@
 namespace App\Modules\ValorizacionCompra\Data;
 
 use App\Models\ComprobanteCompra;
+use App\Models\LoteMineral;
 use App\Models\ValorizacionCompra;
+use App\Models\ValorizacionCompraDetalle;
 use App\Shared\Enums\ContabilidadCompra\EstadoComprobanteCompra;
+use App\Shared\Enums\ValorizacionCompra\EstadoValorizacionCompra;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
 class ValorizacionCompraData
@@ -30,6 +34,7 @@ class ValorizacionCompraData
             'empleadoAnulacion:id,nombre,apellido',
             'empleadoSolicitaOc:id,nombre,apellido',
             'detalles',
+            'detalles.grupoAnalisis:id,nombre,numero_correlativo,ley_oro_cierre,ley_plata_cierre,ley_humedad_cierre',
             'detalles.loteGuia',
             'detalles.loteGuia.loteMineral:id,numero_correlativo,correlativo,ley_humedad,ley_oro,ley_plata,peso_neto',
             'detalles.loteGuia.particionLoteMineral.loteMineral:id,numero_correlativo,correlativo,ley_humedad,ley_oro,ley_plata,peso_neto',
@@ -140,6 +145,8 @@ class ValorizacionCompraData
             'id' => $item->id,
             'numero_correlativo' => $item->numero_correlativo,
             'correlativo' => $correlativoCalculado,
+            'numero_version' => $item->numero_version !== null ? (int) $item->numero_version : 1,
+            'uuid_grupo' => ! empty($item->uuid_grupo) ? (string) $item->uuid_grupo : "legacy-{$item->id}",
             'id_proveedor_minero' => $item->id_proveedor_minero,
             'proveedor_nombre' => $item->proveedor ? $item->proveedor->razon_social : null,
             'proveedor_ruc' => $item->proveedor ? $item->proveedor->ruc : null,
@@ -154,7 +161,10 @@ class ValorizacionCompraData
             'cuenta_bancaria_numero' => $item->cuentaBancaria?->numero_cuenta,
             'cuenta_bancaria_cci' => $item->cuentaBancaria?->cci,
             'id_cuenta_detraccion' => $item->id_cuenta_detraccion,
-            'cuenta_detraccion_info' => $item->cuentaDetraccion ? $item->cuentaDetraccion->numero_cuenta : null,
+            'cuenta_detraccion_info' => $item->cuentaDetraccion ? ($item->cuentaDetraccion->banco ? $item->cuentaDetraccion->banco->nombre : '').' - '.$item->cuentaDetraccion->numero_cuenta : null,
+            'cuenta_detraccion_banco' => $item->cuentaDetraccion?->banco?->nombre,
+            'cuenta_detraccion_numero' => $item->cuentaDetraccion?->numero_cuenta,
+            'cuenta_detraccion_cci' => $item->cuentaDetraccion?->cci,
             'tipo_pago' => $item->tipo_pago ? $item->tipo_pago->value : null,
             'estado' => $item->estado ? $item->estado->value : null,
             'porcentaje_igv' => $pctIgv,
@@ -172,6 +182,7 @@ class ValorizacionCompraData
             'monto_detraccion' => $detraccion,
             'neto_a_pagar' => $netoAPagar,
             'created_at' => $item->created_at ? $item->created_at->format('Y-m-d H:i:s') : null,
+            'fecha_hora_valorizacion' => $item->fecha_hora_valorizacion ? ($item->fecha_hora_valorizacion instanceof \DateTimeInterface ? $item->fecha_hora_valorizacion->format('Y-m-d H:i:s') : (string) $item->fecha_hora_valorizacion) : null,
             'fecha_hora_aprobacion' => $item->fecha_hora_aprobacion ? $item->fecha_hora_aprobacion->format('Y-m-d H:i:s') : null,
             'fecha_hora_anulacion' => $item->fecha_hora_anulacion ? ($item->fecha_hora_anulacion instanceof \DateTimeInterface ? $item->fecha_hora_anulacion->format('Y-m-d H:i:s') : date('Y-m-d H:i:s', (int) $item->fecha_hora_anulacion)) : null,
             'id_empleado_solicita_oc' => $item->id_empleado_solicita_oc,
@@ -344,6 +355,86 @@ class ValorizacionCompraData
     }
 
     /**
+     * Buscar modelo ValorizacionCompra con relaciones necesarias para clonación y aprobación
+     */
+    public static function find_model_con_relaciones(int $id): ?ValorizacionCompra
+    {
+        return ValorizacionCompra::with(['detalles', 'transaccionesAnticipo', 'empleadoSolicitaOc'])->find($id);
+    }
+
+    /**
+     * Crear registro de cabecera en valorizacion_compra
+     *
+     * @param  array<string,mixed>  $atributos
+     */
+    public static function crear_cabecera(array $atributos): ValorizacionCompra
+    {
+        return ValorizacionCompra::create($atributos);
+    }
+
+    /**
+     * Actualizar campos de una cabecera ValorizacionCompra
+     *
+     * @param  array<string,mixed>  $atributos
+     */
+    public static function actualizar_cabecera(ValorizacionCompra $valorizacion, array $atributos): bool
+    {
+        return $valorizacion->update($atributos);
+    }
+
+    /**
+     * Crear registro de detalle en valorizacion_compramineral_detalle
+     *
+     * @param  array<string,mixed>  $atributos
+     */
+    public static function crear_detalle(array $atributos): ValorizacionCompraDetalle
+    {
+        return ValorizacionCompraDetalle::create($atributos);
+    }
+
+    /**
+     * Obtener el siguiente número de versión dentro de un uuid_grupo
+     */
+    public static function get_siguiente_version_por_grupo(string $uuidGrupo): int
+    {
+        $max = DB::table('valorizacion_compra')
+            ->where('uuid_grupo', $uuidGrupo)
+            ->max('numero_version');
+
+        return ((int) ($max ?? 0)) + 1;
+    }
+
+    /**
+     * Verificar si el grupo ya cuenta con una versión en estado Aprobado
+     */
+    public static function existe_version_aprobada_en_grupo(string $uuidGrupo, ?int $excluirId = null): bool
+    {
+        $query = DB::table('valorizacion_compra')
+            ->where('uuid_grupo', $uuidGrupo)
+            ->where('estado', EstadoValorizacionCompra::Aprobado->value);
+
+        if ($excluirId !== null) {
+            $query->where('id', '!=', $excluirId);
+        }
+
+        return $query->exists();
+    }
+
+    /**
+     * Obtener las versiones hermanas en estado Propuesta de un mismo grupo para desestimarlas
+     *
+     * @return Collection<int, ValorizacionCompra>
+     */
+    public static function get_versiones_hermanas_propuesta(string $uuidGrupo, int $idExcluir): Collection
+    {
+        return ValorizacionCompra::with(['detalles', 'transaccionesAnticipo'])
+            ->where('uuid_grupo', $uuidGrupo)
+            ->where('id', '!=', $idExcluir)
+            ->where('estado', EstadoValorizacionCompra::Propuesta->value)
+            ->get();
+    }
+
+    /**
      * Obtener nombre o etiqueta de concesión
      */
     public static function get_nombre_concesion(int $idConcesion): string
@@ -417,23 +508,94 @@ class ValorizacionCompraData
     }
 
     /**
-     * Verificar si existe otra valorización viva que valorice el mismo lote y elemento químico
+     * Verificar si existe otra valorización viva (Propuesta o Aprobado) que valorice el mismo lote y elemento químico
      */
     public static function existe_otra_valorizacion_con_lote(
         int $idLoteMineral,
         string $elemento,
         int $idValorizacionActual,
-        string $estadoAnulado
+        string $estadoAnulado = 'Anulado'
     ): bool {
         return DB::table('valorizacion_compramineral_detalle as vcd')
             ->join('valorizacion_compra as vc', 'vc.id', '=', 'vcd.id_valorizacion_compra')
             ->join('lote_guia as lg_check', 'lg_check.id', '=', 'vcd.id_lote_guia')
             ->leftJoin('particion_lote_mineral as plm', 'plm.id', '=', 'lg_check.id_particion_lote_mineral')
             ->whereRaw('COALESCE(lg_check.id_lote_mineral, plm.id_lote_mineral) = ?', [$idLoteMineral])
-            ->where('vc.estado', '!=', $estadoAnulado)
+            ->whereIn('vc.estado', [
+                EstadoValorizacionCompra::Propuesta->value,
+                EstadoValorizacionCompra::Aprobado->value,
+            ])
             ->where('vc.id', '!=', $idValorizacionActual)
             ->where('vcd.elemento_quimico', $elemento)
             ->exists();
+    }
+
+    /**
+     * Verificar si un lote+elemento está bloqueado por otro grupo de valorización distinto (Propuesta o Aprobado)
+     */
+    public static function lote_bloqueado_en_otro_grupo(
+        int $idLoteMineral,
+        string $elemento,
+        string $uuidGrupoActual,
+        int $idValorizacionOrigen
+    ): bool {
+        return DB::table('valorizacion_compramineral_detalle as vcd')
+            ->join('valorizacion_compra as vc', 'vc.id', '=', 'vcd.id_valorizacion_compra')
+            ->join('lote_guia as lg_check', 'lg_check.id', '=', 'vcd.id_lote_guia')
+            ->leftJoin('particion_lote_mineral as plm', 'plm.id', '=', 'lg_check.id_particion_lote_mineral')
+            ->whereRaw('COALESCE(lg_check.id_lote_mineral, plm.id_lote_mineral) = ?', [$idLoteMineral])
+            ->whereIn('vc.estado', [
+                EstadoValorizacionCompra::Propuesta->value,
+                EstadoValorizacionCompra::Aprobado->value,
+            ])
+            ->where('vc.id', '!=', $idValorizacionOrigen)
+            ->where(function ($q) use ($uuidGrupoActual) {
+                $q->whereNull('vc.uuid_grupo')
+                    ->orWhere('vc.uuid_grupo', '!=', $uuidGrupoActual);
+            })
+            ->where('vcd.elemento_quimico', $elemento)
+            ->exists();
+    }
+
+    /**
+     * Verificar si existe otra valorización viva (Propuesta o Aprobado) que utilice el mismo grupo de análisis y elemento
+     */
+    public static function existe_otra_valorizacion_viva_con_grupo_analisis(
+        int $idGrupoAnalisis,
+        string $elemento,
+        int $idValorizacionActual
+    ): bool {
+        return DB::table('valorizacion_compramineral_detalle as vcd')
+            ->join('valorizacion_compra as vc', 'vc.id', '=', 'vcd.id_valorizacion_compra')
+            ->where('vcd.id_grupo_analisis', $idGrupoAnalisis)
+            ->where('vcd.elemento_quimico', $elemento)
+            ->where('vc.id', '!=', $idValorizacionActual)
+            ->whereIn('vc.estado', [
+                EstadoValorizacionCompra::Propuesta->value,
+                EstadoValorizacionCompra::Aprobado->value,
+            ])
+            ->exists();
+    }
+
+    /**
+     * Marcar lotes minerales como valorizados para una columna específica
+     *
+     * @param  int[]  $idsLotes
+     */
+    public static function marcar_lotes_mineral_valorizados(array $idsLotes, string $columna): void
+    {
+        if (empty($idsLotes)) {
+            return;
+        }
+        LoteMineral::whereIn('id', $idsLotes)->update([$columna => 1]);
+    }
+
+    /**
+     * Desmarcar flag valorizado en un lote mineral
+     */
+    public static function desmarcar_lote_mineral_valorizado(int $idLote, string $columna): void
+    {
+        LoteMineral::where('id', $idLote)->update([$columna => 0]);
     }
 
     /**

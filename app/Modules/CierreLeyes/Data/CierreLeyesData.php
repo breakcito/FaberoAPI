@@ -2,11 +2,7 @@
 
 namespace App\Modules\CierreLeyes\Data;
 
-use App\Models\AnalisisMineral;
-use App\Models\GrupoAnalisis;
-use App\Models\LoteMineral;
 use App\Shared\Enums\_Generic\CondicionIngreso;
-use App\Shared\Enums\_Generic\EstadoLeyes;
 use App\Shared\Enums\_Generic\EstadoPesaje;
 use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Helpers\CorrelativoHelper;
@@ -154,7 +150,7 @@ class CierreLeyesData
                         JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
                         WHERE vcd.id_grupo_analisis = ga.id
                           AND vcd.elemento_quimico = "Oro"
-                          AND vc.estado != "Anulado"
+                          AND vc.estado IN ("Propuesta", "Aprobado")
                         ORDER BY CASE WHEN vc.estado = "Aprobado" THEN 1 ELSE 2 END ASC, vc.id DESC
                         LIMIT 1
                     ) AS estado_valorizacion_oro,
@@ -164,7 +160,7 @@ class CierreLeyesData
                         JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
                         WHERE vcd.id_grupo_analisis = ga.id
                           AND vcd.elemento_quimico = "Plata"
-                          AND vc.estado != "Anulado"
+                          AND vc.estado IN ("Propuesta", "Aprobado")
                         ORDER BY CASE WHEN vc.estado = "Aprobado" THEN 1 ELSE 2 END ASC, vc.id DESC
                         LIMIT 1
                     ) AS estado_valorizacion_plata
@@ -336,7 +332,7 @@ class CierreLeyesData
             ->where('id_grupo_analisis', $idGrupo)
             ->where(function ($q) {
                 $q->where('ley_humedad', '>', 0)
-                  ->orWhere('ley_recuperacion', '>', 0);
+                    ->orWhere('ley_recuperacion', '>', 0);
             })
             ->first();
 

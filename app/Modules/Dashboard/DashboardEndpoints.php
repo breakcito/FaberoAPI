@@ -5,6 +5,6 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth.jwt.custom')->group(function () {
     Route::prefix('dashboard')->controller(DashboardController::class)->group(function () {
-        Route::get('/indicadores', 'get_indicadores');
+        Route::get('/resumen', 'get_resumen');
     });
 });

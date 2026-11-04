@@ -113,6 +113,20 @@ class ValorizacionCompraController extends Controller
     }
 
     /**
+     * Clonar una propuesta creando la siguiente versión dentro del mismo grupo
+     */
+    public function clonar_valorizacion(Request $request, int $id): JsonResponse
+    {
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = $authUser ? ($authUser->id_empleado ?? $authUser->id_usuario) : 1;
+
+        $res = ValorizacionCompraService::clonar_valorizacion($id, (int) $idEmpleado);
+        $status = ($res['success'] ?? false) ? 201 : 400;
+
+        return response()->json($res, $status);
+    }
+
+    /**
      * Editar una valorización existente en estado Propuesta
      */
     public function editar_valorizacion(Request $request, int $id): JsonResponse

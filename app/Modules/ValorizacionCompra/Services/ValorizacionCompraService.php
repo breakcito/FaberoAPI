@@ -5,7 +5,6 @@ namespace App\Modules\ValorizacionCompra\Services;
 use App\Models\LoteGuia;
 use App\Models\LoteMineral;
 use App\Models\TransaccionAnticipoProveedor;
-use App\Models\ValorizacionCompra;
 use App\Models\ValorizacionCompraDetalle;
 use App\Modules\ValorizacionCompra\Data\ValorizacionCompraData;
 use App\Shared\Enums\_Generic\ElementoQuimicoValorizacion;
@@ -19,6 +18,7 @@ use App\Shared\Responses\_Generic\RES_CambiosLog;
 use App\Shared\Responses\ApiResponse;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ValorizacionCompraService
 {
@@ -100,7 +100,9 @@ class ValorizacionCompraService
                 ? ArchivoHelper::guardarArchivos('valorizaciones', $archivos)
                 : [];
 
-            $valorizacion = ValorizacionCompra::create([
+            $uuidGrupo = (string) Str::uuid();
+
+            $valorizacion = ValorizacionCompraData::crear_cabecera([
                 'id_proveedor_minero' => $data['id_proveedor_minero'],
                 'id_concesion' => $data['id_concesion'],
                 'id_cuenta_bancaria' => $data['id_cuenta_bancaria'] ?? null,
@@ -111,6 +113,8 @@ class ValorizacionCompraService
                 'fecha_hora_solicitud_oc' => null,
                 'numero_correlativo' => $numeroCorrelativo,
                 'correlativo' => $correlativoStr,
+                'numero_version' => 1,
+                'uuid_grupo' => $uuidGrupo,
                 'tipo_pago' => $tipoPagoEnum->value,
                 'porcentaje_igv' => isset($data['porcentaje_igv']) ? (float) $data['porcentaje_igv'] : 18.00,
                 'porcentaje_detraccion' => isset($data['porcentaje_detraccion']) ? (float) $data['porcentaje_detraccion'] : 10.00,
@@ -305,6 +309,154 @@ class ValorizacionCompraService
     }
 
     /**
+     * Clonar una propuesta de valorización creando la siguiente versión dentro del mismo uuid_grupo
+     * (copia cabecera y lotes asociados; no copia anticipos porque se definen en la aprobación)
+     */
+    public static function clonar_valorizacion(int $idOrigen, int $idEmpleadoRegistro): array
+    {
+        DB::beginTransaction();
+        try {
+            $origen = ValorizacionCompraData::find_model_con_relaciones($idOrigen);
+            if (! $origen) {
+                DB::rollBack();
+
+                return ApiResponse::error("Propuesta con ID {$idOrigen} no encontrada.");
+            }
+
+            if ($origen->estado->value === EstadoValorizacionCompra::Anulado->value) {
+                DB::rollBack();
+
+                return ApiResponse::error('No se puede clonar una propuesta en estado Anulado.');
+            }
+
+            $uuidGrupo = ! empty($origen->uuid_grupo) ? (string) $origen->uuid_grupo : (string) Str::uuid();
+            if (empty($origen->uuid_grupo)) {
+                ValorizacionCompraData::actualizar_cabecera($origen, [
+                    'uuid_grupo' => $uuidGrupo,
+                    'numero_version' => $origen->numero_version ?? 1,
+                ]);
+            }
+
+            if (ValorizacionCompraData::existe_version_aprobada_en_grupo($uuidGrupo)) {
+                DB::rollBack();
+
+                return ApiResponse::error('Este grupo de valorización ya cuenta con una versión aprobada.');
+            }
+
+            if ($origen->detalles->isEmpty()) {
+                DB::rollBack();
+
+                return ApiResponse::error('La propuesta seleccionada no posee lotes asociados para clonar.');
+            }
+
+            foreach ($origen->detalles as $detOrigen) {
+                $lg = ValorizacionCompraData::find_lote_guia_con_mineral((int) $detOrigen->id_lote_guia);
+                $lote = $lg?->loteMineral ?? $lg?->particionLoteMineral?->loteMineral;
+                if (! $lg || ! $lote) {
+                    throw new Exception("El lote guía ID {$detOrigen->id_lote_guia} ya no existe.");
+                }
+                $elemStr = $detOrigen->elemento_quimico?->value ?? ElementoQuimicoValorizacion::Oro->value;
+                if (ValorizacionCompraData::lote_bloqueado_en_otro_grupo((int) $lote->id, $elemStr, $uuidGrupo, $origen->id)) {
+                    $corrLote = $lote->correlativo ?? "#{$lote->id}";
+                    throw new Exception("El lote {$corrLote} ({$elemStr}) ya está siendo valorizado en otro grupo activo.");
+                }
+            }
+
+            $versionOrigen = $origen->numero_version ?? 1;
+            $nuevaVersion = ValorizacionCompraData::get_siguiente_version_por_grupo($uuidGrupo);
+
+            $logInicial = [
+                RES_CambiosLog::crear(
+                    $idEmpleadoRegistro,
+                    "Clonación de Propuesta: Versión {$nuevaVersion} generada a partir de la Versión {$versionOrigen}",
+                    [
+                        [
+                            'campo_bd' => 'numero_version',
+                            'campo' => 'Versión de Propuesta',
+                            'valor_anterior' => "Versión {$versionOrigen}",
+                            'valor_nuevo' => "Versión {$nuevaVersion}",
+                        ],
+                    ]
+                ),
+            ];
+
+            $evidenciasRaw = $origen->evidencias;
+            $evidenciasGuardar = ! empty($evidenciasRaw)
+                ? (is_array($evidenciasRaw) ? json_encode(array_values($evidenciasRaw)) : (string) $evidenciasRaw)
+                : null;
+
+            $nuevaValorizacion = ValorizacionCompraData::crear_cabecera([
+                'id_proveedor_minero' => $origen->id_proveedor_minero,
+                'id_concesion' => $origen->id_concesion,
+                'id_cuenta_bancaria' => null,
+                'id_cuenta_detraccion' => null,
+                'id_empleado_registro' => $idEmpleadoRegistro,
+                'id_empleado_aprobacion' => null,
+                'id_empleado_solicita_oc' => null,
+                'fecha_hora_solicitud_oc' => null,
+                'numero_correlativo' => $origen->numero_correlativo,
+                'correlativo' => $origen->correlativo,
+                'numero_version' => $nuevaVersion,
+                'uuid_grupo' => $uuidGrupo,
+                'tipo_pago' => TipoPagoValorizacionCompra::Transferencia->value,
+                'porcentaje_igv' => $origen->porcentaje_igv ?? 18.00,
+                'porcentaje_detraccion' => $origen->porcentaje_detraccion ?? 10.00,
+                'evidencias' => $evidenciasGuardar,
+                'log_cambios' => $logInicial,
+                'fecha_hora_aprobacion' => null,
+                'fecha_hora_valorizacion' => $origen->fecha_hora_valorizacion ?? now(),
+                'created_at' => now(),
+                'estado' => EstadoValorizacionCompra::Propuesta->value,
+            ]);
+
+            $detallesClonados = [];
+            foreach ($origen->detalles as $detOrigen) {
+                $elemVal = $detOrigen->elemento_quimico?->value ?? ElementoQuimicoValorizacion::Oro->value;
+                $idGrupo = $detOrigen->id_grupo_analisis ? (int) $detOrigen->id_grupo_analisis : null;
+
+                $detallesClonados[] = ValorizacionCompraData::crear_detalle([
+                    'id_valorizacion_compra' => $nuevaValorizacion->id,
+                    'id_lote_guia' => $detOrigen->id_lote_guia,
+                    'id_grupo_analisis' => $idGrupo,
+                    'id_condicion_comercial' => $detOrigen->id_condicion_comercial,
+                    'id_valor_elemento_quimico' => $detOrigen->id_valor_elemento_quimico,
+                    'elemento_quimico' => $elemVal,
+                    'inter' => (float) $detOrigen->inter,
+                    'des_inter' => (float) $detOrigen->des_inter,
+                    'recuperacion' => (float) $detOrigen->recuperacion,
+                    'maquila' => (float) $detOrigen->maquila,
+                    'consumo' => (float) $detOrigen->consumo,
+                    'factor' => (float) $detOrigen->factor,
+                    'precio_por_tonelada' => (float) $detOrigen->precio_por_tonelada,
+                    'monto_penalidad' => (float) ($detOrigen->monto_penalidad ?? 0),
+                    'monto_flete' => (float) ($detOrigen->monto_flete ?? 0),
+                    'descuento' => (float) ($detOrigen->descuento ?? 0),
+                    'subtotal_sin_descuento' => (float) ($detOrigen->subtotal_sin_descuento ?? $detOrigen->subtotal),
+                    'subtotal' => (float) $detOrigen->subtotal,
+                    'log_cambios' => [],
+                ]);
+
+                if ($idGrupo) {
+                    $campoFlag = $elemVal === ElementoQuimicoValorizacion::Oro->value ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
+                    ValorizacionCompraData::marcar_grupo_analisis($idGrupo, $campoFlag);
+                }
+            }
+
+            self::marcarLotesValorizados($detallesClonados);
+
+            DB::commit();
+
+            $valDetalle = ValorizacionCompraData::get_valorizacion_by_id($nuevaValorizacion->id);
+
+            return ApiResponse::success($valDetalle, "Versión {$nuevaVersion} creada correctamente a partir de la Versión {$versionOrigen}.");
+        } catch (Exception $e) {
+            DB::rollBack();
+
+            return ApiResponse::error('Error al clonar propuesta: '.$e->getMessage());
+        }
+    }
+
+    /**
      * Editar una valorización existente en estado Propuesta
      *
      * @param  array<string,mixed>  $data
@@ -476,14 +628,9 @@ class ValorizacionCompraService
 
             // Re-sincronizar detalles
             // 1) Liberar flags de los detalles que se van a eliminar (si no quedan otras valorizaciones vivas).
-            $oldDetalles = ValorizacionCompraDetalle::where('id_valorizacion_compra', $id)->get();
-            foreach ($oldDetalles as $oldDet) {
-                if ($oldDet->id_grupo_analisis) {
-                    $flag = $oldDet->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
-                    ValorizacionCompraData::desmarcar_grupo_analisis((int) $oldDet->id_grupo_analisis, $flag);
-                }
-            }
+            $oldDetalles = ValorizacionCompraData::get_detalles_by_valorizacion($id);
             ValorizacionCompraData::delete_detalles_by_valorizacion($id);
+            self::liberarGruposAnalisis($id, $oldDetalles);
             self::liberarLotesValorizados($id, $oldDetalles);
 
             $detallesCreados = [];
@@ -901,6 +1048,20 @@ class ValorizacionCompraService
                 return ApiResponse::error('Solo se pueden aprobar valorizaciones que estén en estado Propuesta.');
             }
 
+            $uuidGrupo = ! empty($valorizacion->uuid_grupo) ? (string) $valorizacion->uuid_grupo : (string) Str::uuid();
+            if (empty($valorizacion->uuid_grupo)) {
+                ValorizacionCompraData::actualizar_cabecera($valorizacion, [
+                    'uuid_grupo' => $uuidGrupo,
+                    'numero_version' => $valorizacion->numero_version ?? 1,
+                ]);
+            }
+
+            if (ValorizacionCompraData::existe_version_aprobada_en_grupo($uuidGrupo, $valorizacion->id)) {
+                DB::rollBack();
+
+                return ApiResponse::error('Este grupo ya cuenta con otra versión aprobada.');
+            }
+
             $idCuentaBancaria = ! empty($data['id_cuenta_bancaria']) ? (int) $data['id_cuenta_bancaria'] : $valorizacion->id_cuenta_bancaria;
             $idCuentaDetraccion = ! empty($data['id_cuenta_detraccion']) ? (int) $data['id_cuenta_detraccion'] : $valorizacion->id_cuenta_detraccion;
             $tipoPagoStr = ! empty($data['tipo_pago']) ? $data['tipo_pago'] : ($valorizacion->tipo_pago?->value ?? TipoPagoValorizacionCompra::Transferencia->value);
@@ -1032,7 +1193,7 @@ class ValorizacionCompraService
                 ]
             );
 
-            $valorizacion->update([
+            ValorizacionCompraData::actualizar_cabecera($valorizacion, [
                 'id_cuenta_bancaria' => $idCuentaBancaria,
                 'id_cuenta_detraccion' => $idCuentaDetraccion,
                 'tipo_pago' => $tipoPagoStr,
@@ -1042,6 +1203,50 @@ class ValorizacionCompraService
                 'log_cambios' => $logCambios,
             ]);
 
+            // Desestimar las demás versiones en estado Propuesta del mismo uuid_grupo
+            $versionAprobadaNum = $valorizacion->numero_version ?? 1;
+            $hermanasPropuesta = ValorizacionCompraData::get_versiones_hermanas_propuesta($uuidGrupo, $valorizacion->id);
+            foreach ($hermanasPropuesta as $hermana) {
+                $codigoHermana = $hermana->correlativo ?? (string) $hermana->numero_correlativo;
+
+                foreach ($hermana->transaccionesAnticipo as $transHermana) {
+                    if ($transHermana->estado->value === EstadoTransaccionAnticipo::Pendiente->value) {
+                        ValorizacionCompraData::anular_transaccion_anticipo($transHermana, $idEmpleadoAprobacion, (string) $codigoHermana);
+                    }
+                }
+
+                $logHermana = $hermana->log_cambios ?? [];
+                if (! is_array($logHermana)) {
+                    $logHermana = json_decode((string) $logHermana, true) ?? [];
+                }
+                $logHermana[] = RES_CambiosLog::crear(
+                    $idEmpleadoAprobacion,
+                    "Propuesta Desestimada: Desestimada automáticamente al aprobarse la Versión {$versionAprobadaNum}",
+                    [
+                        [
+                            'campo_bd' => 'estado',
+                            'campo' => 'Estado',
+                            'valor_anterior' => $hermana->estado->value,
+                            'valor_nuevo' => EstadoValorizacionCompra::Desestimada->value,
+                        ],
+                    ]
+                );
+
+                ValorizacionCompraData::actualizar_cabecera($hermana, [
+                    'estado' => EstadoValorizacionCompra::Desestimada->value,
+                    'log_cambios' => $logHermana,
+                ]);
+
+                self::liberarGruposAnalisis($hermana->id, $hermana->detalles);
+                self::liberarLotesValorizados($hermana->id, $hermana->detalles);
+            }
+
+            foreach ($valorizacion->detalles as $detAprobado) {
+                if ($detAprobado->id_grupo_analisis) {
+                    $campoFlag = $detAprobado->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
+                    ValorizacionCompraData::marcar_grupo_analisis((int) $detAprobado->id_grupo_analisis, $campoFlag);
+                }
+            }
             self::marcarLotesValorizados($valorizacion->detalles);
             self::asignarLeyesLotesDesdeGrupos(
                 $valorizacion->detalles,
@@ -1139,18 +1344,11 @@ class ValorizacionCompraService
             if ($tipoEliminacion === 'fisica') {
                 $detallesParaLiberar = $valorizacion->detalles;
 
-                // Liberar flags de grupo_analisis
-                foreach ($detallesParaLiberar as $det) {
-                    if ($det->id_grupo_analisis) {
-                        $flag = $det->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
-                        ValorizacionCompraData::desmarcar_grupo_analisis((int) $det->id_grupo_analisis, $flag);
-                    }
-                }
-
                 ValorizacionCompraData::delete_detalles_by_valorizacion($id);
                 ValorizacionCompraData::delete_transacciones_by_valorizacion($id);
                 ValorizacionCompraData::delete_model($valorizacion);
 
+                self::liberarGruposAnalisis($id, $detallesParaLiberar);
                 self::liberarLotesValorizados($id, $detallesParaLiberar);
 
                 DB::commit();
@@ -1201,13 +1399,8 @@ class ValorizacionCompraService
                 'log_cambios' => $logCambios,
             ]);
 
-            // Liberar flags tiene_propuesta en los grupos de análisis
-            foreach ($valorizacion->detalles as $det) {
-                if ($det->id_grupo_analisis) {
-                    $flag = $det->elemento_quimico?->value === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
-                    ValorizacionCompraData::desmarcar_grupo_analisis((int) $det->id_grupo_analisis, $flag);
-                }
-            }
+            // Liberar flags tiene_propuesta en los grupos de análisis (solo si ninguna otra versión viva los usa)
+            self::liberarGruposAnalisis($id, $valorizacion->detalles);
 
             self::liberarLotesValorizados($id, $valorizacion->detalles);
 
@@ -1349,7 +1542,7 @@ class ValorizacionCompraService
         foreach ($porElemento as $elemento => $idsLotes) {
             $idsLotes = array_values(array_unique($idsLotes));
             $columna = $elemento === 'Oro' ? 'esta_valorizado_oro' : 'esta_valorizado_plata';
-            LoteMineral::whereIn('id', $idsLotes)->update([$columna => 1]);
+            ValorizacionCompraData::marcar_lotes_mineral_valorizados($idsLotes, $columna);
         }
     }
 
@@ -1523,7 +1716,35 @@ class ValorizacionCompraService
             );
 
             if (! $existeOtra) {
-                LoteMineral::where('id', $lote->id)->update([$columna => 0]);
+                ValorizacionCompraData::desmarcar_lote_mineral_valorizado((int) $lote->id, $columna);
+            }
+        }
+    }
+
+    /**
+     * Desmarca tiene_propuesta_oro / tiene_propuesta_plata de los grupos de análisis
+     * únicamente si ninguna otra valorización viva (Propuesta o Aprobado) utiliza ese grupo+elemento.
+     *
+     * @param  iterable<ValorizacionCompraDetalle>  $detalles
+     */
+    private static function liberarGruposAnalisis(int $idValorizacionActual, iterable $detalles): void
+    {
+        foreach ($detalles as $det) {
+            if (! $det->id_grupo_analisis) {
+                continue;
+            }
+            $elemento = $det->elemento_quimico?->value;
+            if (! in_array($elemento, ['Oro', 'Plata'], true)) {
+                continue;
+            }
+            $existeOtra = ValorizacionCompraData::existe_otra_valorizacion_viva_con_grupo_analisis(
+                (int) $det->id_grupo_analisis,
+                $elemento,
+                $idValorizacionActual
+            );
+            if (! $existeOtra) {
+                $flag = $elemento === 'Oro' ? 'tiene_propuesta_oro' : 'tiene_propuesta_plata';
+                ValorizacionCompraData::desmarcar_grupo_analisis((int) $det->id_grupo_analisis, $flag);
             }
         }
     }
@@ -1548,6 +1769,10 @@ class ValorizacionCompraService
         $valorizacion = ValorizacionCompraData::find_model($id);
         if (! $valorizacion) {
             return ApiResponse::error("Valorización con ID {$id} no encontrada.");
+        }
+
+        if (in_array($valorizacion->estado->value, [EstadoValorizacionCompra::Anulado->value, EstadoValorizacionCompra::Desestimada->value], true)) {
+            return ApiResponse::error("No se puede solicitar Orden de Compra sobre una valorización en estado {$valorizacion->estado->value}.");
         }
 
         $empleado = ValorizacionCompraData::get_empleado($idEmpleado);

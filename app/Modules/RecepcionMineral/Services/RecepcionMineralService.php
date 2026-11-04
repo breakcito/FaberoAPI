@@ -603,8 +603,21 @@ class RecepcionMineralService
             return ApiResponse::error('No se encontró el registro de lote.');
         }
 
+        // Un lote con valorización viva (Propuesta o Aprobado) no es editable:
+        // sus datos ya sustentan el monto a pagar al proveedor.
+        $bloqueo = self::get_bloqueo_valorizacion($loteId);
+        if ($bloqueo !== null) {
+            return ApiResponse::error($bloqueo, 422);
+        }
+
         $cambios = [];
         $motivo = $data['motivo'] ?? null;
+
+        // En un lote padre particionado los pesos NO son del lote: cada
+        // partición tiene los suyos y el peso_neto del padre es el sumatorio
+        // que fija `finalizar_particion_lote`. Tocarlos aquí destruiría el
+        // agregado, por eso se ignoran en la edición del padre.
+        $esPadreParticionado = (bool) $lote->particionado_desde_balanza;
 
         // 1. Validar cambio de condición de ingreso y generar nuevo correlativo si aplica
         $oldCondicion = $lote->condicion_ingreso;
@@ -645,6 +658,20 @@ class RecepcionMineralService
 
                 $lote->correlativo = $correlativoData['correlativo'];
                 $lote->numero_correlativo = $correlativoData['numero_correlativo'];
+
+                // Las particiones derivan su correlativo del padre
+                // ({correlativo}-{letra}); hay que realinearlas.
+                if ($esPadreParticionado) {
+                    $particiones = DB::table('particion_lote_mineral')
+                        ->where('id_lote_mineral', $loteId)
+                        ->where('estado', EstadoBase::Activo->value)
+                        ->get(['id', 'particion']);
+                    foreach ($particiones as $part) {
+                        DB::table('particion_lote_mineral')
+                            ->where('id', $part->id)
+                            ->update(['correlativo' => $lote->correlativo.'-'.$part->particion]);
+                    }
+                }
             }
 
             $lote->condicion_ingreso = $newCondicion;
@@ -681,9 +708,13 @@ class RecepcionMineralService
             'numero_contacto' => ['nombre' => 'Número de contacto', 'tipo' => 'string'],
             'tipo_producto' => ['nombre' => 'Tipo de producto', 'tipo' => 'string'],
             'tipo_mineral' => ['nombre' => 'Tipo de mineral', 'tipo' => 'string'],
-            'peso_inicial' => ['nombre' => 'Peso inicial', 'tipo' => 'float'],
-            'peso_final' => ['nombre' => 'Peso final (tara)', 'tipo' => 'float'],
         ];
+
+        // Los pesos no se auditan en un padre particionado: no son datos del lote.
+        if (! $esPadreParticionado) {
+            $camposAuditar['peso_inicial'] = ['nombre' => 'Peso inicial', 'tipo' => 'float'];
+            $camposAuditar['peso_final'] = ['nombre' => 'Peso final (tara)', 'tipo' => 'float'];
+        }
 
         foreach ($camposAuditar as $campoBd => $meta) {
             $valAnt = $lote->$campoBd;
@@ -711,6 +742,66 @@ class RecepcionMineralService
                     'valor_anterior' => $valAntLabel,
                     'valor_nuevo' => $valNueLabel,
                 ];
+            }
+        }
+
+        // Transporte: estos datos viven en `recepcion_unidad`, no en el lote.
+        $camposTransporte = [
+            'id_vehiculo' => [
+                'nombre' => 'Vehículo',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $v = DB::table('vehiculo')->where('id', $id)->first();
+
+                    return $v ? $v->placa : "ID #$id";
+                },
+            ],
+            'id_empresa_transporte' => [
+                'nombre' => 'Empresa de transporte',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $e = DB::table('empresa_transporte')->where('id', $id)->first();
+
+                    return $e ? $e->razon_social : "ID #$id";
+                },
+            ],
+            'id_conductor' => [
+                'nombre' => 'Conductor',
+                'resolver' => function ($id) {
+                    if (! $id) {
+                        return null;
+                    }
+                    $c = DB::table('conductor')->where('id', $id)->first();
+
+                    return $c ? trim($c->nombre.' '.$c->apellido) : "ID #$id";
+                },
+            ],
+        ];
+
+        $actualizacionesTransporte = [];
+        if ($ru) {
+            foreach ($camposTransporte as $campoBd => $meta) {
+                if (! array_key_exists($campoBd, $data)) {
+                    continue;
+                }
+                $valAnt = $ru->{$campoBd} !== null ? (int) $ru->{$campoBd} : null;
+                $valNue = ($data[$campoBd] !== null && $data[$campoBd] !== '')
+                    ? (int) $data[$campoBd]
+                    : null;
+
+                if ($valAnt !== $valNue) {
+                    $cambios[] = [
+                        'campo_bd' => "recepcion_unidad.{$campoBd}",
+                        'campo' => $meta['nombre'],
+                        'valor_anterior' => $meta['resolver']($valAnt),
+                        'valor_nuevo' => $meta['resolver']($valNue),
+                    ];
+                    $actualizacionesTransporte[$campoBd] = $valNue;
+                }
             }
         }
 
@@ -781,21 +872,32 @@ class RecepcionMineralService
         $lote->numero_contacto = $data['numero_contacto'];
         $lote->tipo_producto = $data['tipo_producto'];
         $lote->tipo_mineral = $data['tipo_mineral'];
-        $lote->peso_inicial = $data['peso_inicial'] !== null ? (float) $data['peso_inicial'] : null;
 
-        $lote->peso_final = $data['peso_final'] !== null ? (float) $data['peso_final'] : null;
+        // Los pesos del padre particionado son el agregado de sus particiones:
+        // no se tocan desde la edición del lote.
+        if (! $esPadreParticionado) {
+            $lote->peso_inicial = $data['peso_inicial'] !== null ? (float) $data['peso_inicial'] : null;
+            $lote->peso_final = $data['peso_final'] !== null ? (float) $data['peso_final'] : null;
 
-        // Calcular peso neto si ambos pesos existen
-        if ($lote->peso_inicial !== null && $lote->peso_final !== null) {
-            $lote->peso_neto = $lote->peso_inicial - $lote->peso_final;
-            $lote->peso_actual = $lote->peso_neto; // Mantener peso_actual sincronizado con peso_neto
-        } else {
-            $lote->peso_neto = null;
-            $lote->peso_actual = null;
+            // Calcular peso neto si ambos pesos existen
+            if ($lote->peso_inicial !== null && $lote->peso_final !== null) {
+                $lote->peso_neto = $lote->peso_inicial - $lote->peso_final;
+                $lote->peso_actual = $lote->peso_neto; // Mantener peso_actual sincronizado con peso_neto
+            } else {
+                $lote->peso_neto = null;
+                $lote->peso_actual = null;
+            }
         }
 
         $lote->evidencias = $evidenciasGuardadas;
         $lote->save();
+
+        // Transporte: se persiste en la unidad que pesó el lote.
+        if (! empty($actualizacionesTransporte)) {
+            DB::table('recepcion_unidad')
+                ->where('id', $lote->id_recepcion_unidad)
+                ->update($actualizacionesTransporte);
+        }
 
         $updatedLote = RecepcionMineralData::get_lote_by_id($loteId);
 
@@ -1110,6 +1212,13 @@ class RecepcionMineralService
             return ApiResponse::error('No se encontró el lote padre.', 404);
         }
 
+        // La cascada escribe sobre el LOTE PADRE: si el lote tiene valorización
+        // viva, ningún campo (de la partición ni del padre) puede editarse.
+        $bloqueo = self::get_bloqueo_valorizacion($idLote);
+        if ($bloqueo !== null) {
+            return ApiResponse::error($bloqueo, 422);
+        }
+
         $cambios = [];
         $campos = [
             'id_proveedor_minero' => ['tipo' => 'int', 'etiqueta' => 'Proveedor minero'],
@@ -1167,6 +1276,235 @@ class RecepcionMineralService
             'particiones' => $particiones,
             'lote' => RecepcionMineralData::get_lote_by_id($idLote),
         ], 'Campos no-peso actualizados correctamente.');
+    }
+
+    /**
+     * Editar una partición: sus pesos y evidencias, más los campos no-peso del
+     * lote padre (que el resto de particiones heredan en cascada).
+     *
+     * NO modifica las fechas de pesaje: son el registro histórico del pesaje.
+     * Tras el cambio recalcula el peso neto agregado del lote padre.
+     */
+    public static function actualizar_particion(int $idParticion, array $data, array $archivos, ?int $idEmpleado = null): array
+    {
+        DB::beginTransaction();
+        try {
+            $particion = ParticionLoteMineral::find($idParticion);
+            if (! $particion) {
+                DB::rollBack();
+
+                return ApiResponse::error('No se encontró la partición.', 404);
+            }
+
+            if ($particion->estado !== EstadoBase::Activo) {
+                DB::rollBack();
+
+                return ApiResponse::error('La partición no está activa.', 422);
+            }
+
+            $idLote = (int) $particion->id_lote_mineral;
+            $lote = LoteMineral::find($idLote);
+            if (! $lote) {
+                DB::rollBack();
+
+                return ApiResponse::error('No se encontró el lote padre de la partición.', 404);
+            }
+
+            $bloqueo = self::get_bloqueo_valorizacion($idLote);
+            if ($bloqueo !== null) {
+                DB::rollBack();
+
+                return ApiResponse::error($bloqueo, 422);
+            }
+
+            $letra = (string) $particion->particion;
+            $correlativo = (string) $particion->correlativo;
+            $pesoNetoAnterior = $lote->peso_neto !== null ? round((float) $lote->peso_neto, 2) : null;
+
+            // ── 1. Pesos de la partición ────────────────────────────────────
+            $pesoInicial = array_key_exists('peso_inicial', $data)
+                ? ($data['peso_inicial'] !== null ? (float) $data['peso_inicial'] : null)
+                : $particion->peso_inicial;
+            $pesoFinal = array_key_exists('peso_final', $data)
+                ? ($data['peso_final'] !== null ? (float) $data['peso_final'] : null)
+                : $particion->peso_final;
+
+            if ($pesoInicial !== null && $pesoInicial <= 0) {
+                DB::rollBack();
+
+                return ApiResponse::error('El peso inicial debe ser mayor a cero.', 422);
+            }
+            if ($pesoFinal !== null && $pesoFinal <= 0) {
+                DB::rollBack();
+
+                return ApiResponse::error('El peso final (tara) debe ser mayor a cero.', 422);
+            }
+            if ($pesoInicial !== null && $pesoFinal !== null && $pesoFinal >= $pesoInicial) {
+                DB::rollBack();
+
+                return ApiResponse::error('El peso final (tara) no puede ser mayor o igual al peso inicial (bruto).', 422);
+            }
+
+            $pesoNeto = ($pesoInicial !== null && $pesoFinal !== null)
+                ? round($pesoInicial - $pesoFinal, 2)
+                : null;
+
+            $cambios = [];
+            $pesos = [
+                'peso_inicial' => ['Peso inicial (bruto)', $particion->peso_inicial, $pesoInicial],
+                'peso_final' => ['Peso final (tara)', $particion->peso_final, $pesoFinal],
+            ];
+            foreach ($pesos as $campoBd => $valores) {
+                [$etiqueta, $anterior, $nuevo] = $valores;
+                $anterior = $anterior !== null ? (float) $anterior : null;
+                $nuevo = $nuevo !== null ? (float) $nuevo : null;
+                if ($anterior !== $nuevo) {
+                    $cambios[] = [
+                        'campo_bd' => "particion_lote_mineral.{$campoBd}",
+                        'campo' => "Partición {$letra} ({$correlativo}) — {$etiqueta}",
+                        'valor_anterior' => $anterior,
+                        'valor_nuevo' => $nuevo,
+                    ];
+                }
+            }
+
+            // ── 2. Evidencias de la partición ────────────────────────────────
+            $evidencias = $particion->evidencias ?? [];
+            if (! is_array($evidencias)) {
+                $evidencias = json_decode((string) $evidencias, true) ?? [];
+            }
+            if (array_key_exists('evidencias_existentes', $data)) {
+                $evidencias = is_array($data['evidencias_existentes'])
+                    ? $data['evidencias_existentes']
+                    : (json_decode((string) $data['evidencias_existentes'], true) ?? []);
+            }
+            if (! empty($archivos)) {
+                $evidencias = array_merge($evidencias, ArchivoHelper::guardarArchivos('particiones_lotes', $archivos));
+            }
+
+            $nombresAnteriores = [];
+            foreach ($particion->evidencias ?? [] as $evidencia) {
+                if (isset($evidencia['nombre_original'])) {
+                    $nombresAnteriores[] = $evidencia['nombre_original'];
+                }
+            }
+            $nombresNuevos = [];
+            foreach ($evidencias as $evidencia) {
+                if (isset($evidencia['nombre_original'])) {
+                    $nombresNuevos[] = $evidencia['nombre_original'];
+                }
+            }
+            sort($nombresAnteriores);
+            sort($nombresNuevos);
+            if ($nombresAnteriores !== $nombresNuevos) {
+                $cambios[] = [
+                    'campo_bd' => 'particion_lote_mineral.evidencias',
+                    'campo' => "Partición {$letra} ({$correlativo}) — Evidencias",
+                    'valor_anterior' => ! empty($nombresAnteriores) ? implode(', ', $nombresAnteriores) : '— (sin evidencias)',
+                    'valor_nuevo' => ! empty($nombresNuevos) ? implode(', ', $nombresNuevos) : '— (sin evidencias)',
+                ];
+            }
+
+            // ── 3. Campos no-peso del lote padre (cascada a las particiones) ──
+            $camposNoPeso = [
+                'id_proveedor_minero' => ['Proveedor minero', 'int'],
+                'id_zona_origen' => ['Zona de origen', 'int'],
+                'numero_contacto' => ['Número de contacto', 'string'],
+                'tipo_producto' => ['Tipo de producto', 'string'],
+                'tipo_mineral' => ['Tipo de mineral', 'string'],
+            ];
+            $cambiosPadre = [];
+            foreach ($camposNoPeso as $campoBd => $meta) {
+                if (! array_key_exists($campoBd, $data)) {
+                    continue;
+                }
+                [$etiqueta, $tipo] = $meta;
+                $anterior = $lote->{$campoBd};
+                $nuevo = $data[$campoBd];
+                if ($tipo === 'int') {
+                    $anterior = $anterior !== null ? (int) $anterior : null;
+                    $nuevo = ($nuevo !== null && $nuevo !== '') ? (int) $nuevo : null;
+                } else {
+                    $anterior = $anterior !== null ? trim((string) $anterior) : '';
+                    $nuevo = ($nuevo !== null && $nuevo !== '') ? trim((string) $nuevo) : '';
+                }
+                if ($anterior !== $nuevo) {
+                    $cambiosPadre[] = [
+                        'campo_bd' => $campoBd,
+                        'campo' => $etiqueta,
+                        'valor_anterior' => $anterior,
+                        'valor_nuevo' => $nuevo,
+                    ];
+                }
+            }
+
+            // ── 4. Persistencia ─────────────────────────────────────────────
+            RecepcionMineralData::actualizar_particion($idParticion, [
+                'peso_inicial' => $pesoInicial,
+                'peso_final' => $pesoFinal,
+                'peso_neto' => $pesoNeto,
+                'evidencias' => $evidencias,
+            ]);
+
+            self::persistir_campos_no_peso_en_padre($idLote, $data);
+
+            $totalNeto = RecepcionMineralData::recalcular_peso_neto_lote_padre($idLote);
+            if ($pesoNetoAnterior !== $totalNeto) {
+                $cambiosPadre[] = [
+                    'campo_bd' => 'peso_neto',
+                    'campo' => 'Peso neto del lote (suma de particiones)',
+                    'valor_anterior' => $pesoNetoAnterior,
+                    'valor_nuevo' => $totalNeto,
+                ];
+            }
+
+            // ── 5. Trazabilidad (el log vive en el lote padre) ──────────────
+            $todosLosCambios = array_merge($cambios, $cambiosPadre);
+            if (! empty($todosLosCambios) && $idEmpleado !== null) {
+                $lote->refresh();
+                $logActual = $lote->log_cambios ?? [];
+                if (! is_array($logActual)) {
+                    $logActual = json_decode((string) $logActual, true) ?? [];
+                }
+                array_unshift($logActual, RES_CambiosLog::crear(
+                    $idEmpleado,
+                    $data['motivo'] ?? "Edición de la partición {$letra} ({$correlativo})",
+                    $todosLosCambios,
+                ));
+                $lote->log_cambios = $logActual;
+                $lote->save();
+            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return ApiResponse::error('Error al actualizar la partición: '.$e->getMessage(), 500);
+        }
+
+        return ApiResponse::success([
+            'particion' => RecepcionMineralData::get_particion_by_id($idParticion),
+            'lote' => RecepcionMineralData::get_lote_by_id($idLote),
+        ], 'Partición actualizada correctamente.');
+    }
+
+    /**
+     * Mensaje de bloqueo si el lote tiene una valorización viva (Propuesta o
+     * Aprobado). Devuelve null cuando el lote es editable.
+     */
+    private static function get_bloqueo_valorizacion(int $idLote): ?string
+    {
+        $valorizacion = RecepcionMineralData::get_valorizacion_viva_por_lote($idLote);
+        if ($valorizacion === null) {
+            return null;
+        }
+
+        $referencia = $valorizacion['correlativo'] !== null
+            ? ' ('.$valorizacion['correlativo'].')'
+            : '';
+
+        return 'El lote tiene una valorización en estado "'.$valorizacion['estado'].'"'.$referencia
+            .' y no puede editarse. Anule o desestime la valorización antes de modificarlo.';
     }
 
     /**

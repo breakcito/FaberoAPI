@@ -177,6 +177,24 @@ class ValorizacionCompraAuxData
      */
     public static function get_lotes_disponibles_valorizacion(int $idProveedor, ?int $idValorizacionEdicion = null): array
     {
+        $filtroExcluirEdicionOro = '';
+        $filtroExcluirEdicionPlata = '';
+
+        if ($idValorizacionEdicion) {
+            $uuidGrupoEdicion = DB::table('valorizacion_compra')
+                ->where('id', $idValorizacionEdicion)
+                ->value('uuid_grupo');
+
+            if (! empty($uuidGrupoEdicion) && is_string($uuidGrupoEdicion)) {
+                $uuidSafe = preg_replace('/[^a-zA-Z0-9\-_]/', '', $uuidGrupoEdicion);
+                $filtroExcluirEdicionOro = "AND vc_o.id <> {$idValorizacionEdicion} AND (vc_o.uuid_grupo IS NULL OR vc_o.uuid_grupo <> '{$uuidSafe}')";
+                $filtroExcluirEdicionPlata = "AND vc_p.id <> {$idValorizacionEdicion} AND (vc_p.uuid_grupo IS NULL OR vc_p.uuid_grupo <> '{$uuidSafe}')";
+            } else {
+                $filtroExcluirEdicionOro = "AND vc_o.id <> {$idValorizacionEdicion}";
+                $filtroExcluirEdicionPlata = "AND vc_p.id <> {$idValorizacionEdicion}";
+            }
+        }
+
         $sql = '
             SELECT
                 id_lote_guia,
@@ -218,7 +236,7 @@ class ValorizacionCompraAuxData
                         WHERE COALESCE(lg_o.id_lote_mineral, plm_o.id_lote_mineral) = lm.id
                           AND vcd_o.elemento_quimico = \'Oro\'
                           AND vc_o.estado IN (\'Propuesta\', \'Aprobado\')
-                          '.($idValorizacionEdicion ? "AND vc_o.id <> {$idValorizacionEdicion}" : '').'
+                          '.$filtroExcluirEdicionOro.'
                     ) OR (COALESCE(lm.esta_valorizado_oro, 0) = 1 '.($idValorizacionEdicion ? 'AND 1 = 0' : '').') THEN 1 ELSE 0 END AS es_valorizado_oro,
                     CASE WHEN EXISTS (
                         SELECT 1
@@ -229,7 +247,7 @@ class ValorizacionCompraAuxData
                         WHERE COALESCE(lg_p.id_lote_mineral, plm_p.id_lote_mineral) = lm.id
                           AND vcd_p.elemento_quimico = \'Plata\'
                           AND vc_p.estado IN (\'Propuesta\', \'Aprobado\')
-                          '.($idValorizacionEdicion ? "AND vc_p.id <> {$idValorizacionEdicion}" : '').'
+                          '.$filtroExcluirEdicionPlata.'
                     ) OR (COALESCE(lm.esta_valorizado_plata, 0) = 1 '.($idValorizacionEdicion ? 'AND 1 = 0' : '').') THEN 1 ELSE 0 END AS es_valorizado_plata,
                     ROW_NUMBER() OVER (PARTITION BY lm.id ORDER BY lg.id ASC) AS rn
                 FROM lote_guia lg
@@ -292,7 +310,7 @@ class ValorizacionCompraAuxData
                               WHERE COALESCE(lg_o.id_lote_mineral, plm_o.id_lote_mineral) = lm.id
                                 AND vcd_o.elemento_quimico = \'Oro\'
                                 AND vc_o.estado IN (\'Propuesta\', \'Aprobado\')
-                                '.($idValorizacionEdicion ? "AND vc_o.id <> {$idValorizacionEdicion}" : '').'
+                                '.$filtroExcluirEdicionOro.'
                           )
                           OR (COALESCE(lm.esta_valorizado_oro, 0) = 1 '.($idValorizacionEdicion ? 'AND 1 = 0' : '').')
                       )
@@ -307,7 +325,7 @@ class ValorizacionCompraAuxData
                               WHERE COALESCE(lg_p.id_lote_mineral, plm_p.id_lote_mineral) = lm.id
                                 AND vcd_p.elemento_quimico = \'Plata\'
                                 AND vc_p.estado IN (\'Propuesta\', \'Aprobado\')
-                                '.($idValorizacionEdicion ? "AND vc_p.id <> {$idValorizacionEdicion}" : '').'
+                                '.$filtroExcluirEdicionPlata.'
                           )
                           OR (COALESCE(lm.esta_valorizado_plata, 0) = 1 '.($idValorizacionEdicion ? 'AND 1 = 0' : '').')
                       )
@@ -346,7 +364,7 @@ class ValorizacionCompraAuxData
                         JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
                         WHERE vcd.id_grupo_analisis = ga.id
                           AND vcd.elemento_quimico = "Oro"
-                          AND vc.estado != "Anulado"
+                          AND vc.estado IN ("Propuesta", "Aprobado")
                         ORDER BY CASE WHEN vc.estado = "Aprobado" THEN 1 ELSE 2 END ASC, vc.id DESC
                         LIMIT 1
                     ) AS estado_valorizacion_oro,
@@ -356,7 +374,7 @@ class ValorizacionCompraAuxData
                         JOIN valorizacion_compra vc ON vc.id = vcd.id_valorizacion_compra
                         WHERE vcd.id_grupo_analisis = ga.id
                           AND vcd.elemento_quimico = "Plata"
-                          AND vc.estado != "Anulado"
+                          AND vc.estado IN ("Propuesta", "Aprobado")
                         ORDER BY CASE WHEN vc.estado = "Aprobado" THEN 1 ELSE 2 END ASC, vc.id DESC
                         LIMIT 1
                     ) AS estado_valorizacion_plata
