@@ -471,9 +471,9 @@ class ValidacionDistribucionData
             $item->peso_tara = $item->peso_tara !== null ? (float) $item->peso_tara : null;
             $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
 
-            // La partición se pesa en el ingreso: la guía es la del primer tramo
-            // (la del lote padre o la enlazada a esta partición).
-            GuiasData::aplicar_guia_ticket(
+            // Ticket de RECEPCIÓN: la guía es la del primer tramo donde se
+            // registró la partición (o su lote padre).
+            GuiasData::aplicar_guia_recepcion(
                 $item,
                 (int) $item->id_lote,
                 $idParticion
@@ -834,9 +834,9 @@ class ValidacionDistribucionData
             $item->despacho_correlativo = $item->despacho_correlativo !== null ? (string) $item->despacho_correlativo : null;
             $item->planta_destino_nombre = $item->planta_destino_nombre !== null ? (string) $item->planta_destino_nombre : null;
 
-            // La guía se resuelve por etapa: segundo tramo si el lote tiene
-            // despacho con guía registrada; si no, primer tramo (ingreso).
-            GuiasData::aplicar_guia_ticket($item, $idLote);
+            // Ticket de RECEPCIÓN: la guía es la del primer tramo donde se
+            // registró el lote.
+            GuiasData::aplicar_guia_recepcion($item, $idLote);
 
             return (array) $item;
         }

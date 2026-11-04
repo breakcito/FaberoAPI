@@ -110,7 +110,14 @@ Las guías viven en dos tramos y se registran en dos sitios distintos:
 
 Ojo: un `lote_guia` enlazado a una **partición** tiene `id_lote_mineral` NULL (el lote está en `id_particion_lote_mineral`). Cualquier resolución por `lote_guia` debe cubrir ambos casos.
 
-**Resolución en el ticket** (`App\Data\GuiasData::resolver_guia_ticket`): manda la guía del **2º tramo** (la que acompaña al embarque a la planta destino) si el lote tiene despacho con guía registrada; si no, la del **1er tramo**. Se aplica a los 5 endpoints de ticket (`recepcion-mineral/lotes/{id}/ticket-balanza`, `.../particiones/{id}/ticket-balanza`, `.../distribuciones-detalles/{id}/ticket-balanza`, `validacion-distribucion/lotes/{id}/ticket-balanza` y `.../particiones/{id}/ticket-balanza`).
+**Resolución en el ticket** (`App\Data\GuiasData`):
+
+| Tipo de ticket | Fuente | Orden de resolución |
+|---|---|---|
+| **Recepción** (`lote_mineral.id_ticket_balanza`, `particion_lote_mineral.id_ticket_balanza`) | `guia_primer_tramo` | 1) la guía enlazada al item vía `lote_guia` (primero la partición, luego el lote padre) · 2) la guía de la unidad de recepción (`guia_primer_tramo.id_recepcion_unidad`) · 3) los números capturados en la programación (`recepcion_unidad.guia_remitente` / `guia_transportista`) |
+| **Despacho** (`distribucion_detalle.id_ticket_balanza`) | `guia_segundo_tramo` | 1) la guía de segundo tramo de esa distribución · 2) la del último despacho del lote · 3) la del primer tramo del lote |
+
+Se aplica a los 5 endpoints de ticket (`recepcion-mineral/lotes/{id}/ticket-balanza`, `.../particiones/{id}/ticket-balanza`, `.../distribuciones-detalles/{id}/ticket-balanza`, `validacion-distribucion/lotes/{id}/ticket-balanza` y `.../particiones/{id}/ticket-balanza`).
 
 ## Edición de lotes y particiones (reglas de integridad)
 

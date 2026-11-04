@@ -1271,10 +1271,9 @@ class RecepcionMineralData
             $item->despacho_correlativo = $item->despacho_correlativo !== null ? (string) $item->despacho_correlativo : null;
             $item->planta_destino_nombre = $item->planta_destino_nombre !== null ? (string) $item->planta_destino_nombre : null;
 
-            // Las guías se resuelven aparte: pueden venir del primer tramo
-            // (definidas al registrar la unidad o en el módulo de Guías de
-            // Primer Tramo) o del segundo tramo (despacho).
-            GuiasData::aplicar_guia_ticket($item, $loteId);
+            // Ticket de RECEPCIÓN: las guías salen de la guía de primer tramo
+            // donde se registró el lote (o su partición).
+            GuiasData::aplicar_guia_recepcion($item, $loteId);
 
             return (array) $item;
         }
@@ -1401,13 +1400,12 @@ class RecepcionMineralData
             $item->despacho_correlativo = $item->despacho_correlativo !== null ? (string) $item->despacho_correlativo : null;
             $item->planta_destino_nombre = $item->planta_destino_nombre !== null ? (string) $item->planta_destino_nombre : null;
 
-            // Ticket de despacho: la guía es la del SEGUNDO TRAMO de la
+            // Ticket de DESPACHO: la guía es la del SEGUNDO TRAMO de la
             // distribución (la que acompaña al embarque a la planta destino).
             if ($item->id_lote !== null) {
-                GuiasData::aplicar_guia_ticket(
+                GuiasData::aplicar_guia_despacho(
                     $item,
                     (int) $item->id_lote,
-                    null,
                     (int) $item->id_distribucion
                 );
             }
@@ -1739,9 +1737,9 @@ class RecepcionMineralData
         $item->peso_tara = $item->peso_tara !== null ? (float) $item->peso_tara : null;
         $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
 
-        // La partición se pesa en el ingreso: la guía es la del primer tramo
-        // (la del lote padre o la enlazada a esta partición).
-        GuiasData::aplicar_guia_ticket(
+        // Ticket de RECEPCIÓN de la partición: la guía es la del primer tramo
+        // donde se registró la partición (o su lote padre).
+        GuiasData::aplicar_guia_recepcion(
             $item,
             (int) $item->id_lote,
             $idParticion
