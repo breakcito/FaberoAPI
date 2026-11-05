@@ -127,6 +127,7 @@ class ValorizacionVentaController
             'fecha_hora_valorizacion' => 'nullable|date',
             'monto_penalidad' => 'nullable|numeric|min:0',
             'monto_flete' => 'nullable|numeric|min:0',
+            'motivo_edicion' => 'nullable|string|min:3|max:255',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
@@ -142,6 +143,7 @@ class ValorizacionVentaController
             'fecha_hora_valorizacion' => $request->input('fecha_hora_valorizacion') ?: null,
             'monto_penalidad' => $request->input('monto_penalidad') !== null ? (float) $request->input('monto_penalidad') : 0,
             'monto_flete' => $request->input('monto_flete') !== null ? (float) $request->input('monto_flete') : 0,
+            'motivo_edicion' => $request->input('motivo_edicion'),
         ];
 
         $archivos = [];

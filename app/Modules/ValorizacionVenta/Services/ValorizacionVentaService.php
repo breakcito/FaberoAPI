@@ -286,22 +286,7 @@ class ValorizacionVentaService
             foreach ($oldDetalles as $od) {
                 $idDespachoDetalle = (int) $od->id_despacho_detalle;
                 $dd = ValorizacionVentaData::find_despacho_detalle_con_planta($idDespachoDetalle);
-                $partes = [];
-                if (! empty($dd['codigo_preliminar'])) {
-                    $partes[] = "Cód:{$dd['codigo_preliminar']}";
-                }
-                if (! empty($dd['despacho_correlativo'])) {
-                    $partes[] = "Despacho:{$dd['despacho_correlativo']}";
-                }
-                if (! empty($dd['lote_correlativo'])) {
-                    $partes[] = "Lote:{$dd['lote_correlativo']}";
-                }
-                if (! empty($dd['blending_correlativo'])) {
-                    $partes[] = "Blend:{$dd['blending_correlativo']}";
-                }
-                $identificador = ! empty($partes)
-                    ? implode(' · ', $partes)
-                    : "Item Despacho #{$idDespachoDetalle}";
+                $identificador = self::identificadorDetalleVenta($dd ?? [], $idDespachoDetalle);
                 $key = "{$idDespachoDetalle}_{$od->elemento_quimico->value}";
                 $oldDetMap[$key] = [
                     'identificador' => $identificador,
@@ -322,6 +307,7 @@ class ValorizacionVentaService
             self::liberarDespachoDetallesValorizados($id, $oldDetalles);
 
             $detallesCreados = [];
+            $newDetMap = [];
             foreach ($data['detalles'] as $det) {
                 $idDespachoDetalle = (int) ($det['id_despacho_detalle'] ?? $det['id_distribucion_detalle']);
                 $dd = ValorizacionVentaData::find_despacho_detalle_con_planta($idDespachoDetalle);
@@ -374,6 +360,11 @@ class ValorizacionVentaService
 
                 // Auditoría independiente para el detalle (columna log_cambios SÍ existe en el detalle)
                 $keyDet = "{$idDespachoDetalle}_{$elementoEnum->value}";
+                $identificador = self::identificadorDetalleVenta($dd, $idDespachoDetalle);
+                $newDetMap[$keyDet] = [
+                    'identificador' => $identificador,
+                    'elemento' => $elementoEnum->value,
+                ];
                 $logCambiosDetalle = [];
                 if (isset($oldDetMap[$keyDet])) {
                     $oldInfo = $oldDetMap[$keyDet];
@@ -435,6 +426,36 @@ class ValorizacionVentaService
                             'cambios' => $cambiosDet,
                         ];
                     }
+                } else {
+                    // Detalle NUEVO: se registra su composición inicial para
+                    // que el historial del propio detalle documente el alta.
+                    $logCambiosDetalle[] = [
+                        'fecha_hora' => now()->toDateTimeString(),
+                        'update_at' => now()->toIso8601String(),
+                        'id_empleado' => (int) $data['id_empleado_edicion'],
+                        'accion' => 'Alta de Detalle',
+                        'motivo' => "Detalle {$identificador} ({$elementoEnum->value}) agregado a la Valorización",
+                        'cambios' => [
+                            [
+                                'campo_bd' => 'detalle_agregado',
+                                'campo' => 'Detalle de valorización agregado',
+                                'valor_anterior' => '—',
+                                'valor_nuevo' => "{$identificador} ({$elementoEnum->value})",
+                            ],
+                            [
+                                'campo_bd' => 'precio_por_tonelada',
+                                'campo' => 'Precio por Tonelada (PTN)',
+                                'valor_anterior' => '—',
+                                'valor_nuevo' => '$ '.number_format(round((float) $ptn, 2), 2),
+                            ],
+                            [
+                                'campo_bd' => 'subtotal',
+                                'campo' => 'Subtotal de Detalle',
+                                'valor_anterior' => '—',
+                                'valor_nuevo' => '$ '.number_format(round((float) $subtotal, 2), 2),
+                            ],
+                        ],
+                    ];
                 }
 
                 $detallesCreados[] = ValorizacionVentaDetalle::create([
@@ -458,7 +479,44 @@ class ValorizacionVentaService
             // Prender flags esta_valorizado_X de despacho_detalle para los detalles recién creados
             self::marcarDespachoDetallesValorizados($detallesCreados);
 
-            // Persistir cabecera-level log_cambios (planta, código, penalidad, flete)
+            // Auditoría de cabecera: total de la valorización y altas/bajas de ítems.
+            $oldTotalSubtotal = round((float) $oldDetalles->sum('subtotal'), 2);
+            $newTotalSubtotal = round(
+                (float) array_sum(array_map(fn ($d) => (float) $d->subtotal, $detallesCreados)),
+                2
+            );
+            if (abs($oldTotalSubtotal - $newTotalSubtotal) > 0.01) {
+                $cambiosCabecera[] = [
+                    'campo_bd' => 'total_subtotal',
+                    'campo' => 'Total Valorización',
+                    'valor_anterior' => '$ '.number_format($oldTotalSubtotal, 2),
+                    'valor_nuevo' => '$ '.number_format($newTotalSubtotal, 2),
+                ];
+            }
+
+            foreach ($oldDetMap as $key => $oldInfo) {
+                if (! isset($newDetMap[$key])) {
+                    $cambiosCabecera[] = [
+                        'campo_bd' => 'detalle_removido',
+                        'campo' => 'Detalle de valorización removido',
+                        'valor_anterior' => "{$oldInfo['identificador']} ({$oldInfo['elemento']})",
+                        'valor_nuevo' => '—',
+                    ];
+                }
+            }
+
+            foreach ($newDetMap as $key => $newInfo) {
+                if (! isset($oldDetMap[$key])) {
+                    $cambiosCabecera[] = [
+                        'campo_bd' => 'detalle_agregado',
+                        'campo' => 'Detalle de valorización agregado',
+                        'valor_anterior' => '—',
+                        'valor_nuevo' => "{$newInfo['identificador']} ({$newInfo['elemento']})",
+                    ];
+                }
+            }
+
+            // Persistir cabecera-level log_cambios (planta, código, penalidad, flete, total, altas/bajas)
             if (! empty($cambiosCabecera)) {
                 $logCabecera = $valorizacion->log_cambios ?? [];
                 if (! is_array($logCabecera)) {
@@ -771,5 +829,30 @@ class ValorizacionVentaService
         $p = PlantaDestino::find($idPlanta);
 
         return $p ? $p->razon_social : "ID #{$idPlanta}";
+    }
+
+    /**
+     * Identificador legible de un detalle de despacho (código, despacho y
+     * lote/blend) para los logs de auditoría.
+     *
+     * @param  array<string,mixed>  $dd
+     */
+    private static function identificadorDetalleVenta(array $dd, int $idDespachoDetalle): string
+    {
+        $partes = [];
+        if (! empty($dd['codigo_preliminar'])) {
+            $partes[] = "Cód:{$dd['codigo_preliminar']}";
+        }
+        if (! empty($dd['despacho_correlativo'])) {
+            $partes[] = "Despacho:{$dd['despacho_correlativo']}";
+        }
+        if (! empty($dd['lote_correlativo'])) {
+            $partes[] = "Lote:{$dd['lote_correlativo']}";
+        }
+        if (! empty($dd['blending_correlativo'])) {
+            $partes[] = "Blend:{$dd['blending_correlativo']}";
+        }
+
+        return ! empty($partes) ? implode(' · ', $partes) : "Item Despacho #{$idDespachoDetalle}";
     }
 }
