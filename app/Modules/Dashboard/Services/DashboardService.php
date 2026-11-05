@@ -9,9 +9,9 @@ use Carbon\CarbonImmutable;
 /**
  * Orquestación del dashboard de indicadores.
  *
- * La ventana de análisis son los últimos 12 meses cerrados (el mes en curso
- * todavía no está completo) más los 12 meses equivalentes del año anterior,
- * que sirven de base para el comparativo interanual de los KPIs.
+ * La ventana de análisis son los últimos 12 meses **incluyendo el mes en
+ * curso** (que se muestra con datos parciales) más los 12 meses equivalentes
+ * del año anterior, que sirven de base para el comparativo interanual.
  *
  * MONEDAS:
  *  - `monto_*_usd` y `*_usd_t` están en dólares.
@@ -26,7 +26,9 @@ class DashboardService
      */
     public static function get_resumen(?int $idSucursal = null): array
     {
-        $mesFin = CarbonImmutable::now()->startOfMonth()->subMonth();
+        // La ventana termina en el mes EN CURSO: el filtro arranca en el mes
+        // actual y permite consultar hacia atrás los 11 meses anteriores.
+        $mesFin = CarbonImmutable::now()->startOfMonth();
         $mesInicio = $mesFin->subMonths(11);
 
         $meses = [];
@@ -35,10 +37,10 @@ class DashboardService
         }
 
         // La consulta cubre las dos ventanas: la actual y la del año anterior.
-        // Los límites llevan hora porque las columnas comparadas son DATETIME:
-        // un `BETWEEN` con fecha sola dejaría fuera el último día.
+        // El límite superior es el instante actual: así los meses cerrados se
+        // leen completos y el mes en curso se lee sólo hasta hoy.
         $fechaInicio = $meses[0]->subYear()->startOfMonth()->format('Y-m-d H:i:s');
-        $fechaFin = $mesFin->endOfMonth()->endOfDay()->format('Y-m-d H:i:s');
+        $fechaFin = CarbonImmutable::now()->endOfDay()->format('Y-m-d H:i:s');
 
         $serie = DashboardData::get_serie_mensual($fechaInicio, $fechaFin, $idSucursal);
         $snapshot = DashboardData::get_snapshot();
