@@ -107,6 +107,7 @@ Aplican a **toda tabla nueva o modificada**. Si el código existente las viola, 
    - **Auditoría de la edición**: `log_cambios` de la cabecera registra `Total Valorización` (antes/después), `Lote en valorización agregado` y `Lote en valorización removido`; el `log_cambios` del detalle registra los cambios de parámetros (INTER, recuperación, maquila, consumo, factor, PTN, subtotal) y el **cambio de grupo de análisis**. El total se calcula con `calcularEconomiaDetalle()`, la misma función que persiste el detalle, para que el valor registrado sea siempre el real.
 7. **Contabilidad**: `ContabilidadCompra` registra `ComprobanteCompra` y los `PagoComprobanteCompra` (puede ser total o parcial, multi-moneda, multi-cuenta).
 8. **Despacho**: a `PlantasDestino` (plantas receptoras del mineral procesado). Modelos: `PlantaDestino`, `CuentasBancariasPlantaDestino`.
+   - **Leyes reportadas por el cliente** (`distribucion_detalle.ley_oro_cliente` / `ley_plata_cliente` / `ley_humedad_cliente`): se registran en la **llegada del cliente** (modal "Registrar Datos del Cliente") con **3 decimales**, igual que el resto del sistema (`lote_mineral` `DECIMAL(10,3)` y `grupo_analisis` `DECIMAL(12,3)`). El backend las normaliza con `round(..., 3)`. La validación es `nullable|numeric|min:0` (y `max:100` para la humedad): no impone número de decimales.
 
 ## Guías y Ticket de Balanza
 
