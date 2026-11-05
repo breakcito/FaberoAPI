@@ -89,6 +89,9 @@ class ValorizacionCompraService
                 throw new Exception('Solo se puede valorizar/hacer propuesta de hasta 10 lotes.');
             }
 
+            // Cada lote debe tener definido si tiene o no valor comercial.
+            self::validarValorComercialDefinido($data['detalles']);
+
             if ($todosSinValorComercial) {
                 $data['anticipos'] = [];
                 $tipoPagoEnum = TipoPagoValorizacionCompra::Transferencia;
@@ -139,22 +142,10 @@ class ValorizacionCompraService
                 $idGrupo = ! empty($det['id_grupo_analisis']) ? (int) $det['id_grupo_analisis'] : null;
                 $grupo = $idGrupo ? ValorizacionCompraData::get_grupo_analisis($idGrupo) : null;
 
-                $pesoNeto = (float) ($lote->peso_neto ?? 0);
-                if ($grupo && $grupo->ley_humedad_cierre > 0) {
-                    $leyHumedad = (float) $grupo->ley_humedad_cierre;
-                } elseif (isset($det['ley_humedad']) && (float) $det['ley_humedad'] > 0) {
-                    $leyHumedad = (float) $det['ley_humedad'];
-                } else {
-                    $leyHumedad = (float) ($lote->ley_humedad ?? 0);
-                }
-                $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
-
-                $elementoEnum = ElementoQuimicoValorizacion::tryFrom($det['elemento_quimico']) ?? ElementoQuimicoValorizacion::Oro;
-                $leyBase = $elementoEnum === ElementoQuimicoValorizacion::Oro
-                    ? ($grupo ? (float) $grupo->ley_oro_cierre : (float) ($lote->ley_oro ?? 0))
-                    : ($grupo ? (float) $grupo->ley_plata_cierre : (float) ($lote->ley_plata ?? 0));
-
-                $ley = isset($det['ley']) ? (float) $det['ley'] : $leyBase;
+                $eco = self::calcularEconomiaDetalle($det, $grupo, $lote);
+                $elementoEnum = ElementoQuimicoValorizacion::tryFrom($eco['elemento']) ?? ElementoQuimicoValorizacion::Oro;
+                $ley = $eco['ley'];
+                $leyBase = $eco['ley_base'];
 
                 // Si la ley fue modificada respecto a la del grupo, auditar en log_cambios del grupo
                 if ($grupo && abs($ley - $leyBase) > 0.0001 && ! empty($data['id_empleado_registro'])) {
@@ -178,41 +169,20 @@ class ValorizacionCompraService
                     ]);
                 }
 
-                $esSinValor = self::loteEsSinValorComercial($lote);
+                $esSinValor = $eco['es_sin_valor_comercial'];
 
-                if ($esSinValor) {
-                    $inter = 0.0;
-                    $desInter = 0.0;
-                    $recuperacion = 0.0;
-                    $maquila = 0.0;
-                    $consumo = 0.0;
-                    $factor = 1.0;
-                    $ptn = 0.0;
-                    $subtotal = 0.0;
-                    $montoPenalidad = 0.0;
-                    $montoFlete = 0.0;
-                    $descuento = 0.0;
-                    $subtotalSinDescuento = 0.0;
-                    $subtotalFinal = 0.0;
-                } else {
-                    $inter = (float) $det['inter'];
-                    $desInter = (float) $det['des_inter'];
-                    $recuperacion = (float) $det['recuperacion'];
-                    $maquila = (float) $det['maquila'];
-                    $consumo = (float) $det['consumo'];
-                    $factor = (float) ($det['factor'] ?? 1.0);
-
-                    // Formula: ptn = ((inter - desInter) * ley * (rec / 100) - maquila - consumo) * factor
-                    $ptn = (($inter - $desInter) * $ley * ($recuperacion / 100) - $maquila - $consumo) * $factor;
-
-                    // Formula: subtotal_sin_descuento = ptn * pesoSeco / 1000
-                    $subtotalSinDescuento = round(($ptn * $pesoSeco) / 1000, 2);
-
-                    $montoPenalidad = (float) ($det['monto_penalidad'] ?? 0);
-                    $montoFlete = (float) ($det['monto_flete'] ?? 0);
-                    $descuento = round($montoPenalidad + $montoFlete, 2);
-                    $subtotalFinal = round($subtotalSinDescuento - $descuento, 2);
-                }
+                $inter = $eco['inter'];
+                $desInter = $eco['des_inter'];
+                $recuperacion = $eco['recuperacion'];
+                $maquila = $eco['maquila'];
+                $consumo = $eco['consumo'];
+                $factor = $eco['factor'];
+                $ptn = $eco['ptn'];
+                $subtotalSinDescuento = $eco['subtotal_sin_descuento'];
+                $subtotalFinal = $eco['subtotal'];
+                $montoPenalidad = $eco['monto_penalidad'];
+                $montoFlete = $eco['monto_flete'];
+                $descuento = $eco['descuento'];
 
                 $detallesCreados[] = ValorizacionCompraDetalle::create([
                     'id_valorizacion_compra' => $valorizacion->id,
@@ -499,6 +469,9 @@ class ValorizacionCompraService
                 throw new Exception('Solo se puede valorizar/hacer propuesta de hasta 10 lotes.');
             }
 
+            // Cada lote debe tener definido si tiene o no valor comercial.
+            self::validarValorComercialDefinido($data['detalles'] ?? []);
+
             if ($todosSinValorComercial) {
                 $data['anticipos'] = [];
                 $tipoPagoEnum = TipoPagoValorizacionCompra::Transferencia;
@@ -622,7 +595,6 @@ class ValorizacionCompraService
                 'porcentaje_detraccion' => isset($data['porcentaje_detraccion']) ? (float) $data['porcentaje_detraccion'] : ($valorizacion->porcentaje_detraccion ?? 10.00),
                 'evidencias' => ! empty($vNueEvidencias) ? array_values($vNueEvidencias) : null,
                 'log_cambios' => $logCambios,
-                'total_subtotal' => $newTotalSubtotal,
                 'fecha_hora_valorizacion' => $data['fecha_hora_valorizacion'] ?? null,
             ]);
 
@@ -645,22 +617,10 @@ class ValorizacionCompraService
                 $idGrupo = ! empty($det['id_grupo_analisis']) ? (int) $det['id_grupo_analisis'] : null;
                 $grupo = $idGrupo ? ValorizacionCompraData::get_grupo_analisis($idGrupo) : null;
 
-                $pesoNeto = (float) ($lote->peso_neto ?? 0);
-                if ($grupo && $grupo->ley_humedad_cierre > 0) {
-                    $leyHumedad = (float) $grupo->ley_humedad_cierre;
-                } elseif (isset($det['ley_humedad']) && (float) $det['ley_humedad'] > 0) {
-                    $leyHumedad = (float) $det['ley_humedad'];
-                } else {
-                    $leyHumedad = (float) ($lote->ley_humedad ?? 0);
-                }
-                $pesoSeco = $pesoNeto * (1 - ($leyHumedad / 100));
-
-                $elementoEnum = ElementoQuimicoValorizacion::tryFrom($det['elemento_quimico']) ?? ElementoQuimicoValorizacion::Oro;
-                $leyBase = $elementoEnum === ElementoQuimicoValorizacion::Oro
-                    ? ($grupo ? (float) $grupo->ley_oro_cierre : (float) ($lote->ley_oro ?? 0))
-                    : ($grupo ? (float) $grupo->ley_plata_cierre : (float) ($lote->ley_plata ?? 0));
-
-                $ley = isset($det['ley']) ? (float) $det['ley'] : $leyBase;
+                $eco = self::calcularEconomiaDetalle($det, $grupo, $lote);
+                $elementoEnum = ElementoQuimicoValorizacion::tryFrom($eco['elemento']) ?? ElementoQuimicoValorizacion::Oro;
+                $ley = $eco['ley'];
+                $leyBase = $eco['ley_base'];
 
                 // Si la ley fue modificada respecto a la del grupo, auditar en log_cambios del grupo
                 if ($grupo && abs($ley - $leyBase) > 0.0001 && ! empty($data['id_empleado_edicion'])) {
@@ -684,28 +644,21 @@ class ValorizacionCompraService
                     ]);
                 }
 
-                $esSinValor = self::loteEsSinValorComercial($lote);
+                $esSinValor = $eco['es_sin_valor_comercial'];
 
-                if ($esSinValor) {
-                    $inter = 0.0;
-                    $desInter = 0.0;
-                    $recuperacion = 0.0;
-                    $maquila = 0.0;
-                    $consumo = 0.0;
-                    $factor = 1.0;
-                    $ptn = 0.0;
-                    $subtotal = 0.0;
-                } else {
-                    $inter = (float) $det['inter'];
-                    $desInter = (float) $det['des_inter'];
-                    $recuperacion = (float) $det['recuperacion'];
-                    $maquila = (float) $det['maquila'];
-                    $consumo = (float) $det['consumo'];
-                    $factor = (float) ($det['factor'] ?? 1.0);
-
-                    $ptn = (($inter - $desInter) * $ley * ($recuperacion / 100) - $maquila - $consumo) * $factor;
-                    $subtotal = ($ptn * $pesoSeco) / 1000;
-                }
+                $inter = $eco['inter'];
+                $desInter = $eco['des_inter'];
+                $recuperacion = $eco['recuperacion'];
+                $maquila = $eco['maquila'];
+                $consumo = $eco['consumo'];
+                $factor = $eco['factor'];
+                $ptn = $eco['ptn'];
+                $subtotal = $eco['subtotal'];
+                $montoPenalidad = $eco['monto_penalidad'];
+                $montoFlete = $eco['monto_flete'];
+                $descuento = $eco['descuento'];
+                $subtotalSinDescuento = $eco['subtotal_sin_descuento'];
+                $subtotalFinal = $eco['subtotal'];
 
                 // Auditoría independiente para el detalle del lote
                 $keyDet = "{$det['id_lote_guia']}_{$elementoEnum->value}";
@@ -713,6 +666,17 @@ class ValorizacionCompraService
                 if (isset($oldDetMap[$keyDet])) {
                     $oldInfo = $oldDetMap[$keyDet];
                     $cambiosDet = [];
+
+                    // Cambio de grupo de análisis
+                    $oldGrupoId = $oldInfo['id_grupo_analisis'] ?? null;
+                    if ($oldGrupoId !== $idGrupo) {
+                        $cambiosDet[] = [
+                            'campo_bd' => 'id_grupo_analisis',
+                            'campo' => 'Grupo de Análisis',
+                            'valor_anterior' => $oldInfo['grupo_nombre'] ?? '—',
+                            'valor_nuevo' => $grupo->nombre ?? '—',
+                        ];
+                    }
 
                     $oldInterRound = round((float) ($oldInfo['inter'] ?? 0), 4);
                     $newInterRound = round((float) $inter, 4);
@@ -810,13 +774,42 @@ class ValorizacionCompraService
                             $cambiosDet
                         );
                     }
+                } else {
+                    // Lote NUEVO agregado a la valorización: se registra su
+                    // composición inicial para que el historial del detalle
+                    // documente el aporte al total de la propuesta.
+                    [$loteNuevo, $corrNuevo] = self::resolverLoteGuia((int) $det['id_lote_guia']);
+                    $logCambiosDetalle[] = RES_CambiosLog::crear(
+                        (int) $data['id_empleado_edicion'],
+                        "Lote agregado a la Valorización: {$corrNuevo} ({$elementoEnum->value})",
+                        [
+                            [
+                                'campo_bd' => 'lote_agregado',
+                                'campo' => 'Lote en valorización agregado',
+                                'valor_anterior' => '—',
+                                'valor_nuevo' => "{$corrNuevo} ({$elementoEnum->value})",
+                            ],
+                            [
+                                'campo_bd' => 'id_grupo_analisis',
+                                'campo' => 'Grupo de Análisis',
+                                'valor_anterior' => '—',
+                                'valor_nuevo' => $grupo->nombre ?? '—',
+                            ],
+                            [
+                                'campo_bd' => 'precio_por_tonelada',
+                                'campo' => 'Precio por Tonelada (PTN)',
+                                'valor_anterior' => '—',
+                                'valor_nuevo' => '$ '.number_format(round($ptn, 2), 2),
+                            ],
+                            [
+                                'campo_bd' => 'subtotal',
+                                'campo' => 'Subtotal de Lote',
+                                'valor_anterior' => '—',
+                                'valor_nuevo' => '$ '.number_format($subtotalFinal, 2),
+                            ],
+                        ]
+                    );
                 }
-
-                $montoPenalidad = (float) ($det['monto_penalidad'] ?? 0);
-                $montoFlete = (float) ($det['monto_flete'] ?? 0);
-                $descuento = round($montoPenalidad + $montoFlete, 2);
-                $subtotalSinDescuento = round($subtotal, 2);
-                $subtotalFinal = round($subtotalSinDescuento - $descuento, 2);
 
                 $detallesCreados[] = ValorizacionCompraDetalle::create([
                     'id_valorizacion_compra' => $valorizacion->id,
@@ -1416,17 +1409,175 @@ class ValorizacionCompraService
         }
     }
 
+    /**
+     * Calcula la economía de un detalle de valorización (ley, PTN y subtotales).
+     *
+     * Es la ÚNICA fuente de verdad del cálculo: la usan tanto la persistencia
+     * del detalle como la auditoría de cambios, de modo que el total registrado
+     * en el log coincida siempre con el total realmente guardado.
+     *
+     * Prioridad de la ley del elemento: ajuste manual > campo `ley` > grupo > lote.
+     * Prioridad de la ley de humedad: ajuste manual > grupo > lote.
+     *
+     * @param  array<string,mixed>  $det
+     * @param  object|null  $grupo  fila de grupo_analisis
+     * @param  LoteMineral  $lote
+     * @return array{
+     *     es_sin_valor_comercial: bool,
+     *     elemento: string,
+     *     ley: float,
+     *     ley_base: float,
+     *     ley_humedad: float,
+     *     peso_seco: float,
+     *     inter: float,
+     *     des_inter: float,
+     *     recuperacion: float,
+     *     maquila: float,
+     *     consumo: float,
+     *     factor: float,
+     *     ptn: float,
+     *     monto_penalidad: float,
+     *     monto_flete: float,
+     *     descuento: float,
+     *     subtotal_sin_descuento: float,
+     *     subtotal: float
+     * }
+     */
+    private static function calcularEconomiaDetalle(array $det, ?object $grupo, LoteMineral $lote): array
+    {
+        $elementoEnum = ElementoQuimicoValorizacion::tryFrom((string) ($det['elemento_quimico'] ?? ''))
+            ?? ElementoQuimicoValorizacion::Oro;
+        $esSinValor = self::loteEsSinValorComercial($lote);
+
+        // Ley de humedad: ajuste manual > grupo > lote
+        $leyHumedadManual = (float) ($det['ley_humedad_manual'] ?? 0);
+        if ($leyHumedadManual > 0) {
+            $leyHumedad = $leyHumedadManual;
+        } elseif ($grupo && (float) ($grupo->ley_humedad_cierre ?? 0) > 0) {
+            $leyHumedad = (float) $grupo->ley_humedad_cierre;
+        } elseif (isset($det['ley_humedad']) && (float) $det['ley_humedad'] > 0) {
+            $leyHumedad = (float) $det['ley_humedad'];
+        } else {
+            $leyHumedad = (float) ($lote->ley_humedad ?? 0);
+        }
+        $pesoSeco = (float) ($lote->peso_neto ?? 0) * (1 - ($leyHumedad / 100));
+
+        // Ley del elemento: ajuste manual > campo `ley` > grupo > lote
+        $leyBase = $elementoEnum === ElementoQuimicoValorizacion::Oro
+            ? ($grupo ? (float) ($grupo->ley_oro_cierre ?? 0) : (float) ($lote->ley_oro ?? 0))
+            : ($grupo ? (float) ($grupo->ley_plata_cierre ?? 0) : (float) ($lote->ley_plata ?? 0));
+
+        $leyManual = $elementoEnum === ElementoQuimicoValorizacion::Oro
+            ? (float) ($det['ley_oro_manual'] ?? 0)
+            : (float) ($det['ley_plata_manual'] ?? 0);
+
+        if ($leyManual > 0) {
+            $ley = $leyManual;
+        } elseif (isset($det['ley'])) {
+            $ley = (float) $det['ley'];
+        } else {
+            $ley = $leyBase;
+        }
+
+        if ($esSinValor) {
+            return [
+                'es_sin_valor_comercial' => true,
+                'elemento' => $elementoEnum->value,
+                'ley' => $ley,
+                'ley_base' => $leyBase,
+                'ley_humedad' => $leyHumedad,
+                'peso_seco' => $pesoSeco,
+                'inter' => 0.0,
+                'des_inter' => 0.0,
+                'recuperacion' => 0.0,
+                'maquila' => 0.0,
+                'consumo' => 0.0,
+                'factor' => 1.0,
+                'ptn' => 0.0,
+                'monto_penalidad' => 0.0,
+                'monto_flete' => 0.0,
+                'descuento' => 0.0,
+                'subtotal_sin_descuento' => 0.0,
+                'subtotal' => 0.0,
+            ];
+        }
+
+        $inter = (float) ($det['inter'] ?? 0);
+        $desInter = (float) ($det['des_inter'] ?? 0);
+        $recuperacion = (float) ($det['recuperacion'] ?? 0);
+        $maquila = (float) ($det['maquila'] ?? 0);
+        $consumo = (float) ($det['consumo'] ?? 0);
+        $factor = (float) ($det['factor'] ?? 1.0);
+
+        // ptn = ((inter - des_inter) * ley * (recuperacion / 100) - maquila - consumo) * factor
+        $ptn = (($inter - $desInter) * $ley * ($recuperacion / 100) - $maquila - $consumo) * $factor;
+        // subtotal_sin_descuento = ptn * peso_seco / 1000
+        $subtotalSinDescuento = round(($ptn * $pesoSeco) / 1000, 2);
+
+        $montoPenalidad = (float) ($det['monto_penalidad'] ?? 0);
+        $montoFlete = (float) ($det['monto_flete'] ?? 0);
+        $descuento = round($montoPenalidad + $montoFlete, 2);
+
+        return [
+            'es_sin_valor_comercial' => false,
+            'elemento' => $elementoEnum->value,
+            'ley' => $ley,
+            'ley_base' => $leyBase,
+            'ley_humedad' => $leyHumedad,
+            'peso_seco' => $pesoSeco,
+            'inter' => $inter,
+            'des_inter' => $desInter,
+            'recuperacion' => $recuperacion,
+            'maquila' => $maquila,
+            'consumo' => $consumo,
+            'factor' => $factor,
+            'ptn' => $ptn,
+            'monto_penalidad' => $montoPenalidad,
+            'monto_flete' => $montoFlete,
+            'descuento' => $descuento,
+            'subtotal_sin_descuento' => $subtotalSinDescuento,
+            'subtotal' => round($subtotalSinDescuento - $descuento, 2),
+        ];
+    }
+
+    /**
+     * Resuelve el lote mineral de una guía (directa o vía partición) y su
+     * correlativo legible para los logs de auditoría.
+     *
+     * @return array{0: LoteMineral|null, 1: string}
+     */
+    private static function resolverLoteGuia(int $idLoteGuia): array
+    {
+        $lg = ValorizacionCompraData::find_lote_guia_con_mineral($idLoteGuia);
+        $lote = $lg ? ($lg->loteMineral ?? $lg->particionLoteMineral?->loteMineral) : null;
+
+        $correlativo = "Lote #{$idLoteGuia}";
+        if ($lote) {
+            if (! empty($lote->correlativo)) {
+                $correlativo = (string) $lote->correlativo;
+            } elseif (! empty($lote->numero_correlativo)) {
+                $correlativo = (string) $lote->numero_correlativo;
+            }
+        }
+
+        return [$lote, $correlativo];
+    }
+
     private static function procesarAuditoriaDetallesEdicion(int $idValorizacion, array $detalles): array
     {
         $oldDetalles = ValorizacionCompraDetalle::where('id_valorizacion_compra', $idValorizacion)->get();
         $oldDetMap = [];
         foreach ($oldDetalles as $od) {
-            $lg = LoteGuia::with('loteMineral')->find($od->id_lote_guia);
-            $corr = $lg && $lg->loteMineral ? ($lg->loteMineral->correlativo ?? $lg->loteMineral->numero_correlativo) : "Lote #{$od->id_lote_guia}";
+            [$lote, $corr] = self::resolverLoteGuia((int) $od->id_lote_guia);
+            $grupo = $od->id_grupo_analisis
+                ? ValorizacionCompraData::get_grupo_analisis((int) $od->id_grupo_analisis)
+                : null;
             $key = "{$od->id_lote_guia}_{$od->elemento_quimico->value}";
             $oldDetMap[$key] = [
                 'correlativo' => $corr,
                 'elemento' => $od->elemento_quimico->value,
+                'id_grupo_analisis' => $od->id_grupo_analisis ? (int) $od->id_grupo_analisis : null,
+                'grupo_nombre' => $grupo->nombre ?? null,
                 'inter' => (float) $od->inter,
                 'des_inter' => (float) $od->des_inter,
                 'recuperacion' => (float) $od->recuperacion,
@@ -1442,15 +1593,19 @@ class ValorizacionCompraService
         }
 
         $newDetMap = [];
-        $newTotalSubtotal = 0;
+        $newTotalSubtotal = 0.0;
         foreach ($detalles as $det) {
-            $lg = LoteGuia::with('loteMineral')->find($det['id_lote_guia']);
-            $corr = $lg && $lg->loteMineral ? ($lg->loteMineral->correlativo ?? $lg->loteMineral->numero_correlativo) : "Lote #{$det['id_lote_guia']}";
+            [$lote, $corr] = self::resolverLoteGuia((int) $det['id_lote_guia']);
             $elem = $det['elemento_quimico'];
             $key = "{$det['id_lote_guia']}_{$elem}";
+            $grupo = ! empty($det['id_grupo_analisis'])
+                ? ValorizacionCompraData::get_grupo_analisis((int) $det['id_grupo_analisis'])
+                : null;
             $newDetMap[$key] = [
                 'correlativo' => $corr,
                 'elemento' => $elem,
+                'id_grupo_analisis' => ! empty($det['id_grupo_analisis']) ? (int) $det['id_grupo_analisis'] : null,
+                'grupo_nombre' => $grupo->nombre ?? null,
                 'inter' => (float) ($det['inter'] ?? 0),
                 'des_inter' => (float) ($det['des_inter'] ?? 0),
                 'recuperacion' => (float) ($det['recuperacion'] ?? 0),
@@ -1461,21 +1616,11 @@ class ValorizacionCompraService
                 'monto_flete' => (float) ($det['monto_flete'] ?? 0),
             ];
 
-            if ($lg && $lg->loteMineral) {
-                $lote = $lg->loteMineral;
-                if (self::loteEsSinValorComercial($lote)) {
-                    $subtotalFinalTmp = 0.0;
-                } else {
-                    $pesoNeto = (float) ($lote->peso_neto ?? 0);
-                    $pesoSeco = $pesoNeto * (1 - ((float) $lote->ley_humedad / 100));
-                    $elementoEnumTmp = ElementoQuimicoValorizacion::tryFrom($elem) ?? ElementoQuimicoValorizacion::Oro;
-                    $leyTmp = $elementoEnumTmp === ElementoQuimicoValorizacion::Oro ? (float) $lote->ley_oro : (float) $lote->ley_plata;
-                    $ptnTmp = (((float) ($det['inter'] ?? 0) - (float) ($det['des_inter'] ?? 0)) * $leyTmp * ((float) ($det['recuperacion'] ?? 0) / 100) - (float) ($det['maquila'] ?? 0) - (float) ($det['consumo'] ?? 0)) * (float) ($det['factor'] ?? 1.0);
-                    $subtotalSinDescTmp = round(($ptnTmp * $pesoSeco) / 1000, 2);
-                    $descTmp = round((float) ($det['monto_penalidad'] ?? 0) + (float) ($det['monto_flete'] ?? 0), 2);
-                    $subtotalFinalTmp = round($subtotalSinDescTmp - $descTmp, 2);
-                }
-                $newTotalSubtotal += $subtotalFinalTmp;
+            // El total se calcula con la MISMA función que persiste el detalle,
+            // de modo que el valor registrado en el log sea el real.
+            if ($lote) {
+                $eco = self::calcularEconomiaDetalle($det, $grupo, $lote);
+                $newTotalSubtotal += $eco['subtotal'];
             }
         }
 
@@ -1639,31 +1784,12 @@ class ValorizacionCompraService
                     $updateData['ley_recuperacion'] = $leyRecVal;
                 }
 
-                // 4. Si el lote aún no tiene valorizado el otro elemento y el grupo tiene ley de cierre > 0, tomarla también
-                if (! isset($updateData['ley_oro']) && ! $lote->esta_valorizado_oro && (float) $grupo->ley_oro_cierre > 0) {
-                    $leyOroVal = round((float) $grupo->ley_oro_cierre, 3);
-                    if (abs((float) ($lote->ley_oro ?? 0) - $leyOroVal) > 0.0001) {
-                        $cambiosLote[] = [
-                            'campo_bd' => 'ley_oro',
-                            'campo' => 'Ley Oro',
-                            'valor_anterior' => (string) ($lote->ley_oro ?? 0),
-                            'valor_nuevo' => (string) $leyOroVal,
-                        ];
-                    }
-                    $updateData['ley_oro'] = $leyOroVal;
-                }
-                if (! isset($updateData['ley_plata']) && ! $lote->esta_valorizado_plata && (float) $grupo->ley_plata_cierre > 0) {
-                    $leyPlataVal = round((float) $grupo->ley_plata_cierre, 3);
-                    if (abs((float) ($lote->ley_plata ?? 0) - $leyPlataVal) > 0.0001) {
-                        $cambiosLote[] = [
-                            'campo_bd' => 'ley_plata',
-                            'campo' => 'Ley Plata',
-                            'valor_anterior' => (string) ($lote->ley_plata ?? 0),
-                            'valor_nuevo' => (string) $leyPlataVal,
-                        ];
-                    }
-                    $updateData['ley_plata'] = $leyPlataVal;
-                }
+                // 4. NO se copia la ley del elemento NO valorizado.
+                // Regla de negocio: la ley de cierre de un elemento (oro/plata) sólo
+                // pasa a ser la ley oficial del lote cuando ese elemento fue
+                // efectivamente valorizado y su propuesta aprobada.
+                // Ej: propuesta de ORO con G1 -> el lote toma ley_oro de G1, pero
+                // su ley_plata sigue vacía hasta que se apruebe una propuesta de PLATA.
             }
 
             if (! empty($updateData)) {
@@ -1758,7 +1884,49 @@ class ValorizacionCompraService
             return false;
         }
 
+        // Un lote SIN "valor comercial" definido (NULL) se trata como SIN valor
+        // comercial: nunca se valoriza a un lote cuya clasificacion aun no fue
+        // definida en el modulo de Cierre de Leyes.
+        if ($lote->con_valor_comercial === null) {
+            return true;
+        }
+
         return $lote->con_valor_comercial === 0 || $lote->con_valor_comercial === false || $lote->con_valor_comercial === '0';
+    }
+
+    /**
+     * Valida que todos los lotes de los detalles tengan definido si tienen o no
+     * valor comercial (`lote_mineral.con_valor_comercial` = 1 o 0).
+     *
+     * Un lote sin clasificar NO puede valorizarse: debe definirse previamente
+     * en el modulo de Cierre de Leyes ("Definir Valor Comercial").
+     *
+     * @param  array<int, array<string,mixed>>  $detalles
+     *
+     * @throws Exception
+     */
+    private static function validarValorComercialDefinido(array $detalles): void
+    {
+        foreach ($detalles as $det) {
+            $idLoteGuia = (int) ($det['id_lote_guia'] ?? 0);
+            if ($idLoteGuia <= 0) {
+                continue;
+            }
+
+            $lg = ValorizacionCompraData::find_lote_guia_con_mineral($idLoteGuia);
+            $lote = $lg ? ($lg->loteMineral ?? $lg->particionLoteMineral?->loteMineral) : null;
+            if (! $lote) {
+                continue;
+            }
+
+            if ($lote->con_valor_comercial === null) {
+                $correlativo = ! empty($lote->correlativo) ? $lote->correlativo : "Lote #{$lote->id}";
+                throw new Exception(
+                    "El lote {$correlativo} no tiene definido si tiene o no valor comercial. "
+                    .'Definelo en el modulo de Cierre de Leyes antes de crear o editar la valorizacion.'
+                );
+            }
+        }
     }
 
     /**

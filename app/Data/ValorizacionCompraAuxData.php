@@ -216,7 +216,7 @@ class ValorizacionCompraAuxData
                 SELECT
                     lg.id AS id_lote_guia,
                     lm.id AS id_lote_mineral,
-                    COALESCE(lm.con_valor_comercial, 1) AS con_valor_comercial,
+                    lm.con_valor_comercial AS con_valor_comercial,
                     lm.numero_correlativo AS numero_correlativo,
                     lm.correlativo AS correlativo_lote,
                     gpt.guia_remitente AS grr,
@@ -258,6 +258,10 @@ class ValorizacionCompraAuxData
                 LEFT JOIN guia_primer_tramo gpt ON gpt.id = lg.id_guia_primer_tramo
                 WHERE COALESCE(gpt.id_proveedor, lm.id_proveedor_minero) = :id_proveedor
                   AND COALESCE(lm.peso_neto, 0) > 0
+                  -- El lote debe tener DEFINIDO si tiene o no valor comercial.
+                  -- Un lote sin clasificar no puede valorizarse: debe definirse
+                  -- en el modulo de Cierre de Leyes ("Definir Valor Comercial").
+                  AND lm.con_valor_comercial IS NOT NULL
                   -- El lote padre debe estar validado.
                   AND lm.esta_validado = 1
                   -- Si el lote tiene particiones activas, TODAS deben estar validadas.
@@ -437,7 +441,7 @@ class ValorizacionCompraAuxData
             $lote->tms = round($lote->tmh * (1 - ($lote->ley_humedad / 100)), 4);
             $lote->es_valorizado_oro = (bool) $lote->es_valorizado_oro;
             $lote->es_valorizado_plata = (bool) $lote->es_valorizado_plata;
-            $lote->con_valor_comercial = (bool) ($lote->con_valor_comercial ?? 1);
+            $lote->con_valor_comercial = (bool) $lote->con_valor_comercial;
 
             // Buscar condición comercial para Oro
             $condOro = $condiciones->first(function ($c) use ($lote) {
