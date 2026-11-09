@@ -6,6 +6,7 @@ use App\Models\ComprobanteCompra;
 use App\Models\PagoComprobanteCompra;
 use App\Models\TipoCambio;
 use App\Models\ValorizacionCompra;
+use App\Modules\ContabilidadCompra\Data\ComprobanteNotaData;
 use App\Modules\ContabilidadCompra\Data\ContabilidadCompraData;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\ContabilidadCompra\EstadoComprobanteCompra;
@@ -256,17 +257,20 @@ class ContabilidadCompraService
 
             $pagosAnulados = ContabilidadCompraData::anular_pagos_del_comprobante($id, $idEmpleadoAnulacion, $motivo);
 
+            // Cascada: las notas de crédito/débito vigentes del comprobante también se anulan
+            $notasAnuladas = ComprobanteNotaData::anular_notas_del_comprobante($id, $idEmpleadoAnulacion, $motivo);
+
             ContabilidadCompraData::anular_comprobante($id, $idEmpleadoAnulacion, $motivo);
 
             DB::commit();
 
             $detalle = ContabilidadCompraData::get_comprobante_by_id($id);
             $detalle->pagos_anulados_en_cascada = $pagosAnulados;
+            $detalle->notas_anuladas_en_cascada = $notasAnuladas;
 
-            return ApiResponse::success(
-                $detalle,
-                "Comprobante anulado. {$pagosAnulados} pago(s) asociado(s) también fueron anulados."
-            );
+            $mensaje = "Comprobante anulado. {$pagosAnulados} pago(s) y {$notasAnuladas} nota(s) asociado(s) también fueron anulados.";
+
+            return ApiResponse::success($detalle, $mensaje);
         } catch (Exception $e) {
             DB::rollBack();
 
@@ -301,10 +305,11 @@ class ContabilidadCompraService
             $esParaDetraccion = (bool) ($payload['es_para_detraccion'] ?? false);
             $montoPagado = (float) ($payload['monto_pagado'] ?? 0);
 
-            // Validar saldo pendiente
+            // Validar saldo pendiente (monto efectivo: con notas de crédito/débito
+            // vigentes rige el snapshot ajustado, no el monto real del comprobante)
             $saldo = $esParaDetraccion
-                ? (float) $comprobante->monto_detraccion_soles - (float) $comprobante->avance_pago_detraccion
-                : (float) $comprobante->monto_neto - (float) $comprobante->avance_pago_neto;
+                ? round(ContabilidadCompraData::monto_detraccion_soles_efectivo($comprobante) - (float) $comprobante->avance_pago_detraccion, 2)
+                : round(ContabilidadCompraData::monto_neto_efectivo($comprobante) - (float) $comprobante->avance_pago_neto, 2);
 
             if ($montoPagado <= 0) {
                 return ApiResponse::error('El monto pagado debe ser mayor a 0.');
@@ -497,10 +502,17 @@ class ContabilidadCompraService
     }
 
     /**
-     * Si las 3 aprobaciones están dadas y los pagos cubren el neto + la detracción,
-     * promover a Pagado. Devuelve null si no hay cambio.
+     * Resolver el estado del comprobante en función de las aprobaciones y los pagos.
+     *
+     * - Si las 3 aprobaciones están dadas y los pagos cubren el neto + la detracción
+     *   (montos efectivos: con notas de crédito/débito rige el snapshot ajustado)
+     *   → Pagado.
+     * - Si estaba Pagado y el saldo ya no está cubierto (p.ej. una nota de débito
+     *   aumentó el monto a pagar) → En Proceso.
+     *
+     * Devuelve null si no hay cambio.
      */
-    private static function resolver_estado_por_pagos(ComprobanteCompra $comprobante): ?EstadoComprobanteCompra
+    public static function resolver_estado_por_pagos(ComprobanteCompra $comprobante): ?EstadoComprobanteCompra
     {
         if ($comprobante->estado->value === EstadoComprobanteCompra::Anulado->value) {
             return null;
@@ -512,11 +524,19 @@ class ContabilidadCompraService
             return null;
         }
 
-        $netoCompleto = round((float) $comprobante->monto_neto - (float) $comprobante->avance_pago_neto, 2) <= 0.01;
-        $detraccionCompleta = round((float) $comprobante->monto_detraccion_soles - (float) $comprobante->avance_pago_detraccion, 2) <= 0.01;
+        $netoCompleto = round(ContabilidadCompraData::monto_neto_efectivo($comprobante) - (float) $comprobante->avance_pago_neto, 2) <= 0.01;
+        $detraccionCompleta = round(ContabilidadCompraData::monto_detraccion_soles_efectivo($comprobante) - (float) $comprobante->avance_pago_detraccion, 2) <= 0.01;
 
         if ($netoCompleto && $detraccionCompleta) {
-            return EstadoComprobanteCompra::Pagado;
+            return $comprobante->estado->value === EstadoComprobanteCompra::Pagado->value
+                ? null
+                : EstadoComprobanteCompra::Pagado;
+        }
+
+        // El saldo ya no está cubierto (una nota de débito elevó el monto a pagar):
+        // el comprobante deja de estar Pagado.
+        if ($comprobante->estado->value === EstadoComprobanteCompra::Pagado->value) {
+            return EstadoComprobanteCompra::EnProceso;
         }
 
         return null;

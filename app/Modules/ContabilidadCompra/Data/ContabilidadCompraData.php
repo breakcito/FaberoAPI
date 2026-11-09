@@ -23,6 +23,8 @@ class ContabilidadCompraData
                 cc.id,
                 cc.id_valorizacion_compra,
                 vc.numero_correlativo AS valorizacion_correlativo,
+                vc.correlativo_dirimencia AS valorizacion_correlativo_dirimencia,
+                vc.con_dirimencia AS valorizacion_con_dirimencia,
                 cc.id_tipo_cambio,
                 tc.fecha AS tipo_cambio_fecha,
                 cc.id_empleado_registro,
@@ -43,6 +45,8 @@ class ContabilidadCompraData
                 cc.monto_detraccion,
                 cc.monto_detraccion_soles,
                 cc.monto_neto,
+                cc.monto_detraccion_soles_final,
+                cc.monto_neto_final,
                 cc.avance_pago_neto,
                 cc.avance_pago_detraccion,
                 cc.es_al_contado,
@@ -125,11 +129,18 @@ class ContabilidadCompraData
             }
         }
 
+        // Notas de crédito / débito de todos los comprobantes listados (1 consulta)
+        $notasPorComprobante = ComprobanteNotaData::get_notas_por_comprobantes(
+            array_map(fn ($r) => (int) $r->id, $rows)
+        );
+
         foreach ($rows as $r) {
             self::cast_comprobante_financiero($r);
             $r->total_pagado_neto = (float) $r->total_pagado_neto;
             $r->total_pagado_detraccion = (float) $r->total_pagado_detraccion;
             $r->lotes_valorizados = self::get_lotes_valorizados_by_comprobante((int) $r->id);
+            $r->notas = $notasPorComprobante[(int) $r->id] ?? [];
+            $r->notas_count = count(array_filter($r->notas, fn ($n) => ! $n->es_anulado));
 
             $aprobaciones = is_string($r->aprobaciones) ? json_decode($r->aprobaciones, true) : $r->aprobaciones;
             $aprobaciones = is_array($aprobaciones) ? $aprobaciones : [];
@@ -158,6 +169,8 @@ class ContabilidadCompraData
                 cc.id,
                 cc.id_valorizacion_compra,
                 vc.numero_correlativo AS valorizacion_correlativo,
+                vc.correlativo_dirimencia AS valorizacion_correlativo_dirimencia,
+                vc.con_dirimencia AS valorizacion_con_dirimencia,
                 cc.id_tipo_cambio,
                 tc.fecha AS tipo_cambio_fecha,
                 tc.valor_compra AS tipo_cambio_valor_compra,
@@ -180,6 +193,8 @@ class ContabilidadCompraData
                 cc.monto_detraccion,
                 cc.monto_detraccion_soles,
                 cc.monto_neto,
+                cc.monto_detraccion_soles_final,
+                cc.monto_neto_final,
                 cc.avance_pago_neto,
                 cc.avance_pago_detraccion,
                 cc.es_al_contado,
@@ -221,6 +236,8 @@ class ContabilidadCompraData
 
         $row->lotes_valorizados = self::get_lotes_valorizados_by_comprobante($id);
         $row->pagos = self::get_pagos_by_comprobante($id);
+        $row->notas = ComprobanteNotaData::get_notas_by_comprobante($id);
+        $row->notas_count = count(array_filter($row->notas, fn ($n) => ! $n->es_anulado));
 
         $aprobaciones = is_string($row->aprobaciones) ? json_decode($row->aprobaciones, true) : $row->aprobaciones;
         $aprobaciones = is_array($aprobaciones) ? $aprobaciones : [];
@@ -284,6 +301,25 @@ class ContabilidadCompraData
         $row->monto_detraccion = (float) ($row->monto_detraccion ?? 0);
         $row->monto_detraccion_soles = (float) ($row->monto_detraccion_soles ?? 0);
         $row->monto_neto = (float) ($row->monto_neto ?? 0);
+        $row->monto_detraccion_soles_final = (float) ($row->monto_detraccion_soles_final ?? 0);
+        $row->monto_neto_final = (float) ($row->monto_neto_final ?? 0);
+        // Fuente de verdad del monto pagable: el snapshot ajustado.
+        // `monto_neto` / `monto_detraccion_soles` son el monto real de la factura
+        // (nunca se modifican); `_final` es lo que se consulta para cobrar.
+        $row->monto_neto_efectivo = $row->monto_neto_final;
+        $row->monto_detraccion_soles_efectivo = $row->monto_detraccion_soles_final;
+        // Efecto de las notas de crédito/débito sobre el monto neto real.
+        $row->delta_neto = round($row->monto_neto_final - $row->monto_neto, 2);
+        // Saldo a favor: lo ya pagado que supera el monto neto ajustado (tras notas de crédito).
+        $row->saldo_a_favor_neto = max(
+            0.0,
+            round((float) ($row->avance_pago_neto ?? 0) - $row->monto_neto_efectivo, 2)
+        );
+        // Saldo a favor de la detracción (lo retenido que supera el monto ajustado a detraccionar).
+        $row->saldo_a_favor_detraccion = max(
+            0.0,
+            round((float) ($row->avance_pago_detraccion ?? 0) - $row->monto_detraccion_soles_efectivo, 2)
+        );
         $row->avance_pago_neto = (float) $row->avance_pago_neto;
         $row->avance_pago_detraccion = (float) $row->avance_pago_detraccion;
         $row->es_al_contado = (bool) ($row->es_al_contado ?? false);
@@ -291,6 +327,8 @@ class ContabilidadCompraData
         $row->plazo_credito = isset($row->plazo_credito) && $row->plazo_credito !== null ? (int) $row->plazo_credito : null;
         $row->total_cuotas = isset($row->total_cuotas) && $row->total_cuotas !== null ? (int) $row->total_cuotas : null;
         $row->metodo_pago = $row->metodo_pago ?? 'Transferencia';
+        $row->valorizacion_con_dirimencia = (bool) ($row->valorizacion_con_dirimencia ?? false);
+        $row->valorizacion_correlativo_dirimencia = $row->valorizacion_correlativo_dirimencia ?? null;
         if (isset($row->monto_penalidad)) {
             $row->monto_penalidad = (float) ($row->monto_penalidad ?? 0);
         }
@@ -528,11 +566,18 @@ class ContabilidadCompraData
     /**
      * Insertar un comprobante en BD. Devuelve el ID.
      *
+     * El snapshot de montos ajustados (`monto_neto_final`,
+     * `monto_detraccion_soles_final`) se inicializa igual a los montos reales:
+     * sin notas vigentes, el monto pagable es el monto real.
+     *
      * @param  array<string,mixed>  $aprobaciones
      */
     public static function crear_comprobante(array $campos, array $aprobaciones, ?EstadoComprobanteCompra $estadoInicial = null): int
     {
         $estado = $estadoInicial ?? EstadoComprobanteCompra::EnEspera;
+
+        $campos['monto_neto_final'] = (float) ($campos['monto_neto'] ?? 0);
+        $campos['monto_detraccion_soles_final'] = (float) ($campos['monto_detraccion_soles'] ?? 0);
 
         return ComprobanteCompra::insertGetId($campos + [
             'aprobaciones' => json_encode($aprobaciones),
@@ -541,6 +586,26 @@ class ContabilidadCompraData
             'created_at' => now(),
             'estado' => $estado->value,
         ]);
+    }
+
+    /**
+     * Monto neto realmente pagable de un comprobante.
+     *
+     * Se consulta siempre el snapshot `monto_neto_final`: se inicializa igual al
+     * monto real al crear el comprobante y se recalcula con cada nota de
+     * crédito/débito emitida o anulada.
+     */
+    public static function monto_neto_efectivo(ComprobanteCompra $comprobante): float
+    {
+        return (float) $comprobante->monto_neto_final;
+    }
+
+    /**
+     * Monto de detracción (en soles) realmente pagable de un comprobante.
+     */
+    public static function monto_detraccion_soles_efectivo(ComprobanteCompra $comprobante): float
+    {
+        return (float) $comprobante->monto_detraccion_soles_final;
     }
 
     /**

@@ -90,6 +90,43 @@ class DashboardData
               AND vv.estado <> \'Anulado\'
             GROUP BY ym, el
         ),
+        -- Toneladas COMPRADAS: una vez por LOTE unico valorizado en el mes.
+        -- El mismo lote puede aparecer en varias valorizaciones o valorizarse
+        -- en Oro y Plata: contar el peso solo una vez evita sumas de mas.
+        cmp_lote AS (
+            SELECT
+                DATE_FORMAT(vc.fecha_hora_valorizacion, \'%Y-%m\') AS ym,
+                lm.id AS id_lote,
+                COALESCE(MAX(COALESCE(lm.peso_neto, 0)), 0) / 1000 AS tn
+            FROM valorizacion_compra vc
+            INNER JOIN valorizacion_compramineral_detalle vcd ON vcd.id_valorizacion_compra = vc.id
+            LEFT JOIN lote_guia lg ON lg.id = vcd.id_lote_guia
+            LEFT JOIN lote_mineral lm ON lm.id = COALESCE(
+                lg.id_lote_mineral,
+                (SELECT id_lote_mineral FROM particion_lote_mineral WHERE id = lg.id_particion_lote_mineral)
+            )
+            CROSS JOIN prm p
+            WHERE vc.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
+              AND vc.estado <> \'Anulado\'
+              AND lm.id IS NOT NULL
+            GROUP BY ym, lm.id
+        ),
+        -- Toneladas VENDIDAS: una vez por ITEM DESPACHADO unico valorizado
+        -- en el mes (el mismo item puede estar en varias valorizaciones o
+        -- valorizarse en Oro y Plata).
+        vta_item AS (
+            SELECT
+                DATE_FORMAT(vv.fecha_hora_valorizacion, \'%Y-%m\') AS ym,
+                dd.id AS id_item,
+                COALESCE(MAX(COALESCE(dd.peso_tomado, 0)), 0) / 1000 AS tn
+            FROM valorizacion_venta vv
+            INNER JOIN valorizacion_venta_detalle vvd ON vvd.id_valorizacion_venta = vv.id
+            INNER JOIN despacho_detalle dd ON dd.id = vvd.id_despacho_detalle
+            CROSS JOIN prm p
+            WHERE vv.fecha_hora_valorizacion BETWEEN p.fi AND p.ff
+              AND vv.estado <> \'Anulado\'
+            GROUP BY ym, dd.id
+        ),
         ley_cmp AS (
             SELECT
                 DATE_FORMAT(vc.fecha_hora_valorizacion, \'%Y-%m\') AS ym,
@@ -150,6 +187,8 @@ class DashboardData
             (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'tn\', tn)) FROM des) AS des,
             (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'peso\', peso, \'monto\', monto, \'ptn_pond\', ptn_pond)) FROM cmp) AS cmp,
             (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'peso\', peso, \'monto\', monto, \'ptn_pond\', ptn_pond)) FROM vta) AS vta,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'tn\', tn)) FROM cmp_lote) AS cmp_lote,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'tn\', tn)) FROM vta_item) AS vta_item,
             (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'ley_pond\', ley_pond, \'peso\', peso)) FROM ley_cmp) AS ley_cmp,
             (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'final_pond\', final_pond, \'cliente_pond\', cliente_pond, \'peso\', peso)) FROM ley_vta) AS ley_vta
         ';
@@ -198,7 +237,13 @@ class DashboardData
             $serie[$ym]['costos']['compra_total'] += (float) $c['ptn_pond'];
             $serie[$ym]['costos']['compra_peso'] += $peso;
             $serie[$ym]['monto_compra_usd'] += (float) $c['monto'];
-            $serie[$ym]['tn_compradas'] += $peso / 1000;
+        }
+        // Toneladas compradas: una vez por LOTE unico (no por elemento ni
+        // por valorizacion). Ver CTE `cmp_lote`.
+        foreach (self::json($row->cmp_lote ?? null) as $c) {
+            $ym = self::ym($c);
+            self::mes($serie, $ym);
+            $serie[$ym]['tn_compradas'] += (float) $c['tn'];
         }
         foreach (self::json($row->vta ?? null) as $v) {
             $ym = self::ym($v);
@@ -212,7 +257,13 @@ class DashboardData
             $serie[$ym]['costos']['venta_total'] += (float) $v['ptn_pond'];
             $serie[$ym]['costos']['venta_peso'] += $peso;
             $serie[$ym]['monto_venta_usd'] += (float) $v['monto'];
-            $serie[$ym]['tn_vendidas'] += $peso / 1000;
+        }
+        // Toneladas vendidas: una vez por ITEM DESPACHADO unico (no por
+        // elemento ni por valorizacion). Ver CTE `vta_item`.
+        foreach (self::json($row->vta_item ?? null) as $v) {
+            $ym = self::ym($v);
+            self::mes($serie, $ym);
+            $serie[$ym]['tn_vendidas'] += (float) $v['tn'];
         }
 
         // Leyes de compra: cierre de leyes del grupo de análisis con fallback
@@ -301,20 +352,17 @@ class DashboardData
             WHERE cv.estado <> \'Anulado\'
         ),
         lotes AS (
+            -- Peso que queda HOY en cancha de cada lote.
+            -- `lote_mineral.peso_actual` ya se descuenta al mezclar (blending) y
+            -- al despachar, asi que es el remanente real: no hay que excluir
+            -- los lotes que tienen blend o despacho (si se hacia, se perdia del
+            -- stock el peso que todavia sigue en la cancha).
             SELECT
                 COALESCE(SUM(COALESCE(lm.peso_actual, lm.peso_neto)), 0) / 1000 AS tmh,
                 COALESCE(SUM(COALESCE(lm.peso_actual, lm.peso_neto) * (1 - COALESCE(lm.ley_humedad, 0) / 100)), 0) / 1000 AS tms
             FROM lote_mineral lm
             WHERE (lm.estado IS NULL OR lm.estado <> \'Eliminado\')
               AND COALESCE(lm.peso_actual, lm.peso_neto) > 0
-              AND NOT EXISTS (SELECT 1 FROM blending_detalle bd WHERE bd.id_lote_mineral = lm.id)
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM despacho_detalle dd
-                  INNER JOIN despacho d ON d.id = dd.id_despacho
-                  WHERE dd.id_lote_mineral = lm.id
-                    AND d.es_anulado = 0
-              )
         ),
         blends AS (
             SELECT
@@ -323,19 +371,21 @@ class DashboardData
             FROM blending b
             WHERE b.peso_actual > 0
         ),
+        -- Peso de los lotes/ITEMS DESPACHADOS (con despacho no anulado).
+        -- `distribucion_detalle.peso_tomado` es la porcion consumida por cada
+        -- distribucion: al sumar todas las distribuciones de un
+        -- `despacho_detalle` se obtiene el peso total del item despachado
+        -- (sin duplicar cuando el item se reparte en varias distribuciones).
         por_salir AS (
             SELECT
                 COALESCE(SUM(ddt.peso_tomado), 0) / 1000 AS tmh,
                 COALESCE(SUM(ddt.peso_tomado * (1 - COALESCE(
                     CASE WHEN dd.id_lote_mineral IS NOT NULL THEN lm.ley_humedad ELSE b.ley_humedad END, 0) / 100)), 0) / 1000 AS tms
             FROM distribucion_detalle ddt
-            INNER JOIN distribucion di ON di.id = ddt.id_distribucion
             INNER JOIN despacho_detalle dd ON dd.id = ddt.id_despacho_detalle
             INNER JOIN despacho d ON d.id = dd.id_despacho AND d.es_anulado = 0
-            LEFT JOIN recepcion_unidad ru ON ru.id_distribucion = di.id
             LEFT JOIN lote_mineral lm ON lm.id = dd.id_lote_mineral
             LEFT JOIN blending b ON b.id = dd.id_blending
-            WHERE ru.fecha_hora_salida IS NULL
         ),
         par_blending AS (
             SELECT

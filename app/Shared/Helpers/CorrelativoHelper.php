@@ -18,7 +18,9 @@ class CorrelativoHelper
         ?Closure $queryModifier = null,
         ?string $alias = null,
         ?string $formatoFecha = null,
-        bool $incluirPrefijo = true
+        bool $incluirPrefijo = true,
+        string $columnaNumero = 'numero_correlativo',
+        bool $prefijoPrimero = false
     ): array {
         // Configuramos la tabla principal con su alias en el constructor de la consulta
         $tablaQuery = $alias ? "{$tabla} as {$alias}" : $tabla;
@@ -90,7 +92,7 @@ class CorrelativoHelper
         }
 
         // 4. Obtenemos el máximo usando el prefijo correcto
-        $siguienteNumero = ($query->max("{$prefijoTabla}.numero_correlativo") ?? 0) + 1;
+        $siguienteNumero = ($query->max("{$prefijoTabla}.{$columnaNumero}") ?? 0) + 1;
 
         $numeroFormateado = str_pad($siguienteNumero, $longitudCeros, '0', STR_PAD_LEFT);
 
@@ -98,15 +100,17 @@ class CorrelativoHelper
             Periodo::Diario => $formatoFecha !== null ? $now->format($formatoFecha) : $now->format('d').'-'.$now->format('m').'-'.$now->format('y'),
             Periodo::Semanal => $now->weekOfMonth.'-'.$now->format('m').'-'.$now->format('y'),
             Periodo::Mensual => $now->format('m').'-'.$now->format('y'),
-            Periodo::Anual => $now->format('y'),
+            Periodo::Anual => $formatoFecha !== null ? $now->format($formatoFecha) : $now->format('y'),
             Periodo::Ninguno => null,
         };
 
         $correlativo = match (true) {
             $segmentoFecha === null && $incluirPrefijo => "{$prefijo}-{$numeroFormateado}",
-            $segmentoFecha === null                    => $numeroFormateado,
-            $incluirPrefijo                            => "{$segmentoFecha}-{$prefijo}-{$numeroFormateado}",
-            default                                    => "{$segmentoFecha}-{$numeroFormateado}",
+            $segmentoFecha === null => $numeroFormateado,
+            $prefijoPrimero && $incluirPrefijo => "{$prefijo}-{$segmentoFecha}-{$numeroFormateado}",
+            $prefijoPrimero => "{$segmentoFecha}-{$numeroFormateado}",
+            $incluirPrefijo => "{$segmentoFecha}-{$prefijo}-{$numeroFormateado}",
+            default => "{$segmentoFecha}-{$numeroFormateado}",
         };
 
         return [

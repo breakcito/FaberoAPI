@@ -123,6 +123,42 @@ Las guías viven en dos tramos y se registran en dos sitios distintos:
 
 Ojo: un `lote_guia` enlazado a una **partición** tiene `id_lote_mineral` NULL (el lote está en `id_particion_lote_mineral`). Cualquier resolución por `lote_guia` debe cubrir ambos casos.
 
+## Dashboard de indicadores (fuente de las toneladas)
+
+`DashboardData::get_serie_mensual()` arma la serie mensual. Las toneladas tienen **cuatro fuentes distintas**, que no deben confundirse:
+
+| Métrica | Origen del peso | Mes de atribución |
+|---|---|---|
+| `tn_receptadas` | `lote_mineral.peso_neto` | `COALESCE(fecha_hora_peso_final, created_at)` |
+| `tn_despachadas` | `despacho_detalle.peso_tomado` | `despacho.created_at` |
+| **`tn_compradas`** (gráfico "Compras vs ventas") | `lote_mineral.peso_neto`, **una vez por lote único** | `valorizacion_compra.fecha_hora_valorizacion` |
+| **`tn_vendidas`** (gráfico "Compras vs ventas") | `despacho_detalle.peso_tomado`, **una vez por ítem despachado único** | `valorizacion_venta.fecha_hora_valorizacion` |
+
+**Regla de no duplicar** (CTEs `cmp_lote` y `vta_item`): el mismo lote puede aparecer en varias valorizaciones del mismo mes y valorizarse en **Oro y Plata**; con una suma directa el peso se contaba 2-3 veces (p.ej. 53 t compradas frente a 20 t realmente recibidas). Por eso las toneladas del gráfico se calculan agrupando por entidad única:
+
+- Compras: `GROUP BY ym, lm.id` (el lote, resuelriendo la partición: `COALESCE(lg.id_lote_mineral, particion.id_lote_mineral)`).
+- Ventas: `GROUP BY ym, dd.id` (el ítem despachado; los despachos parciales son ítems distintos y su peso sí se suma).
+
+Con esto `tn_compradas` = `tn_receptadas` y `tn_vendidas` = `tn_despachadas` para el mismo conjunto de lotes, y el **% de rotación** del gráfico refleja la rotación real.
+
+Los **costos por tonelada** (`costo_compra_usd_t`, `costos.compra[Oro|Plata]`) siguen calculándose sobre el peso por elemento (`cmp` / `vta` agrupados por `ym, el`): al ser promedios ponderados, la duplicación se cancela y el resultado no cambia.
+
+### Stock en cancha (`get_snapshot()`)
+
+Es **el peso que hoy sigue en la cancha**, desglosado en tres componentes:
+
+| Componente | Origen | Qué representa |
+|---|---|---|
+| `lotes` | `COALESCE(lm.peso_actual, lm.peso_neto)` | Lotes con material remanente en la cancha |
+| `blendings` | `b.peso_actual` | Blendings con material remanente |
+| `por_salir` | `distribucion_detalle.peso_tomado` de los despachos **no anulados** | Ítems **despachados** (de lote o de blending) |
+
+`lote_mineral.peso_actual` **se descuenta** al mezclar (`BlendingService`) y al despachar (`ProgramacionDespachosService`): es el remanente real. Por eso el CTE `lotes` **no** excluye los lotes que tienen `blending_detalle` ni `despacho_detalle` — hacerlo borraba del stock material que seguía en la cancha (el remanente del lote se sumaba dos veces: en el lote y en el blend).
+
+`distribucion_detalle.peso_tomado` es la **porción** consumida por cada distribución: al sumar todas las distribuciones de un `despacho_detalle` se obtiene el peso total del ítem despachado, sin duplicar cuando el ítem se reparte en varias distribuciones.
+
+La suma de los tres componentes es el stock total, y cuadra con lo recibido (`tn_receptadas`): cada gramo está en un solo lugar — el remanente del lote, el remanente del blend o el ítem despachado.
+
 **Resolución en el ticket** (`App\Data\GuiasData`):
 
 | Tipo de ticket | Fuente | Orden de resolución |

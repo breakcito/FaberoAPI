@@ -41,7 +41,8 @@ class ValorizacionCompraData
             'detalles.loteGuia.guiaPrimerTramo:id,guia_remitente,guia_transportista,sin_guia_transportista,fecha_en_planta',
             'transaccionesAnticipo',
             'transaccionesAnticipo.anticipo:id,serie_factura,numero_factura,saldo_inicial,saldo_actual',
-            'comprobanteCompra:id,id_valorizacion_compra,serie,numero,fecha_emision,estado',
+            'comprobanteCompra:id,id_valorizacion_compra,serie,numero,fecha_emision,estado,monto_neto,monto_neto_final,monto_detraccion_soles,monto_detraccion_soles_final,avance_pago_neto,avance_pago_detraccion',
+            'comprobanteCompra.notas',
         ]);
     }
 
@@ -141,6 +142,62 @@ class ValorizacionCompraData
                 : (string) $comprobante->fecha_emision;
         }
 
+        // Notas de crédito / débito emitidas contra el comprobante de esta valorización.
+        // Alimentan el "ticket de valorización por dirimencia".
+        $notasComprobante = [];
+        if ($comprobante) {
+            $notas = $comprobante->relationLoaded('notas')
+                ? $comprobante->notas
+                : \App\Models\ComprobanteNota::where('id_comprobante_compra', $comprobante->id)->get();
+
+            foreach ($notas as $nota) {
+                $tipoNota = $nota->tipo instanceof \App\Shared\Enums\ContabilidadCompra\TipoNotaComprobante
+                    ? $nota->tipo->value
+                    : (string) $nota->tipo;
+
+                $notasComprobante[] = [
+                    'id' => (int) $nota->id,
+                    'tipo' => $tipoNota,
+                    'tipo_descripcion' => $nota->tipo instanceof \App\Shared\Enums\ContabilidadCompra\TipoNotaComprobante
+                        ? $nota->tipo->descripcion()
+                        : (string) $tipoNota,
+                    'codigo_nota' => $nota->codigo_nota,
+                    'motivo' => $nota->motivo,
+                    'motivo_descripcion' => \App\Modules\ContabilidadCompra\Data\ComprobanteNotaData::resolver_descripcion_motivo(
+                        (string) $tipoNota,
+                        (string) ($nota->motivo ?? '')
+                    ),
+                    'monto' => (float) $nota->monto,
+                    'fecha_emision' => $nota->fecha_emision instanceof \DateTimeInterface
+                        ? $nota->fecha_emision->format('Y-m-d')
+                        : (string) $nota->fecha_emision,
+                    'es_anulado' => (bool) $nota->es_anulado,
+                ];
+            }
+        }
+
+        $notasVigentes = array_values(array_filter(
+            $notasComprobante,
+            fn (array $n): bool => ! $n['es_anulado']
+        ));
+
+        $montoNetoComprobante = $comprobante ? (float) $comprobante->monto_neto : 0.0;
+        $montoNetoFinalComprobante = $comprobante ? (float) $comprobante->monto_neto_final : 0.0;
+        // Fuente de verdad del monto pagable: el snapshot ajustado del comprobante.
+        $montoNetoEfectivo = $montoNetoFinalComprobante;
+
+        $montoDetraccionSolesComprobante = $comprobante ? (float) $comprobante->monto_detraccion_soles : 0.0;
+        $montoDetraccionSolesFinalComprobante = $comprobante ? (float) $comprobante->monto_detraccion_soles_final : 0.0;
+        $montoDetraccionSolesEfectivo = $montoDetraccionSolesFinalComprobante;
+
+        // Saldos a favor: lo ya pagado que supera el monto a pagar tras las notas de crédito.
+        $saldoAFavorNeto = $comprobante
+            ? max(0.0, round((float) $comprobante->avance_pago_neto - $montoNetoEfectivo, 2))
+            : 0.0;
+        $saldoAFavorDetraccion = $comprobante
+            ? max(0.0, round((float) $comprobante->avance_pago_detraccion - $montoDetraccionSolesEfectivo, 2))
+            : 0.0;
+
         return [
             'id' => $item->id,
             'numero_correlativo' => $item->numero_correlativo,
@@ -177,6 +234,25 @@ class ValorizacionCompraData
             'factura_asociada' => $facturaCodigo,
             'fecha_factura' => $facturaFecha,
             'tiene_factura' => ! empty($facturaCodigo),
+            'con_dirimencia' => (bool) $item->con_dirimencia,
+            'correlativo_dirimencia' => $item->correlativo_dirimencia,
+            'numero_correlativo_dirimencia' => $item->numero_correlativo_dirimencia !== null
+                ? (int) $item->numero_correlativo_dirimencia
+                : null,
+            'fecha_hora_dirimencia' => $item->fecha_hora_dirimencia
+                ? ($item->fecha_hora_dirimencia instanceof \DateTimeInterface
+                    ? $item->fecha_hora_dirimencia->format('Y-m-d H:i:s')
+                    : (string) $item->fecha_hora_dirimencia)
+                : null,
+            'comprobante_id' => $comprobante ? (int) $comprobante->id : null,
+            'notas_comprobante' => $notasComprobante,
+            'tiene_notas' => count($notasVigentes) > 0,
+            'monto_neto_comprobante' => $montoNetoComprobante,
+            'monto_neto_comprobante_efectivo' => $montoNetoEfectivo,
+            'monto_detraccion_soles_comprobante' => $montoDetraccionSolesComprobante,
+            'monto_detraccion_soles_comprobante_efectivo' => $montoDetraccionSolesEfectivo,
+            'saldo_a_favor_neto' => $saldoAFavorNeto,
+            'saldo_a_favor_detraccion' => $saldoAFavorDetraccion,
             'igv' => $igv,
             'total_con_igv' => $totalConIgv,
             'monto_detraccion' => $detraccion,

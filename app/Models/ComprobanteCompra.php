@@ -33,6 +33,8 @@ class ComprobanteCompra extends Model
         'monto_detraccion',
         'monto_detraccion_soles',
         'monto_neto',
+        'monto_detraccion_soles_final',
+        'monto_neto_final',
         'avance_pago_neto',
         'avance_pago_detraccion',
         'es_al_contado',
@@ -67,6 +69,8 @@ class ComprobanteCompra extends Model
         'monto_detraccion' => 'float',
         'monto_detraccion_soles' => 'float',
         'monto_neto' => 'float',
+        'monto_detraccion_soles_final' => 'float',
+        'monto_neto_final' => 'float',
         'avance_pago_neto' => 'float',
         'avance_pago_detraccion' => 'float',
         'estado' => EstadoComprobanteCompra::class,
@@ -90,5 +94,13 @@ class ComprobanteCompra extends Model
     public function pagos(): HasMany
     {
         return $this->hasMany(PagoComprobanteCompra::class, 'id_comprobante_compra');
+    }
+
+    /**
+     * Notas de crédito / débito emitidas contra este comprobante.
+     */
+    public function notas(): HasMany
+    {
+        return $this->hasMany(ComprobanteNota::class, 'id_comprobante_compra');
     }
 }
