@@ -68,12 +68,23 @@ class ProgramarRecepcionData
             $sql .= ' AND ru.fecha_hora_ingreso IS NOT NULL';
         }
 
+        // Filtro por fecha. Mismo criterio que RecepcionUnidadesData::get_recepciones():
+        // una programacion PENDIENTE (es_programacion = 1 y fecha_hora_ingreso IS NULL)
+        // todavia no tiene llegada real; su fecha de referencia es la estimada, que por
+        // definicion es futura. Si se le aplicara el rango [fecha_inicio, fecha_fin] tal
+        // cual (que por defecto termina en HOY), toda programacion agendada para manana
+        // quedaria oculta del listado y solo se veria tras insertarla en el estado local
+        // del front. Las confirmadas (fecha_hora_ingreso IS NOT NULL) si se filtran por
+        // su fecha de llegada.
+        $referenciaFecha = 'DATE(COALESCE(ru.fecha_hora_ingreso, ru.fecha_estimada_llegada, ru.created_at))';
+        $esPendiente = '(ru.es_programacion = 1 AND ru.fecha_hora_ingreso IS NULL)';
+
         if (! empty($filtros['fecha_inicio'])) {
-            $sql .= ' AND DATE(COALESCE(ru.fecha_hora_ingreso, ru.fecha_estimada_llegada, ru.created_at)) >= :fecha_inicio';
+            $sql .= ' AND ('.$esPendiente.' OR '.$referenciaFecha.' >= :fecha_inicio)';
             $params['fecha_inicio'] = $filtros['fecha_inicio'];
         }
         if (! empty($filtros['fecha_fin'])) {
-            $sql .= ' AND DATE(COALESCE(ru.fecha_hora_ingreso, ru.fecha_estimada_llegada, ru.created_at)) <= :fecha_fin';
+            $sql .= ' AND ('.$esPendiente.' OR '.$referenciaFecha.' <= :fecha_fin)';
             $params['fecha_fin'] = $filtros['fecha_fin'];
         }
 
