@@ -10,6 +10,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::controller(EmpleadosController::class)->group(function () {
             Route::get('/', 'get_empleados');
             Route::post('/', 'crear_empleado');
+            Route::put('/{id_empleado}', 'actualizar_empleado');
             Route::get('/empresas', 'get_empresas');
             Route::get('/areas', 'get_areas');
             Route::get('/cargos/{id_area}', 'get_cargos');

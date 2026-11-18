@@ -57,7 +57,8 @@ class EmpleadosController
     {
         $validator = Validator::make($request->all(), [
             'id_empresa' => 'required|integer',
-            'id_cargo' => 'required|integer',
+            'id_area' => 'nullable|integer',
+            'id_cargo' => 'nullable|integer',
             'nombre' => 'required|string|max:255',
             'apellido' => 'required|string|max:255',
             'dni' => 'nullable|string|max:20',
@@ -66,7 +67,6 @@ class EmpleadosController
             'pasaporte' => 'nullable|string|max:20',
             'fecha_nacimiento' => 'nullable|date',
             'path_foto' => 'nullable|image|mimes:jpg,png,jpeg|max:2048',
-            'autoriza_ingreso_unidades' => 'required|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -75,16 +75,57 @@ class EmpleadosController
 
         $result = EmpleadosService::crear_empleado(
             id_empresa: (int) $request->input('id_empresa'),
-            id_cargo: (int) $request->input('id_cargo'),
             nombre: (string) $request->input('nombre'),
             apellido: (string) $request->input('apellido'),
+            id_area: $request->input('id_area') ? (int) $request->input('id_area') : null,
+            id_cargo: $request->input('id_cargo') ? (int) $request->input('id_cargo') : null,
             dni: $request->input('dni'),
             ruc: $request->input('ruc'),
             carnet_extranjeria: $request->input('carnet_extranjeria'),
             pasaporte: $request->input('pasaporte'),
             fecha_nacimiento: $request->input('fecha_nacimiento'),
-            foto: $request->file('path_foto'),
-            autoriza_ingreso_unidades: (bool) $request->input('autoriza_ingreso_unidades', false)
+            foto: $request->file('path_foto')
+        );
+
+        return response()->json($result);
+    }
+
+    /**
+     * Actualizar empleado
+     */
+    public function actualizar_empleado(Request $request, int $id_empleado): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'id_empresa' => 'required|integer',
+            'id_area' => 'nullable|integer',
+            'id_cargo' => 'nullable|integer',
+            'nombre' => 'required|string|max:255',
+            'apellido' => 'required|string|max:255',
+            'dni' => 'nullable|string|max:20',
+            'ruc' => 'nullable|string|max:20',
+            'carnet_extranjeria' => 'nullable|string|max:20',
+            'pasaporte' => 'nullable|string|max:20',
+            'fecha_nacimiento' => 'nullable|date',
+            'path_foto' => 'nullable|image|mimes:jpg,png,jpeg|max:2048',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()));
+        }
+
+        $result = EmpleadosService::actualizar_empleado(
+            id_empleado: $id_empleado,
+            id_empresa: (int) $request->input('id_empresa'),
+            nombre: (string) $request->input('nombre'),
+            apellido: (string) $request->input('apellido'),
+            id_area: $request->input('id_area') ? (int) $request->input('id_area') : null,
+            id_cargo: $request->input('id_cargo') ? (int) $request->input('id_cargo') : null,
+            dni: $request->input('dni'),
+            ruc: $request->input('ruc'),
+            carnet_extranjeria: $request->input('carnet_extranjeria'),
+            pasaporte: $request->input('pasaporte'),
+            fecha_nacimiento: $request->input('fecha_nacimiento'),
+            foto: $request->file('path_foto')
         );
 
         return response()->json($result);

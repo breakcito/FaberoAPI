@@ -11,6 +11,7 @@ class Empleado extends Model
     public $timestamps = false;
 
     protected $fillable = [
+        'id_area',
         'id_cargo',
         'id_empresa',
         'nombre',
@@ -22,6 +23,5 @@ class Empleado extends Model
         'fecha_nacimiento',
         'path_foto',
         'estado',
-        'autoriza_ingreso_unidades',
     ];
 }

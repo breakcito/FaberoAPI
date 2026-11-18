@@ -4,12 +4,14 @@ API del ERP para una planta de beneficio de mineral de oro y plata. Digitaliza e
 
 ## Módulos
 
-- **Configuración y accesos**: Empresas, Sucursales, Bancos, Marcas, Organigrama, Empleados, Roles, Cuentas, Perfil, Login, Modo Auditoría
+- **Configuración y accesos**: Empresas, Sucursales, Bancos, Marcas, Organigrama, Empleados, Roles, Cuentas, Perfil, Login, Modo Auditoría, System (árbol de navegación)
 - **Maestros y logística**: Proveedores, Concesiones mineras, Condiciones Comerciales Proveedor, Cuentas Bancarias (Proveedor / Empresa / Planta Destino), Empresas Transporte, Vehículos, Conductores, Visita Vehículo, Plantas Destino, Condiciones Comerciales Planta
 - **Recepción**: Recepción Visitas, Programar Recepción, Guías Primer Tramo, Recepción Mineral, Recepción Unidades (TicketBalanza)
 - **Análisis y procesamiento**: Gestión de Leyes, Cierre de Leyes, Blending, Validación Distribución
-- **Compra, venta y contabilidad**: Anticipos Proveedor, Anticipos Planta, Programación Despachos, Valorización Compra, Valorización Venta, Valor Elemento Químico, Contabilidad Compra (Comprobantes + Pagos)
+- **Compra, venta y contabilidad**: Anticipos Proveedor, Anticipos Planta, Programación Despachos, Valorización Compra, Valorización Venta, Valor Elemento Químico, Contabilidad Compra (Comprobantes + Pagos), Contabilidad Venta (Comprobantes + Pagos)
 - **Catálogos globales**: Tipo de Cambio, Ubigeo (departamentos / provincias / distritos)
+- **Dashboard**: Dashboard de indicadores
+- **IA**: Chat con IA y análisis de archivos (endpoint global `/api/ia/...`)
 
 ## Stack
 

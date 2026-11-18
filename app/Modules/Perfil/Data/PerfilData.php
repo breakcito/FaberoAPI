@@ -24,7 +24,6 @@ class PerfilData
             emp.pasaporte,
             emp.fecha_nacimiento,
             emp.path_foto,
-            emp.autoriza_ingreso_unidades,
             rol.nombre as nombre_rol,
             car.nombre as nombre_cargo,
             are.nombre as nombre_area,
@@ -33,7 +32,7 @@ class PerfilData
         INNER JOIN empleado emp ON emp.id = usu.id_empleado
         INNER JOIN rol ON rol.id = usu.id_rol
         LEFT JOIN cargo car ON car.id = emp.id_cargo
-        LEFT JOIN area are ON are.id = car.id_area
+        LEFT JOIN area are ON are.id = emp.id_area
         LEFT JOIN empresa em ON em.id = emp.id_empresa
         WHERE usu.id = :id_usuario
         ';

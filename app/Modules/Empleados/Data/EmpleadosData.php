@@ -9,7 +9,11 @@ use Illuminate\Support\Facades\DB;
 class EmpleadosData
 {
     /**
-     * Listar empleados con su empresa y cargo
+     * Listar empleados con su empresa, área y cargo.
+     *
+     * El área es propia del empleado (`empleado.id_area`) y el cargo es opcional.
+     * Cuando el empleado no tiene área propia se muestra la del cargo
+     * (datos previos a la columna `id_area`).
      */
     public static function get_empleados(?int $id_empresa = null, ?int $id_empleado = null)
     {
@@ -18,10 +22,10 @@ class EmpleadosData
             e.id AS id_empleado,
             e.id_empresa,
             COALESCE(emp_asoc.razon_social, "Sin empresa") AS empresa,
+            COALESCE(e.id_area, a_car.id) AS id_area,
+            COALESCE(a_emp.nombre, a_car.nombre) AS area,
             e.id_cargo,
             car.nombre AS cargo,
-            car.id_area,
-            a.nombre AS area,
             e.nombre,
             e.apellido,
             e.dni,
@@ -30,13 +34,13 @@ class EmpleadosData
             e.pasaporte,
             e.fecha_nacimiento,
             e.path_foto,
-            e.estado,
-            e.autoriza_ingreso_unidades
+            e.estado
         FROM
             empleado e
         LEFT JOIN empresa emp_asoc ON emp_asoc.id = e.id_empresa
-        INNER JOIN cargo car ON car.id = e.id_cargo
-        INNER JOIN area a ON a.id = car.id_area
+        LEFT JOIN cargo car ON car.id = e.id_cargo
+        LEFT JOIN area a_emp ON a_emp.id = e.id_area
+        LEFT JOIN area a_car ON a_car.id = car.id_area
         WHERE 1=1
         ';
 
@@ -62,31 +66,37 @@ class EmpleadosData
     }
 
     /**
-     * Obtener empleado por ID
+     * Obtener un único empleado por ID.
+     *
+     * Devuelve el registro (objeto) o null. El listado usa `get_empleados()`,
+     * que sí devuelve un arreglo.
      */
-    public static function get_empleado_by_id(int $id_empleado)
+    public static function get_empleado_by_id(int $id_empleado): ?object
     {
-        return self::get_empleados(id_empleado: $id_empleado);
+        $filas = self::get_empleados(id_empleado: $id_empleado);
+
+        return $filas[0] ?? null;
     }
 
     /**
-     * Crear un nuevo empleado
+     * Crear un nuevo empleado. Área y cargo son opcionales.
      */
     public static function crear_empleado(
         int $id_empresa,
-        int $id_cargo,
         string $nombre,
         string $apellido,
-        ?string $dni,
-        ?string $ruc,
-        ?string $carnet_extranjeria,
-        ?string $pasaporte,
-        ?string $fecha_nacimiento,
-        ?string $path_foto,
-        bool $autoriza_ingreso_unidades = false
+        ?int $id_area = null,
+        ?int $id_cargo = null,
+        ?string $dni = null,
+        ?string $ruc = null,
+        ?string $carnet_extranjeria = null,
+        ?string $pasaporte = null,
+        ?string $fecha_nacimiento = null,
+        ?string $path_foto = null
     ) {
         return Empleado::insertGetId([
             'id_empresa' => $id_empresa,
+            'id_area' => $id_area,
             'id_cargo' => $id_cargo,
             'nombre' => $nombre,
             'apellido' => $apellido,
@@ -97,7 +107,38 @@ class EmpleadosData
             'fecha_nacimiento' => $fecha_nacimiento,
             'path_foto' => $path_foto,
             'estado' => EstadoBase::Activo->value,
-            'autoriza_ingreso_unidades' => $autoriza_ingreso_unidades,
+        ]);
+    }
+
+    /**
+     * Actualizar los datos de un empleado. Área y cargo son opcionales.
+     */
+    public static function actualizar_empleado(
+        int $id_empleado,
+        int $id_empresa,
+        string $nombre,
+        string $apellido,
+        ?int $id_area = null,
+        ?int $id_cargo = null,
+        ?string $dni = null,
+        ?string $ruc = null,
+        ?string $carnet_extranjeria = null,
+        ?string $pasaporte = null,
+        ?string $fecha_nacimiento = null,
+        ?string $path_foto = null
+    ): bool {
+        return (bool) Empleado::where('id', $id_empleado)->update([
+            'id_empresa' => $id_empresa,
+            'id_area' => $id_area,
+            'id_cargo' => $id_cargo,
+            'nombre' => $nombre,
+            'apellido' => $apellido,
+            'dni' => $dni,
+            'ruc' => $ruc,
+            'carnet_extranjeria' => $carnet_extranjeria,
+            'pasaporte' => $pasaporte,
+            'fecha_nacimiento' => $fecha_nacimiento,
+            'path_foto' => $path_foto,
         ]);
     }
 
@@ -140,6 +181,18 @@ class EmpleadosData
             WHERE id_area = :id_area AND estado = "Activo"
             ORDER BY nombre ASC
         ', ['id_area' => $id_area]);
+    }
+
+    /**
+     * Obtener el área a la que pertenece un cargo
+     */
+    public static function get_area_de_cargo(int $id_cargo): ?int
+    {
+        $fila = DB::selectOne('SELECT id_area FROM cargo WHERE id = :id_cargo', [
+            'id_cargo' => $id_cargo,
+        ]);
+
+        return $fila ? (int) $fila->id_area : null;
     }
 
     /**
