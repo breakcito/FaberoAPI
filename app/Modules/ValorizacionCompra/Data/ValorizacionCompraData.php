@@ -546,6 +546,25 @@ class ValorizacionCompraData
     }
 
     /**
+     * Promedio de una ley entre los análisis de un grupo (solo valores > 0).
+     *
+     * Se usa como RESPALDO cuando el grupo no tiene cargada su ley de cierre:
+     * sus análisis sí la tienen, y sin este promedio esas leyes nunca
+     * llegarían al lote mineral al aprobar la valorización.
+     */
+    public static function promedio_ley_analisis_grupo(int $idGrupo, string $columna): float
+    {
+        $valores = DB::table('analisis_mineral')
+            ->where('id_grupo_analisis', $idGrupo)
+            ->where($columna, '>', 0)
+            ->pluck($columna)
+            ->map(static fn ($v) => (float) $v)
+            ->all();
+
+        return empty($valores) ? 0.0 : round(array_sum($valores) / count($valores), 3);
+    }
+
+    /**
      * Actualizar campos de un grupo de análisis
      *
      * @param  array<string,mixed>  $campos

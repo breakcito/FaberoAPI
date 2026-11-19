@@ -368,7 +368,7 @@ class CierreLeyesData
             ? (float) $grupo->ley_recuperacion_cierre
             : ($leyRecuperacionIngresada ?? ($analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000));
 
-        return (int) DB::table('analisis_mineral')->insertGetId([
+        $idAnalisis = (int) DB::table('analisis_mineral')->insertGetId([
             'id_grupo_analisis' => $idGrupo,
             'id_laboratorio' => $idLaboratorio,
             'asumido_por' => $asumidoPor,
@@ -387,6 +387,45 @@ class CierreLeyesData
             'log_cambios' => json_encode([]),
             'created_at' => now(),
         ]);
+
+        // El grupo se queda con el promedio de sus análisis: es el dato que
+        // después se copia al lote al aprobar la valorización.
+        self::recalcular_leyes_cierre_grupo($idGrupo);
+
+        return $idAnalisis;
+    }
+
+    /**
+     * Recalcular las leyes de cierre (humedad y recuperación) de un grupo a
+     * partir de sus análisis.
+     *
+     * La ley de cierre del grupo es el PROMEDIO de sus análisis válidos (> 0).
+     * Sin este recálculo el grupo se queda con 0 y, al aprobar una
+     * valorización, esas leyes nunca llegan al lote mineral.
+     */
+    public static function recalcular_leyes_cierre_grupo(int $idGrupo): void
+    {
+        $columnas = [
+            'ley_humedad' => 'ley_humedad_cierre',
+            'ley_recuperacion' => 'ley_recuperacion_cierre',
+        ];
+
+        foreach ($columnas as $columnaAnalisis => $columnaGrupo) {
+            $valores = DB::table('analisis_mineral')
+                ->where('id_grupo_analisis', $idGrupo)
+                ->where($columnaAnalisis, '>', 0)
+                ->pluck($columnaAnalisis)
+                ->map(static fn ($v) => (float) $v)
+                ->all();
+
+            if (empty($valores)) {
+                continue;
+            }
+
+            DB::table('grupo_analisis')
+                ->where('id', $idGrupo)
+                ->update([$columnaGrupo => round(array_sum($valores) / count($valores), 3)]);
+        }
     }
 
     /**
@@ -468,6 +507,12 @@ class CierreLeyesData
                     ->where('id_muestra_externa', $actual->id_muestra_externa)
                     ->where('id', '!=', $idAnalisis)
                     ->update($syncMuestra);
+            }
+
+            // El grupo debe reflejar el promedio de sus análisis: es el valor
+            // que se copia al lote al aprobar la valorización.
+            if ($actual->id_grupo_analisis) {
+                self::recalcular_leyes_cierre_grupo((int) $actual->id_grupo_analisis);
             }
         }
 

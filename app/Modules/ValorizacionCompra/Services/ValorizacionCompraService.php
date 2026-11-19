@@ -1421,7 +1421,6 @@ class ValorizacionCompraService
      *
      * @param  array<string,mixed>  $det
      * @param  object|null  $grupo  fila de grupo_analisis
-     * @param  LoteMineral  $lote
      * @return array{
      *     es_sin_valor_comercial: bool,
      *     elemento: string,
@@ -1757,8 +1756,18 @@ class ValorizacionCompraService
                 }
 
                 // 2. Ley de humedad de cierre si está disponible (> 0)
-                if ((float) $grupo->ley_humedad_cierre > 0 && ! isset($updateData['ley_humedad'])) {
-                    $leyHumVal = round((float) $grupo->ley_humedad_cierre, 3);
+                //    Respaldo: si el grupo no tiene cierre cargado, se usa el
+                //    promedio de sus análisis (que sí la tienen).
+                $leyHumedadCierre = (float) $grupo->ley_humedad_cierre;
+                if ($leyHumedadCierre <= 0) {
+                    $leyHumedadCierre = ValorizacionCompraData::promedio_ley_analisis_grupo(
+                        (int) $det->id_grupo_analisis,
+                        'ley_humedad'
+                    );
+                }
+
+                if ($leyHumedadCierre > 0 && ! isset($updateData['ley_humedad'])) {
+                    $leyHumVal = round($leyHumedadCierre, 3);
                     if (abs((float) ($lote->ley_humedad ?? 0) - $leyHumVal) > 0.0001) {
                         $cambiosLote[] = [
                             'campo_bd' => 'ley_humedad',
@@ -1771,8 +1780,16 @@ class ValorizacionCompraService
                 }
 
                 // 3. Ley de recuperación de cierre si está disponible (> 0)
-                if ((float) $grupo->ley_recuperacion_cierre > 0 && ! isset($updateData['ley_recuperacion'])) {
-                    $leyRecVal = round((float) $grupo->ley_recuperacion_cierre, 3);
+                $leyRecuperacionCierre = (float) $grupo->ley_recuperacion_cierre;
+                if ($leyRecuperacionCierre <= 0) {
+                    $leyRecuperacionCierre = ValorizacionCompraData::promedio_ley_analisis_grupo(
+                        (int) $det->id_grupo_analisis,
+                        'ley_recuperacion'
+                    );
+                }
+
+                if ($leyRecuperacionCierre > 0 && ! isset($updateData['ley_recuperacion'])) {
+                    $leyRecVal = round($leyRecuperacionCierre, 3);
                     if (abs((float) ($lote->ley_recuperacion ?? 0) - $leyRecVal) > 0.0001) {
                         $cambiosLote[] = [
                             'campo_bd' => 'ley_recuperacion',
