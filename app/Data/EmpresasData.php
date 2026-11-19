@@ -20,6 +20,13 @@ class EmpresasData
             emp.ruc,
             emp.razon_social,
             emp.path_logo,
+            emp.id_departamento,
+            d.nombre AS departamento_nombre,
+            emp.id_provincia,
+            p.nombre AS provincia_nombre,
+            emp.id_distrito,
+            di.nombre AS distrito_nombre,
+            emp.domicilio_fiscal,
             (
                 SELECT
                     COUNT(*)
@@ -31,6 +38,9 @@ class EmpresasData
             ) as cantidad_cuentas_bancarias
         FROM
             empresa emp
+        LEFT JOIN departamento d ON d.id = emp.id_departamento
+        LEFT JOIN provincia p ON p.id = emp.id_provincia
+        LEFT JOIN distrito di ON di.id = emp.id_distrito
         WHERE 1=1
         ';
 

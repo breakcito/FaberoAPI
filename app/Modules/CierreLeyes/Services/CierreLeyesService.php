@@ -82,6 +82,10 @@ class CierreLeyesService
                     'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
                     'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
                     'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : 'Interno',
+                    'ley_oro' => $item['ley_oro'] ?? null,
+                    'ley_plata' => $item['ley_plata'] ?? null,
+                    'ley_humedad' => $item['ley_humedad'] ?? null,
+                    'ley_recuperacion' => $item['ley_recuperacion'] ?? null,
                     'documentos' => $docs,
                     'sin_lote' => empty($idLote),
                 ], $idEmpleado);
@@ -135,6 +139,10 @@ class CierreLeyesService
                     'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
                     'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
                     'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : 'Interno',
+                    'ley_oro' => $item['ley_oro'] ?? null,
+                    'ley_plata' => $item['ley_plata'] ?? null,
+                    'ley_humedad' => $item['ley_humedad'] ?? null,
+                    'ley_recuperacion' => $item['ley_recuperacion'] ?? null,
                     'documentos' => $docs,
                     'sin_lote' => ! empty($item['sin_lote']),
                 ], $idEmpleado);
@@ -387,6 +395,10 @@ class CierreLeyesService
                     'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
                     'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
                     'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : 'Externo',
+                    'ley_oro' => $item['ley_oro'] ?? null,
+                    'ley_plata' => $item['ley_plata'] ?? null,
+                    'ley_humedad' => $item['ley_humedad'] ?? null,
+                    'ley_recuperacion' => $item['ley_recuperacion'] ?? null,
                     'documentos' => $docs,
                 ], $idEmpleado);
             }

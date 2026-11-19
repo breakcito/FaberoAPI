@@ -19,6 +19,7 @@ class CuentasData
                 u.estado,
                 u.id_rol,
                 u.id_empleado,
+                u.permisos,
                 r.nombre as nombre_rol,
                 e.nombre as nombre_empleado,
                 e.apellido as apellido_empleado,
@@ -80,6 +81,7 @@ class CuentasData
                 u.estado,
                 u.id_rol,
                 u.id_empleado,
+                u.permisos,
                 r.nombre as nombre_rol,
                 e.nombre as nombre_empleado,
                 e.apellido as apellido_empleado,
@@ -104,7 +106,8 @@ class CuentasData
         int $id_empleado,
         string $username,
         string $password_hash,
-        string $estado = 'Activo'
+        string $estado = 'Activo',
+        array $permisos = []
     ): int {
         return DB::table('usuario')->insertGetId([
             'id_rol' => $id_rol,
@@ -112,6 +115,7 @@ class CuentasData
             'username' => $username,
             'password' => $password_hash,
             'estado' => $estado,
+            'permisos' => json_encode($permisos),
         ]);
     }
 

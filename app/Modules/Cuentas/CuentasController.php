@@ -42,6 +42,16 @@ class CuentasController extends Controller
     }
 
     /**
+     * Obtener el catálogo de permisos específicos por usuario
+     */
+    public function get_catalogo_permisos(): JsonResponse
+    {
+        $result = CuentasService::get_catalogo_permisos();
+
+        return response()->json($result);
+    }
+
+    /**
      * Registrar una nueva cuenta de usuario
      */
     public function crear_cuenta(Request $request): JsonResponse
@@ -53,6 +63,10 @@ class CuentasController extends Controller
             'password' => 'required|string|min:6|max:512',
             'sucursales' => 'nullable|array',
             'sucursales.*' => 'integer|exists:sucursal,id',
+            'permisos' => 'nullable|array',
+            'permisos.*.codigo' => 'required|string|max:64',
+            'permisos.*.nombre' => 'nullable|string|max:100',
+            'permisos.*.decision' => 'required|boolean',
         ], [
             'id_empleado.unique' => 'Este empleado ya tiene una cuenta asignada.',
             'username.unique' => 'El nombre de usuario ya está en uso.',
@@ -70,7 +84,8 @@ class CuentasController extends Controller
             id_empleado: (int) $v['id_empleado'],
             username: (string) $v['username'],
             password: (string) $v['password'],
-            sucursales: isset($v['sucursales']) ? (array) $v['sucursales'] : []
+            sucursales: isset($v['sucursales']) ? (array) $v['sucursales'] : [],
+            permisos: isset($v['permisos']) ? (array) $v['permisos'] : []
         );
 
         return response()->json($result);
@@ -93,6 +108,10 @@ class CuentasController extends Controller
             'estado' => 'nullable|string',
             'sucursales' => 'nullable|array',
             'sucursales.*' => 'integer|exists:sucursal,id',
+            'permisos' => 'nullable|array',
+            'permisos.*.codigo' => 'required|string|max:64',
+            'permisos.*.nombre' => 'nullable|string|max:100',
+            'permisos.*.decision' => 'required|boolean',
         ], [
             'username.unique' => 'El nombre de usuario ya está en uso.',
             'password.min' => 'La nueva contraseña debe tener al menos 6 caracteres.',
@@ -110,7 +129,8 @@ class CuentasController extends Controller
             username: (string) $v['username'],
             password: isset($v['password']) ? (string) $v['password'] : null,
             estado: isset($v['estado']) ? (string) $v['estado'] : null,
-            sucursales: isset($v['sucursales']) ? (array) $v['sucursales'] : null
+            sucursales: isset($v['sucursales']) ? (array) $v['sucursales'] : null,
+            permisos: isset($v['permisos']) ? (array) $v['permisos'] : null
         );
 
         return response()->json($result);

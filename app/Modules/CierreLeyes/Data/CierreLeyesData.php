@@ -338,13 +338,35 @@ class CierreLeyesData
 
         $grupo = DB::table('grupo_analisis')->where('id', $idGrupo)->first();
 
+        /*
+         * Reglas de leyes al registrar un análisis:
+         * - Oro y plata: se toman del valor ingresado (opcional). Si no se ingresa,
+         *   quedan en 0 y sin confirmar (la confirmación es un acto aparte).
+         * - Humedad y recuperación: son propiedades del grupo/muestra, no del ensayo.
+         *   Manda el valor de cierre del grupo; si el grupo no tiene cierre, se usa
+         *   el valor ingresado; si no se ingresó, se hereda del análisis previo.
+         */
+        $leyOro = isset($data['ley_oro']) && $data['ley_oro'] !== null
+            ? (float) $data['ley_oro']
+            : 0.000;
+        $leyPlata = isset($data['ley_plata']) && $data['ley_plata'] !== null
+            ? (float) $data['ley_plata']
+            : 0.000;
+
+        $leyHumedadIngresada = isset($data['ley_humedad']) && $data['ley_humedad'] !== null
+            ? (float) $data['ley_humedad']
+            : null;
+        $leyRecuperacionIngresada = isset($data['ley_recuperacion']) && $data['ley_recuperacion'] !== null
+            ? (float) $data['ley_recuperacion']
+            : null;
+
         $leyHumedad = $grupo && (float) $grupo->ley_humedad_cierre > 0
             ? (float) $grupo->ley_humedad_cierre
-            : ($analisisPrevio ? (float) $analisisPrevio->ley_humedad : 0.000);
+            : ($leyHumedadIngresada ?? ($analisisPrevio ? (float) $analisisPrevio->ley_humedad : 0.000));
 
         $leyRecuperacion = $grupo && (float) $grupo->ley_recuperacion_cierre > 0
             ? (float) $grupo->ley_recuperacion_cierre
-            : ($analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000);
+            : ($leyRecuperacionIngresada ?? ($analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000));
 
         return (int) DB::table('analisis_mineral')->insertGetId([
             'id_grupo_analisis' => $idGrupo,
@@ -352,8 +374,8 @@ class CierreLeyesData
             'asumido_por' => $asumidoPor,
             'numero_ensayo' => $numeroEnsayo,
             'documentos' => json_encode($documentos),
-            'ley_oro' => 0.000,
-            'ley_plata' => 0.000,
+            'ley_oro' => $leyOro,
+            'ley_plata' => $leyPlata,
             'ley_humedad' => $leyHumedad,
             'ley_recuperacion' => $leyRecuperacion,
             'ley_oro_confirmada' => 0,
@@ -690,8 +712,26 @@ class CierreLeyesData
             })
             ->first();
 
-        $humedadActual = $analisisPrevio ? (float) $analisisPrevio->ley_humedad : 0.000;
-        $recuperacionActual = $analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000;
+        /*
+         * Reglas de leyes al registrar un análisis en una muestra externa:
+         * - Oro y plata: valor ingresado (opcional), sin confirmar.
+         * - Humedad y recuperación: si no se ingresan, se heredan del análisis
+         *   previo de la misma muestra (son propiedades de la muestra).
+         */
+        $leyOro = isset($data['ley_oro']) && $data['ley_oro'] !== null
+            ? (float) $data['ley_oro']
+            : 0.000;
+        $leyPlata = isset($data['ley_plata']) && $data['ley_plata'] !== null
+            ? (float) $data['ley_plata']
+            : 0.000;
+
+        $leyHumedad = isset($data['ley_humedad']) && $data['ley_humedad'] !== null
+            ? (float) $data['ley_humedad']
+            : ($analisisPrevio ? (float) $analisisPrevio->ley_humedad : 0.000);
+
+        $leyRecuperacion = isset($data['ley_recuperacion']) && $data['ley_recuperacion'] !== null
+            ? (float) $data['ley_recuperacion']
+            : ($analisisPrevio ? (float) $analisisPrevio->ley_recuperacion : 0.000);
 
         return (int) DB::table('analisis_mineral')->insertGetId([
             'id_grupo_analisis' => null,
@@ -702,10 +742,10 @@ class CierreLeyesData
             'tipo_origen' => $tipoOrigen,
             'sin_lote' => 1,
             'documentos' => json_encode($documentos),
-            'ley_oro' => 0.000,
-            'ley_plata' => 0.000,
-            'ley_humedad' => $humedadActual,
-            'ley_recuperacion' => $recuperacionActual,
+            'ley_oro' => $leyOro,
+            'ley_plata' => $leyPlata,
+            'ley_humedad' => $leyHumedad,
+            'ley_recuperacion' => $leyRecuperacion,
             'ley_oro_confirmada' => 0,
             'ley_plata_confirmada' => 0,
             'id_empleado_registro' => $idEmpleado,

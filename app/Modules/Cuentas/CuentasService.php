@@ -3,6 +3,7 @@
 namespace App\Modules\Cuentas;
 
 use App\Modules\Cuentas\Data\CuentasData;
+use App\Shared\Enums\_Generic\CodigoPermiso;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\UploadedFile;
@@ -25,9 +26,18 @@ class CuentasService
             $cuenta->sucursales = isset($asociaciones[$id_usuario])
                 ? $asociaciones[$id_usuario]->pluck('id_sucursal')->toArray()
                 : [];
+            $cuenta->permisos = CodigoPermiso::decodificar($cuenta->permisos);
         }
 
         return ApiResponse::success($cuentas);
+    }
+
+    /**
+     * Catálogo de permisos específicos por usuario
+     */
+    public static function get_catalogo_permisos(): array|object
+    {
+        return ApiResponse::success(CodigoPermiso::catalogo());
     }
 
     public static function get_empleados_sin_cuenta(): array|object
@@ -48,14 +58,17 @@ class CuentasService
         int $id_empleado,
         string $username,
         string $password,
-        array $sucursales = []
+        array $sucursales = [],
+        array $permisos = []
     ): array|object {
-        return DB::transaction(function () use ($id_rol, $id_empleado, $username, $password, $sucursales) {
+        return DB::transaction(function () use ($id_rol, $id_empleado, $username, $password, $sucursales, $permisos) {
             $id_usuario = CuentasData::insert_usuario(
                 $id_rol,
                 $id_empleado,
                 $username,
-                Hash::make($password)
+                Hash::make($password),
+                'Activo',
+                CodigoPermiso::normalizar($permisos)
             );
 
             if (! empty($sucursales)) {
@@ -72,6 +85,7 @@ class CuentasService
             $creado = CuentasData::get_usuario_by_id($id_usuario);
             if ($creado) {
                 $creado->sucursales = $sucursales;
+                $creado->permisos = CodigoPermiso::decodificar($creado->permisos);
             }
 
             return ApiResponse::success($creado, 'Cuenta creada correctamente.');
@@ -87,9 +101,10 @@ class CuentasService
         string $username,
         ?string $password = null,
         ?string $estado = null,
-        ?array $sucursales = null
+        ?array $sucursales = null,
+        ?array $permisos = null
     ): array|object {
-        return DB::transaction(function () use ($id_usuario, $id_rol, $username, $password, $estado, $sucursales) {
+        return DB::transaction(function () use ($id_usuario, $id_rol, $username, $password, $estado, $sucursales, $permisos) {
             $updateData = [
                 'id_rol' => $id_rol,
                 'username' => $username,
@@ -101,6 +116,10 @@ class CuentasService
 
             if (! empty($estado)) {
                 $updateData['estado'] = $estado;
+            }
+
+            if ($permisos !== null) {
+                $updateData['permisos'] = json_encode(CodigoPermiso::normalizar($permisos));
             }
 
             CuentasData::update_usuario($id_usuario, $updateData);

@@ -18,6 +18,8 @@ class Proveedor extends Model
         'direccion',
         'telefono',
         'correo',
+        'origen_guias',
+        'destino_guias',
         'estado', // Estado Basico
     ];
 }

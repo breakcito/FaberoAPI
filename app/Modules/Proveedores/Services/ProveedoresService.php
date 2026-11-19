@@ -32,9 +32,11 @@ class ProveedoresService
         ?string $direccion,
         ?string $telefono,
         ?string $correo,
-        array $cuentas = []
+        array $cuentas = [],
+        ?string $origenGuias = null,
+        ?string $destinoGuias = null
     ): array {
-        return DB::transaction(function () use ($tipoEntidad, $dni, $ruc, $razonSocial, $direccion, $telefono, $correo, $cuentas) {
+        return DB::transaction(function () use ($tipoEntidad, $dni, $ruc, $razonSocial, $direccion, $telefono, $correo, $cuentas, $origenGuias, $destinoGuias) {
             $id = ProveedoresData::crear_proveedor(
                 $tipoEntidad,
                 $dni,
@@ -42,7 +44,9 @@ class ProveedoresService
                 $razonSocial,
                 $direccion,
                 $telefono,
-                $correo
+                $correo,
+                $origenGuias,
+                $destinoGuias
             );
 
             foreach ($cuentas as $cta) {
@@ -70,9 +74,11 @@ class ProveedoresService
         string $razonSocial,
         ?string $direccion,
         ?string $telefono,
-        ?string $correo
+        ?string $correo,
+        ?string $origenGuias = null,
+        ?string $destinoGuias = null
     ): array {
-        ProveedoresData::editar_proveedor($id, $tipoEntidad, $dni, $ruc, $razonSocial, $direccion, $telefono, $correo);
+        ProveedoresData::editar_proveedor($id, $tipoEntidad, $dni, $ruc, $razonSocial, $direccion, $telefono, $correo, $origenGuias, $destinoGuias);
         $updated = ProveedoresData::get_proveedor_by_id($id);
 
         return ApiResponse::success($updated, 'Proveedor editado correctamente');

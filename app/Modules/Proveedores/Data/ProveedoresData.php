@@ -19,6 +19,8 @@ class ProveedoresData
             pr.direccion,
             pr.telefono,
             pr.correo,
+            pr.origen_guias,
+            pr.destino_guias,
             pr.estado,
             (
                 SELECT
@@ -59,7 +61,9 @@ class ProveedoresData
         string $razonSocial,
         ?string $direccion,
         ?string $telefono,
-        ?string $correo
+        ?string $correo,
+        ?string $origenGuias = null,
+        ?string $destinoGuias = null
     ): int {
         return Proveedor::insertGetId([
             'tipo_entidad' => $tipoEntidad,
@@ -69,6 +73,8 @@ class ProveedoresData
             'direccion' => $direccion,
             'telefono' => $telefono,
             'correo' => $correo,
+            'origen_guias' => $origenGuias,
+            'destino_guias' => $destinoGuias,
             'estado' => 'Activo',
         ]);
     }
@@ -81,7 +87,9 @@ class ProveedoresData
         string $razonSocial,
         ?string $direccion,
         ?string $telefono,
-        ?string $correo
+        ?string $correo,
+        ?string $origenGuias = null,
+        ?string $destinoGuias = null
     ): bool {
         return Proveedor::where('id', $id)->update([
             'tipo_entidad' => $tipoEntidad,
@@ -91,6 +99,8 @@ class ProveedoresData
             'direccion' => $direccion,
             'telefono' => $telefono,
             'correo' => $correo,
+            'origen_guias' => $origenGuias,
+            'destino_guias' => $destinoGuias,
         ]) >= 0;
     }
 

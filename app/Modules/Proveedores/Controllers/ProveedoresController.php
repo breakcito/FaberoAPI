@@ -22,6 +22,8 @@ class ProveedoresController
             'direccion' => 'nullable|string|max:255',
             'telefono' => 'nullable|string|max:20',
             'correo' => 'nullable|email|max:100',
+            'origen_guias' => 'nullable|string|max:512',
+            'destino_guias' => 'nullable|string|max:512',
         ]);
 
         return response()->json(ProveedoresService::crear_proveedor(
@@ -32,7 +34,9 @@ class ProveedoresController
             $request->direccion,
             $request->telefono,
             $request->correo,
-            $request->cuentas ?? []
+            $request->cuentas ?? [],
+            $request->origen_guias,
+            $request->destino_guias
         ));
     }
 
@@ -46,6 +50,8 @@ class ProveedoresController
             'direccion' => 'nullable|string|max:255',
             'telefono' => 'nullable|string|max:20',
             'correo' => 'nullable|email|max:100',
+            'origen_guias' => 'nullable|string|max:512',
+            'destino_guias' => 'nullable|string|max:512',
         ]);
 
         return response()->json(ProveedoresService::editar_proveedor(
@@ -56,7 +62,9 @@ class ProveedoresController
             $request->razon_social,
             $request->direccion,
             $request->telefono,
-            $request->correo
+            $request->correo,
+            $request->origen_guias,
+            $request->destino_guias
         ));
     }
 

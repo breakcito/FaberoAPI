@@ -50,6 +50,10 @@ class CierreLeyesController
                     'asumido_por' => ! empty($item['asumido_por']) ? trim((string) $item['asumido_por']) : 'Proveedor',
                     'numero_ensayo' => ! empty($item['numero_ensayo']) ? (int) $item['numero_ensayo'] : null,
                     'tipo_origen' => ! empty($item['tipo_origen']) ? trim((string) $item['tipo_origen']) : $defaultOrigen,
+                    'ley_oro' => isset($item['ley_oro']) && $item['ley_oro'] !== '' ? (float) $item['ley_oro'] : null,
+                    'ley_plata' => isset($item['ley_plata']) && $item['ley_plata'] !== '' ? (float) $item['ley_plata'] : null,
+                    'ley_humedad' => isset($item['ley_humedad']) && $item['ley_humedad'] !== '' ? (float) $item['ley_humedad'] : null,
+                    'ley_recuperacion' => isset($item['ley_recuperacion']) && $item['ley_recuperacion'] !== '' ? (float) $item['ley_recuperacion'] : null,
                     'archivos' => $files,
                 ];
             }
@@ -74,6 +78,10 @@ class CierreLeyesController
                 'asumido_por' => $request->filled('asumido_por') ? trim((string) $request->input('asumido_por')) : 'Proveedor',
                 'numero_ensayo' => $request->filled('numero_ensayo') ? (int) $request->input('numero_ensayo') : null,
                 'tipo_origen' => $request->filled('tipo_origen') ? trim((string) $request->input('tipo_origen')) : $defaultOrigen,
+                'ley_oro' => $request->filled('ley_oro') ? (float) $request->input('ley_oro') : null,
+                'ley_plata' => $request->filled('ley_plata') ? (float) $request->input('ley_plata') : null,
+                'ley_humedad' => $request->filled('ley_humedad') ? (float) $request->input('ley_humedad') : null,
+                'ley_recuperacion' => $request->filled('ley_recuperacion') ? (float) $request->input('ley_recuperacion') : null,
                 'archivos' => $flatFiles,
             ]];
         }
@@ -91,12 +99,20 @@ class CierreLeyesController
             'asumido_por' => 'nullable|string|max:20',
             'numero_ensayo' => 'nullable|integer|min:1',
             'tipo_origen' => 'nullable|string|in:Interno,Externo',
+            'ley_oro' => 'nullable|numeric|min:0',
+            'ley_plata' => 'nullable|numeric|min:0',
+            'ley_humedad' => 'nullable|numeric|min:0',
+            'ley_recuperacion' => 'nullable|numeric|min:0',
             'documentos.*' => 'nullable|file|max:20480',
             'analisis' => 'nullable|array',
             'analisis.*.id_laboratorio' => 'nullable|integer',
             'analisis.*.asumido_por' => 'nullable|string|max:20',
             'analisis.*.numero_ensayo' => 'nullable|integer|min:1',
             'analisis.*.tipo_origen' => 'nullable|string|in:Interno,Externo',
+            'analisis.*.ley_oro' => 'nullable|numeric|min:0',
+            'analisis.*.ley_plata' => 'nullable|numeric|min:0',
+            'analisis.*.ley_humedad' => 'nullable|numeric|min:0',
+            'analisis.*.ley_recuperacion' => 'nullable|numeric|min:0',
             'analisis.*.documentos.*' => 'nullable|file|max:20480',
         ];
     }

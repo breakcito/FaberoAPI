@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Shared\Enums\_Generic\CodigoPermiso;
 use Illuminate\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Database\Eloquent\Model;
@@ -22,6 +23,7 @@ class Usuario extends Model implements AuthenticatableContract, JWTSubject
         'username',
         'password',
         'estado',
+        'permisos',
     ];
 
     protected $hidden = ['password'];
@@ -54,7 +56,8 @@ class Usuario extends Model implements AuthenticatableContract, JWTSubject
             emp.fecha_nacimiento,
             emp.path_foto,
             emp.estado as estado_empleado,
-            usu.estado as estado_usuario
+            usu.estado as estado_usuario,
+            usu.permisos
         FROM
             usuario usu
         INNER JOIN empleado emp on emp.id = usu.id_empleado
@@ -62,8 +65,14 @@ class Usuario extends Model implements AuthenticatableContract, JWTSubject
             usu.id = :id_usuario
         ';
 
-        return DB::selectOne($sql, [
+        $info = DB::selectOne($sql, [
             'id_usuario' => $id_usuario,
         ]);
+
+        if ($info) {
+            $info->permisos = CodigoPermiso::decodificar($info->permisos);
+        }
+
+        return $info;
     }
 }
