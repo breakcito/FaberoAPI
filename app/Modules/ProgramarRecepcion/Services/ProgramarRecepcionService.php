@@ -187,19 +187,27 @@ class ProgramarRecepcionService
         if (! $ok) {
             // Diagnóstico del motivo real: el mensaje genérico confundía
             // (p.ej. una programación ya confirmada se reportaba como
-            // "no existe").
-            $recepcion = RecepcionUnidadesData::get_recepcion_by_id($id);
+            // "no existe"). Si el diagnóstico falla, se devuelve el error
+            // genérico en vez de reventar la petición.
+            try {
+                $recepcion = RecepcionUnidadesData::get_recepcion_by_id($id);
 
-            if (! $recepcion) {
-                return ApiResponse::error('No se encontró la programación indicada.', 404);
-            }
+                if (! $recepcion) {
+                    return ApiResponse::error('No se encontró la programación indicada.', 404);
+                }
 
-            if (! (int) ($recepcion['es_programacion'] ?? 0)) {
-                return ApiResponse::error('El registro indicado no es una programación de unidad.', 422);
-            }
+                if (! (int) ($recepcion['es_programacion'] ?? 0)) {
+                    return ApiResponse::error('El registro indicado no es una programación de unidad.', 422);
+                }
 
-            if (! empty($recepcion['id_empleado_recepcion'])) {
-                return ApiResponse::error('Esta programación ya fue confirmada.', 409);
+                if (! empty($recepcion['id_empleado_recepcion'])) {
+                    return ApiResponse::error('Esta programación ya fue confirmada.', 409);
+                }
+            } catch (\Throwable $e) {
+                Log::warning('No se pudo diagnosticar el error de confirmación de la programación {id}: {msg}', [
+                    'id' => $id,
+                    'msg' => $e->getMessage(),
+                ]);
             }
 
             return ApiResponse::error('No se pudo confirmar la programación.', 400);

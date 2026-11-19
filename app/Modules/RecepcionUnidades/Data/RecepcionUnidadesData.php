@@ -513,7 +513,8 @@ class RecepcionUnidadesData
             'id_empleado_registro' => $idEmpleadoRegistro,
             'correlativo' => $correlativoData['correlativo'],
             'numero_correlativo' => $correlativoData['numero_correlativo'],
-            'con_codigo_temporal' => false,
+            // Todos los lotes nacen pendientes de muestreo.
+            'con_codigo_temporal' => true,
             'id_ticket_balanza' => $ticketId,
             'created_at' => now()->toDateTimeString(),
         ]);

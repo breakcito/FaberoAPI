@@ -47,18 +47,22 @@ class MuestreoService
     }
 
     /**
-     * Confirmar el muestreo de un lote.
+     * Confirmar el muestreo de un lote o de una partición.
      *
      * Define el tipo de producto y el tipo de mineral, y consolida el
      * correlativo (el usuario puede mantenerlo o corregirlo). Al confirmar:
-     *  - el lote queda `con_codigo_temporal = 0` y `muestreo_confirmado = 1`,
-     *  - todas sus particiones activas quedan confirmadas y con el correlativo
-     *    realineado a `{correlativo}-{letra}`,
+     *  - la partición (o el lote sin particiones) queda `con_codigo_temporal = 0`
+     *    y `muestreo_confirmado = 1`,
+     *  - el tipo de producto y el tipo de mineral se guardan en el LOTE PADRE,
+     *  - el correlativo del padre se realinea en todas sus particiones
+     *    (`{correlativo}-{letra}`),
+     *  - cuando todas las particiones del padre quedan confirmadas, el padre
+     *    también pasa a `con_codigo_temporal = 0` y `muestreo_confirmado = 1`,
      *  - el cambio queda registrado en `log_cambios`.
      *
      * @param  array{tipo_producto: string, tipo_mineral: string, correlativo: string, numero_correlativo?: int|null}  $data
      */
-    public static function confirmar_muestreo(int $idLote, int $idEmpleado, array $data): array
+    public static function confirmar_muestreo(int $idLote, ?int $idParticion, int $idEmpleado, array $data): array
     {
         $lote = LoteMineral::find($idLote);
 
@@ -70,8 +74,29 @@ class MuestreoService
             return ApiResponse::error('El lote no está activo.', 422);
         }
 
-        if (! $lote->con_codigo_temporal && $lote->muestreo_confirmado) {
-            return ApiResponse::error('El muestreo de este lote ya fue confirmado.', 422);
+        $particiones = MuestreoData::get_particiones_de_lote($idLote);
+
+        // Partición a confirmar (null = el propio lote).
+        $particion = null;
+        if ($idParticion !== null) {
+            foreach ($particiones as $p) {
+                if ((int) $p->id === $idParticion) {
+                    $particion = $p;
+                    break;
+                }
+            }
+
+            if ($particion === null) {
+                return ApiResponse::error('No se encontró la partición indicada.', 404);
+            }
+
+            if ($particion->muestreo_confirmado) {
+                return ApiResponse::error('El muestreo de esta partición ya fue confirmado.', 422);
+            }
+        } else {
+            if (! $lote->con_codigo_temporal && $lote->muestreo_confirmado) {
+                return ApiResponse::error('El muestreo de este lote ya fue confirmado.', 422);
+            }
         }
 
         $correlativo = strtoupper(trim((string) ($data['correlativo'] ?? '')));
@@ -86,26 +111,24 @@ class MuestreoService
         $tipoProducto = (string) $data['tipo_producto'];
         $tipoMineral = (string) $data['tipo_mineral'];
 
-        $particiones = MuestreoData::get_particiones_de_lote($idLote);
-
         // Unicidad del correlativo: ni el del lote ni los derivados de sus
         // particiones pueden repetir uno ya usado por otro lote.
         if (MuestreoData::existe_correlativo($correlativo, $idLote)) {
             return ApiResponse::error('El correlativo "'.$correlativo.'" ya está en uso por otro lote.', 409);
         }
 
-        foreach ($particiones as $particion) {
-            $correlativoParticion = $correlativo.'-'.$particion->particion;
+        foreach ($particiones as $p) {
+            $correlativoParticion = $correlativo.'-'.$p->particion;
             if (MuestreoData::existe_correlativo($correlativoParticion, $idLote)) {
                 return ApiResponse::error(
-                    'El correlativo "'.$correlativoParticion.'" de la partición '.$particion->particion.' ya está en uso.',
+                    'El correlativo "'.$correlativoParticion.'" de la partición '.$p->particion.' ya está en uso.',
                     409
                 );
             }
         }
 
         try {
-            DB::transaction(function () use ($lote, $idEmpleado, $tipoProducto, $tipoMineral, $correlativo, $numeroCorrelativo, $particiones) {
+            DB::transaction(function () use ($lote, $particion, $particiones, $idEmpleado, $tipoProducto, $tipoMineral, $correlativo, $numeroCorrelativo) {
                 $cambios = [];
 
                 if ($lote->tipo_producto !== $tipoProducto) {
@@ -162,20 +185,39 @@ class MuestreoService
                 $lote->tipo_mineral = $tipoMineral;
                 $lote->correlativo = $correlativo;
                 $lote->numero_correlativo = $numeroCorrelativo;
-                $lote->con_codigo_temporal = false;
-                $lote->muestreo_confirmado = true;
                 $lote->save();
 
-                // Las particiones heredan el correlativo del padre y quedan
-                // muestreadas junto con él.
-                foreach ($particiones as $particion) {
+                // El correlativo del padre se propaga a TODAS sus particiones.
+                foreach ($particiones as $p) {
+                    DB::table('particion_lote_mineral')
+                        ->where('id', $p->id)
+                        ->update([
+                            'correlativo' => $correlativo.'-'.$p->particion,
+                        ]);
+                }
+
+                if ($particion !== null) {
+                    // Se confirma SOLO la partición elegida.
                     DB::table('particion_lote_mineral')
                         ->where('id', $particion->id)
                         ->update([
-                            'correlativo' => $correlativo.'-'.$particion->particion,
                             'con_codigo_temporal' => false,
                             'muestreo_confirmado' => true,
                         ]);
+                } else {
+                    // El LOTE PADRE engloba a sus particiones: al confirmarlo
+                    // se confirman todas.
+                    DB::table('particion_lote_mineral')
+                        ->where('id_lote_mineral', $lote->id)
+                        ->where('estado', EstadoBase::Activo->value)
+                        ->update([
+                            'con_codigo_temporal' => false,
+                            'muestreo_confirmado' => true,
+                        ]);
+
+                    $lote->con_codigo_temporal = false;
+                    $lote->muestreo_confirmado = true;
+                    $lote->save();
                 }
 
                 $log = $lote->log_cambios ?? [];
@@ -188,6 +230,25 @@ class MuestreoService
             });
         } catch (\Throwable $e) {
             return ApiResponse::error('Error al confirmar el muestreo: '.$e->getMessage(), 500);
+        }
+
+        // Si todas las particiones del padre quedaron confirmadas, el padre
+        // también se consolida.
+        if ($particion !== null) {
+            $restantes = DB::table('particion_lote_mineral')
+                ->where('id_lote_mineral', $idLote)
+                ->where('estado', EstadoBase::Activo->value)
+                ->where('muestreo_confirmado', false)
+                ->count();
+
+            if ($restantes === 0) {
+                DB::table('lote_mineral')
+                    ->where('id', $idLote)
+                    ->update([
+                        'con_codigo_temporal' => false,
+                        'muestreo_confirmado' => true,
+                    ]);
+            }
         }
 
         $lote->refresh();

@@ -17,28 +17,48 @@ class MuestreoData
     /**
      * Lotes pendientes de muestreo.
      *
-     * Un lote entra al muestreo cuando:
-     *  - su correlativo es temporal (ingresado a mano) -> `con_codigo_temporal = 1`, o
-     *  - todavía no se le ha confirmado el muestreo -> `muestreo_confirmado = 0`.
+     * Se lista el LOTE PADRE: cuando tiene particiones, estas van englobadas
+     * en la fila del padre (columna "Particiones") y se confirman junto con él.
      *
-     * Al confirmar el muestreo ambos flags pasan a 0/1, con lo que el lote
-     * abandona el listado.
+     * Un lote entra al muestreo mientras no se le haya confirmado:
+     *  - `con_codigo_temporal = 1` (nace así en TODOS los lotes: significa
+     *    "pendiente de muestreo"), o
+     *  - `muestreo_confirmado = 0`.
      *
-     * Además solo se listan los lotes de RECEPCIÓN que ya terminaron de
-     * pesar (mismo criterio que el Bloque A del resumen de balanza):
-     *  - deben pertenecer a una recepción de unidad,
-     *  - su tipo de ingreso es 'Recepción de Mineral' (excluye despachos),
-     *  - la recepción está en estado de pesaje 'Pesado'.
+     * Solo se listan los lotes de RECEPCIÓN que ya terminaron de pesar
+     * (mismo criterio que el Bloque A del resumen de balanza):
+     *  - sin particiones: su propia unidad está 'Pesado' y es 'Recepción de Mineral',
+     *  - con particiones: TODAS sus particiones viven en unidades 'Pesado' de
+     *    recepción (el padre creado desde balanza puede no tener unidad propia).
      *
      * @param  array{fecha_inicio?: string|null, fecha_fin?: string|null}  $filtros
      * @return array<int, object>
      */
     public static function get_lotes_pendientes(array $filtros): array
     {
-        $sql = '
+        $params = [
+            'estado' => EstadoBase::Activo->value,
+        ];
+
+        $filtroFechas = '';
+        if (! empty($filtros['fecha_inicio'])) {
+            $filtroFechas .= ' AND DATE(%columna_fecha%) >= :fecha_inicio';
+            $params['fecha_inicio'] = $filtros['fecha_inicio'];
+        }
+        if (! empty($filtros['fecha_fin'])) {
+            $filtroFechas .= ' AND DATE(%columna_fecha%) <= :fecha_fin';
+            $params['fecha_fin'] = $filtros['fecha_fin'];
+        }
+        $filtroFechas = str_replace('%columna_fecha%', 'lm.created_at', $filtroFechas);
+
+        $sql = "
         SELECT
+            'LOTE' AS tipo_registro,
             lm.id,
+            NULL AS id_particion,
+            NULL AS particion,
             lm.correlativo,
+            lm.correlativo AS correlativo_padre,
             lm.numero_correlativo,
             lm.tipo_producto,
             lm.tipo_mineral,
@@ -54,68 +74,88 @@ class MuestreoData
             lm.id_proveedor_minero,
             lm.id_zona_origen,
             lm.created_at,
+            ru.estado_pesaje AS unidad_estado_pesaje,
+            ru.tipo_ingreso AS unidad_tipo_ingreso,
             ru.fecha_hora_ingreso,
-            ru.tipo_ingreso,
             v.placa AS vehiculo_placa,
             pr.razon_social AS proveedor_razon_social,
             zo.nombre AS zona_origen_nombre
         FROM lote_mineral lm
-        INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
+        LEFT JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
         LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN proveedor pr ON pr.id = lm.id_proveedor_minero
         LEFT JOIN zona_origen zo ON zo.id = lm.id_zona_origen
         WHERE lm.estado = :estado
           AND (lm.con_codigo_temporal = 1 OR lm.muestreo_confirmado = 0)
-          AND ru.estado_pesaje = :estado_pesaje
-          AND ru.tipo_ingreso = :tipo_ingreso
-        ';
+        ".$filtroFechas.' ORDER BY lm.created_at DESC';
 
-        $params = [
-            'estado' => EstadoBase::Activo->value,
-            'estado_pesaje' => EstadoPesaje::Pesado->value,
-            'tipo_ingreso' => self::TIPO_INGRESO_RECEPCION,
-        ];
+        $candidatos = DB::select($sql, $params);
 
-        if (! empty($filtros['fecha_inicio'])) {
-            $sql .= ' AND DATE(lm.created_at) >= :fecha_inicio';
-            $params['fecha_inicio'] = $filtros['fecha_inicio'];
-        }
-
-        if (! empty($filtros['fecha_fin'])) {
-            $sql .= ' AND DATE(lm.created_at) <= :fecha_fin';
-            $params['fecha_fin'] = $filtros['fecha_fin'];
-        }
-
-        $sql .= ' ORDER BY lm.created_at DESC;';
-
-        $results = DB::select($sql, $params);
-
-        // Particiones activas de cada lote: el modal las lista y se confirman
-        // junto con el padre.
+        // Particiones activas de cada lote (con el estado de pesaje de SU unidad).
         $particionesPorLote = self::get_particiones_por_lote(
-            array_map(static fn ($r) => (int) $r->id, $results)
+            array_map(static fn ($r) => (int) $r->id, $candidatos)
         );
 
-        foreach ($results as $item) {
-            $item->con_codigo_temporal = (bool) $item->con_codigo_temporal;
-            $item->muestreo_confirmado = (bool) $item->muestreo_confirmado;
-            $item->tiene_particion = (bool) $item->tiene_particion;
-            $item->particionado_desde_balanza = (bool) $item->particionado_desde_balanza;
-            $item->numero_correlativo = $item->numero_correlativo !== null
-                ? (int) $item->numero_correlativo
+        $results = [];
+
+        foreach ($candidatos as $lote) {
+            $particiones = $particionesPorLote[(int) $lote->id] ?? [];
+
+            if (! self::terminoDePesar($lote, $particiones)) {
+                continue;
+            }
+
+            $lote->tipo_registro = 'LOTE';
+            $lote->id_particion = null;
+            $lote->particion = null;
+            $lote->con_codigo_temporal = (bool) $lote->con_codigo_temporal;
+            $lote->muestreo_confirmado = (bool) $lote->muestreo_confirmado;
+            $lote->tiene_particion = (bool) $lote->tiene_particion;
+            $lote->particionado_desde_balanza = (bool) $lote->particionado_desde_balanza;
+            $lote->numero_correlativo = $lote->numero_correlativo !== null
+                ? (int) $lote->numero_correlativo
                 : null;
-            $item->peso_inicial = $item->peso_inicial !== null ? (float) $item->peso_inicial : null;
-            $item->peso_final = $item->peso_final !== null ? (float) $item->peso_final : null;
-            $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
-            $item->particiones = $particionesPorLote[(int) $item->id] ?? [];
-            $item->total_particiones = count($item->particiones);
-            $item->particiones_pendientes = count(array_filter(
-                $item->particiones,
+            $lote->peso_inicial = $lote->peso_inicial !== null ? (float) $lote->peso_inicial : null;
+            $lote->peso_final = $lote->peso_final !== null ? (float) $lote->peso_final : null;
+            $lote->peso_neto = $lote->peso_neto !== null ? (float) $lote->peso_neto : null;
+            $lote->particiones = $particiones;
+            $lote->total_particiones = count($particiones);
+            $lote->particiones_pendientes = count(array_filter(
+                $particiones,
                 static fn ($p) => ! $p->muestreo_confirmado
             ));
+
+            $results[] = $lote;
         }
 
         return $results;
+    }
+
+    /**
+     * Un lote terminó de pesar cuando:
+     *  - no tiene particiones: su propia unidad está 'Pesado' y es de recepción,
+     *  - tiene particiones: TODAS ellas viven en unidades 'Pesado' de recepción.
+     *
+     * @param  array<int, object>  $particiones
+     */
+    private static function terminoDePesar(object $lote, array $particiones): bool
+    {
+        if (empty($particiones)) {
+            return ($lote->unidad_estado_pesaje ?? null) === EstadoPesaje::Pesado->value
+                && ($lote->unidad_tipo_ingreso ?? null) === self::TIPO_INGRESO_RECEPCION;
+        }
+
+        foreach ($particiones as $particion) {
+            if (($particion->unidad_estado_pesaje ?? null) !== EstadoPesaje::Pesado->value) {
+                return false;
+            }
+
+            if (($particion->unidad_tipo_ingreso ?? null) !== self::TIPO_INGRESO_RECEPCION) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -134,19 +174,22 @@ class MuestreoData
         $rows = DB::select(
             "
             SELECT
-                id,
-                id_lote_mineral,
-                particion,
-                correlativo,
-                peso_inicial,
-                peso_neto,
-                estado,
-                con_codigo_temporal,
-                muestreo_confirmado
-            FROM particion_lote_mineral
-            WHERE id_lote_mineral IN ($placeholders)
-              AND estado = ?
-            ORDER BY id_lote_mineral, particion
+                plm.id,
+                plm.id_lote_mineral,
+                plm.particion,
+                plm.correlativo,
+                plm.peso_inicial,
+                plm.peso_neto,
+                plm.estado,
+                plm.con_codigo_temporal,
+                plm.muestreo_confirmado,
+                ru.estado_pesaje AS unidad_estado_pesaje,
+                ru.tipo_ingreso AS unidad_tipo_ingreso
+            FROM particion_lote_mineral plm
+            LEFT JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
+            WHERE plm.id_lote_mineral IN ($placeholders)
+              AND plm.estado = ?
+            ORDER BY plm.id_lote_mineral, plm.particion
             ",
             [...$idLotes, EstadoBase::Activo->value]
         );

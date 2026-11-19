@@ -222,15 +222,21 @@ class RecepcionMineralService
         $numeroAuto = $correlativoData['numero_correlativo'];
 
         // El usuario puede ajustar el correlativo en el modal "Nuevo Lote". Si lo
-        // hace, el lote queda con código temporal: no pertenece a la secuencia
-        // oficial y se libera al eliminarse.
+        // hace, el correlativo es MANUAL: no pertenece a la secuencia oficial y
+        // se libera al eliminarse (queda con `numero_correlativo` en NULL).
         $correlativoIngresado = $correlativoManual !== null ? trim($correlativoManual) : '';
-        $conCodigoTemporal = $correlativoIngresado !== '' && $correlativoIngresado !== $correlativoAuto;
+        $esCorrelativoManual = $correlativoIngresado !== '' && $correlativoIngresado !== $correlativoAuto;
 
-        $correlativo = $conCodigoTemporal ? $correlativoIngresado : $correlativoAuto;
-        $numeroCorrelativo = $conCodigoTemporal
+        $correlativo = $esCorrelativoManual ? $correlativoIngresado : $correlativoAuto;
+        $numeroCorrelativo = $esCorrelativoManual
             ? $numeroCorrelativoManual
             : $numeroAuto;
+
+        // `con_codigo_temporal` = el lote AÚN NO PASÓ POR EL MUESTREO. Todos los
+        // lotes nacen así (el muestreo los habilita y los consolida). Cuando el
+        // correlativo es manual se conserva igual el `numero_correlativo` en
+        // NULL: es la marca de "correlativo escrito a mano".
+        $conCodigoTemporal = true;
 
         // Particionar desde balanza: lote sin unidad, sin ticket; partición A con la unidad actual.
         if ($particionar) {
@@ -669,9 +675,15 @@ class RecepcionMineralService
 
             // Regenerar el correlativo: el prefijo depende de la condición de
             // ingreso (FB = comercialización, LOT = otros servicios).
-            // Si el lote tiene un código temporal (ingresado a mano), se
-            // preservan correlativo y numero_correlativo tal cual.
-            if (! $lote->con_codigo_temporal) {
+            //
+            // `con_codigo_temporal` ya no sirve para esto: ahora significa
+            // "pendiente de muestreo" y es `true` en todos los lotes. La marca
+            // de "correlativo escrito a mano" es el `numero_correlativo` en
+            // NULL (cuando el operador escribe un correlativo custom, el
+            // número se borra). Si es manual, se preserva el correlativo.
+            $esCorrelativoManual = $lote->numero_correlativo === null;
+
+            if (! $esCorrelativoManual) {
                 $correlativoData = self::generar_correlativo_lote($newCondicion, $lote->id_empresa);
 
                 $cambios[] = [

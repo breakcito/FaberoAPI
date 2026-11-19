@@ -49,6 +49,7 @@ class MuestreoController
             'tipo_mineral' => ['required', 'string', Rule::enum(TipoMineral::class)],
             'correlativo' => ['required', 'string', 'max:50'],
             'numero_correlativo' => ['nullable', 'integer', 'min:1'],
+            'id_particion' => ['nullable', 'integer'],
         ]);
 
         $data = $request->only([
@@ -58,8 +59,11 @@ class MuestreoController
             'numero_correlativo',
         ]);
 
+        $idParticion = $request->input('id_particion');
+
         return response()->json(MuestreoService::confirmar_muestreo(
             (int) $id,
+            $idParticion !== null ? (int) $idParticion : null,
             (int) $authUser->id_empleado,
             $data,
         ));
