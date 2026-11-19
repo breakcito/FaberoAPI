@@ -63,26 +63,47 @@ class RecepcionMineralController extends Controller
         $request->validate([
             'condicion_ingreso' => ['required', Rule::enum(CondicionIngreso::class)],
             'id_empresa' => ['required', 'integer', 'exists:empresa,id'],
-            'con_codigo_manual' => ['required', 'boolean'],
-            'codigo_manual' => 'nullable|string|max:20',
             'particionar' => 'nullable|boolean',
+            'correlativo' => 'nullable|string|max:20',
+            'numero_correlativo' => 'nullable|integer|min:1',
         ]);
 
         $condicionIngreso = $request->input('condicion_ingreso');
         $idEmpresa = (int) $request->input('id_empresa');
-        $conCodigoManual = $request->boolean('con_codigo_manual');
-        $codigoManual = $conCodigoManual ? $request->input('codigo_manual') : null;
         $particionar = $request->boolean('particionar');
+        $correlativoManual = $request->input('correlativo');
+        $numeroCorrelativoManual = $request->input('numero_correlativo');
 
         return response()->json(RecepcionMineralService::crear_lote(
             $id,
             (int) $authUser->id_empleado,
             $condicionIngreso,
             $idEmpresa,
-            $conCodigoManual,
-            $codigoManual,
             $particionar,
+            $correlativoManual,
+            $numeroCorrelativoManual !== null ? (int) $numeroCorrelativoManual : null,
         ));
+    }
+
+    /**
+     * Previsualiza el correlativo que se generará para el próximo lote.
+     *
+     * Permite mostrarlo en el modal "Nuevo Lote" y que el usuario pueda
+     * ajustarlo antes de crear el registro.
+     */
+    public function preview_correlativo_lote(Request $request): JsonResponse
+    {
+        $request->validate([
+            'id_empresa' => 'required|integer|exists:empresa,id',
+            'condicion_ingreso' => ['required', Rule::enum(CondicionIngreso::class)],
+        ]);
+
+        $result = RecepcionMineralService::preview_correlativo_lote(
+            (int) $request->input('id_empresa'),
+            (string) $request->input('condicion_ingreso')
+        );
+
+        return response()->json($result);
     }
 
     /**

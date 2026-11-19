@@ -20,7 +20,8 @@ class CorrelativoHelper
         ?string $formatoFecha = null,
         bool $incluirPrefijo = true,
         string $columnaNumero = 'numero_correlativo',
-        bool $prefijoPrimero = false
+        bool $prefijoPrimero = false,
+        ?string $estado = null
     ): array {
         // Configuramos la tabla principal con su alias en el constructor de la consulta
         $tablaQuery = $alias ? "{$tabla} as {$alias}" : $tabla;
@@ -53,6 +54,13 @@ class CorrelativoHelper
         };
 
         // 3. Otros filtros
+        // El filtro por estado se aplica aparte porque participa en el cálculo
+        // del correlativo: los registros con borrado lógico liberan su número
+        // (la secuencia no deja huecos).
+        if ($estado !== null) {
+            $query->where("{$prefijoTabla}.estado", $estado);
+        }
+
         foreach ($filtros as $col => $valor) {
 
             $columnaFiltro = str_contains($col, '.')

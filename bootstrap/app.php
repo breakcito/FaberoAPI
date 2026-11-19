@@ -58,6 +58,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 require base_path('app/Modules/Blending/Endpoints/BlendingEndpoints.php');
                 require base_path('app/Modules/ProgramacionDespachos/ProgramacionDespachosEndpoints.php');
                 require base_path('app/Modules/ValorElementoQuimico/Endpoints/ValorElementoQuimicoEndpoints.php');
+                require base_path('app/Modules/Muestreo/MuestreoEndpoints.php');
             });
         },
     )

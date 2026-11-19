@@ -10,12 +10,11 @@ use App\Models\Vehiculo;
 use App\Modules\RecepcionMineral\Data\RecepcionMineralData;
 use App\Shared\Enums\_Generic\CondicionIngreso;
 use App\Shared\Enums\_Generic\EstadoBase;
-use App\Shared\Enums\_Generic\EstadoLeyes;
 use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Helpers\CorrelativoHelper;
-use App\Shared\Responses\ApiResponse;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
+use App\Shared\Responses\ApiResponse;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -165,14 +164,48 @@ class RecepcionMineralService
      *
      * @param  int  $id  id de la recepción de unidad
      */
+    /**
+     * Genera los datos de correlativo del próximo lote.
+     *
+     * Los lotes eliminados lógicamente liberan su número: la secuencia no deja
+     * huecos y el código se puede repetir.
+     */
+    private static function generar_correlativo_lote(string $condicionIngreso, int $idEmpresa): array
+    {
+        $isComercial = $condicionIngreso === CondicionIngreso::Comercializacion->value;
+        $prefijo = $isComercial ? 'FB' : 'LOT';
+        $filtros = $isComercial
+            ? ['id_empresa' => $idEmpresa, 'condicion_ingreso' => CondicionIngreso::Comercializacion->value]
+            : ['condicion_ingreso' => ['!=', CondicionIngreso::Comercializacion->value]];
+
+        return CorrelativoHelper::generar(
+            tabla: 'lote_mineral',
+            prefijo: $prefijo,
+            filtros: $filtros,
+            longitudCeros: 3,
+            reseteo: Periodo::Anual,
+            estado: EstadoBase::Activo->value,
+        );
+    }
+
+    /**
+     * Previsualiza el correlativo que se generará para el próximo lote.
+     */
+    public static function preview_correlativo_lote(int $idEmpresa, string $condicionIngreso): array
+    {
+        return ApiResponse::success(
+            self::generar_correlativo_lote($condicionIngreso, $idEmpresa)
+        );
+    }
+
     public static function crear_lote(
         int $id,
         int $idEmpleadoRegistro,
         string $condicionIngreso,
         int $idEmpresa,
-        bool $conCodigoManual = false,
-        ?string $codigoManual = null,
         bool $particionar = false,
+        ?string $correlativoManual = null,
+        ?int $numeroCorrelativoManual = null,
     ): array {
         $recepcion = RecepcionUnidad::find($id);
         if (! $recepcion) {
@@ -184,28 +217,20 @@ class RecepcionMineralService
             return ApiResponse::error('No se encontró la empresa seleccionada.');
         }
 
-        // Generar correlativo y número: manual o automático
-        if ($conCodigoManual) {
-            $correlativo = $codigoManual;
-            $numeroCorrelativo = null;
-        } else {
-            $isComercial = $condicionIngreso === CondicionIngreso::Comercializacion->value;
-            $prefijo = $isComercial ? 'FB' : 'LOT';
-            $filtros = $isComercial
-                ? ['id_empresa' => $idEmpresa, 'condicion_ingreso' => CondicionIngreso::Comercializacion->value]
-                : ['condicion_ingreso' => ['!=', CondicionIngreso::Comercializacion->value]];
+        $correlativoData = self::generar_correlativo_lote($condicionIngreso, $idEmpresa);
+        $correlativoAuto = $correlativoData['correlativo'];
+        $numeroAuto = $correlativoData['numero_correlativo'];
 
-            // Generar correlativo usando CorrelativoHelper
-            $correlativoData = CorrelativoHelper::generar(
-                tabla: 'lote_mineral',
-                prefijo: $prefijo,
-                filtros: $filtros,
-                longitudCeros: 5,
-                reseteo: Periodo::Anual
-            );
-            $correlativo = $correlativoData['correlativo'];
-            $numeroCorrelativo = $correlativoData['numero_correlativo'];
-        }
+        // El usuario puede ajustar el correlativo en el modal "Nuevo Lote". Si lo
+        // hace, el lote queda con código temporal: no pertenece a la secuencia
+        // oficial y se libera al eliminarse.
+        $correlativoIngresado = $correlativoManual !== null ? trim($correlativoManual) : '';
+        $conCodigoTemporal = $correlativoIngresado !== '' && $correlativoIngresado !== $correlativoAuto;
+
+        $correlativo = $conCodigoTemporal ? $correlativoIngresado : $correlativoAuto;
+        $numeroCorrelativo = $conCodigoTemporal
+            ? $numeroCorrelativoManual
+            : $numeroAuto;
 
         // Particionar desde balanza: lote sin unidad, sin ticket; partición A con la unidad actual.
         if ($particionar) {
@@ -218,7 +243,7 @@ class RecepcionMineralService
                     'condicion_ingreso' => $condicionIngreso,
                     'correlativo' => $correlativo,
                     'numero_correlativo' => $numeroCorrelativo,
-                    'con_codigo_manual' => $conCodigoManual,
+                    'con_codigo_temporal' => $conCodigoTemporal,
                     'id_ticket_balanza' => null,
                     'tiene_particion' => true,
                     'particionado_desde_balanza' => true,
@@ -244,6 +269,11 @@ class RecepcionMineralService
                     'id_empleado_valida' => $idEmpleadoRegistro,
                     'fecha_hora_validacion' => now()->toDateTimeString(),
                     'evidencias' => null,
+                    // La partición hereda el carácter temporal del correlativo
+                    // del padre: si el padre es temporal, la partición también
+                    // entra al módulo de muestreo.
+                    'con_codigo_temporal' => $conCodigoTemporal,
+                    'muestreo_confirmado' => false,
                 ]);
 
                 DB::commit();
@@ -282,7 +312,7 @@ class RecepcionMineralService
             'condicion_ingreso' => $condicionIngreso,
             'correlativo' => $correlativo,
             'numero_correlativo' => $numeroCorrelativo,
-            'con_codigo_manual' => $conCodigoManual,
+            'con_codigo_temporal' => $conCodigoTemporal,
             'id_ticket_balanza' => $ticketId,
             'estado' => EstadoBase::Activo->value,
             'created_at' => now()->toDateTimeString(),
@@ -341,8 +371,14 @@ class RecepcionMineralService
         $lote->id_proveedor_minero = $data['id_proveedor_minero'] ? (int) $data['id_proveedor_minero'] : null;
         $lote->id_zona_origen = $data['id_zona_origen'] ? (int) $data['id_zona_origen'] : null;
         $lote->numero_contacto = $data['numero_contacto'];
-        $lote->tipo_producto = $data['tipo_producto'];
-        $lote->tipo_mineral = $data['tipo_mineral'];
+        // Producto y tipo de mineral ya no se capturan en el formulario: si
+        // vienen, se actualizan; si no, se conservan los valores del lote.
+        if (array_key_exists('tipo_producto', $data)) {
+            $lote->tipo_producto = $data['tipo_producto'];
+        }
+        if (array_key_exists('tipo_mineral', $data)) {
+            $lote->tipo_mineral = $data['tipo_mineral'];
+        }
         if (array_key_exists('observaciones', $data)) {
             $lote->observaciones = $data['observaciones'];
         }
@@ -624,12 +660,6 @@ class RecepcionMineralService
         $newCondicion = $data['condicion_ingreso'];
 
         if ($oldCondicion !== $newCondicion) {
-            $isComercial = $newCondicion === CondicionIngreso::Comercializacion->value;
-            $prefijo = $isComercial ? 'FB' : 'LOT';
-            $filtros = $isComercial
-                ? ['id_empresa' => $lote->id_empresa, 'condicion_ingreso' => CondicionIngreso::Comercializacion->value]
-                : ['condicion_ingreso' => ['!=', CondicionIngreso::Comercializacion->value]];
-
             $cambios[] = [
                 'campo_bd' => 'condicion_ingreso',
                 'campo' => 'Condición de ingreso',
@@ -637,17 +667,12 @@ class RecepcionMineralService
                 'valor_nuevo' => $newCondicion,
             ];
 
-            // Sólo regenerar correlativo si el lote NO fue creado con código manual.
-            // Si tiene con_codigo_manual=true, preservamos correlativo y numero_correlativo tal cual.
-            if (! $lote->con_codigo_manual) {
-                // Generar correlativo usando CorrelativoHelper
-                $correlativoData = CorrelativoHelper::generar(
-                    tabla: 'lote_mineral',
-                    prefijo: $prefijo,
-                    filtros: $filtros,
-                    longitudCeros: 5,
-                    reseteo: Periodo::Anual
-                );
+            // Regenerar el correlativo: el prefijo depende de la condición de
+            // ingreso (FB = comercialización, LOT = otros servicios).
+            // Si el lote tiene un código temporal (ingresado a mano), se
+            // preservan correlativo y numero_correlativo tal cual.
+            if (! $lote->con_codigo_temporal) {
+                $correlativoData = self::generar_correlativo_lote($newCondicion, $lote->id_empresa);
 
                 $cambios[] = [
                     'campo_bd' => 'correlativo',
@@ -1001,6 +1026,11 @@ class RecepcionMineralService
                 'id_empleado_valida' => $idEmpleadoRegistro,
                 'fecha_hora_validacion' => now()->toDateTimeString(),
                 'evidencias' => null,
+                // La partición hereda el carácter temporal del correlativo del
+                // padre: si el padre es temporal, la partición también entra
+                // al módulo de muestreo.
+                'con_codigo_temporal' => (bool) $lote->con_codigo_temporal,
+                'muestreo_confirmado' => false,
             ]);
 
             DB::commit();
@@ -1717,11 +1747,11 @@ class RecepcionMineralService
             $lote = LoteMineral::find($idLote);
             if (! $lote) {
                 DB::rollBack();
-                error_log("[finalizar_particion_lote] 404 lote no encontrado");
+                error_log('[finalizar_particion_lote] 404 lote no encontrado');
 
                 return ApiResponse::error('No se encontró el lote.', 404);
             }
-            error_log('[finalizar_particion_lote] lote encontrado ' . json_encode([
+            error_log('[finalizar_particion_lote] lote encontrado '.json_encode([
                 'particionado_desde_balanza' => (bool) $lote->particionado_desde_balanza,
                 'particion_finalizada' => (bool) $lote->particion_finalizada,
                 'estado' => $lote->estado,

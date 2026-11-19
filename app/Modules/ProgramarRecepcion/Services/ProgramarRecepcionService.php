@@ -6,6 +6,7 @@ use App\Modules\ProgramacionDespachos\Data\ProgramacionDespachosData;
 use App\Modules\ProgramacionDespachos\Services\ProgramacionDespachosService;
 use App\Modules\ProgramarRecepcion\Data\ProgramarRecepcionData;
 use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
+use App\Modules\RecepcionUnidades\Services\UnidadesParaPesarNotifier;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\UploadedFile;
@@ -189,7 +190,9 @@ class ProgramarRecepcionService
 
         $distribucionId = ProgramacionDespachosData::get_distribucion_id_for_recepcion_unidad($id);
         if ($distribucionId !== null) {
-            $result = ProgramacionDespachosService::confirmar_distribucion($distribucionId, $idEmpleadoRecepcion);
+            // `notificar: false`: el aviso a la balanza se emite una sola vez,
+            // al final de este método (la unidad es la misma).
+            $result = ProgramacionDespachosService::confirmar_distribucion($distribucionId, $idEmpleadoRecepcion, notificar: false);
             if (! ($result['success'] ?? false)) {
                 Log::warning('Auto-confirmar distribución {id} desde ProgramarRecepcion {ru} falló: {msg}', [
                     'id' => $distribucionId,
@@ -200,6 +203,10 @@ class ProgramarRecepcionService
         }
 
         $actualizada = RecepcionUnidadesData::get_recepcion_by_id($id);
+
+        // La programación pasa a "En Planta" y "Sin Pesar": la unidad entra a la
+        // lista de la balanza, así que se le avisa por WebSocket.
+        UnidadesParaPesarNotifier::notificar($id);
 
         return ApiResponse::success($actualizada, 'Programación confirmada correctamente');
     }

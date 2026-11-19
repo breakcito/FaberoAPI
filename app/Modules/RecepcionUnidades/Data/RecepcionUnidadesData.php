@@ -53,6 +53,7 @@ class RecepcionUnidadesData
             ru.id_empleado_recepcion,
             CONCAT(emp_rec.nombre, " ", emp_rec.apellido) AS empleado_recepcion_nombre,
             ru.es_programacion,
+            ru.id_distribucion,
             ru.fecha_estimada_llegada,
             ru.guia_remitente,
             ru.guia_transportista,
@@ -173,6 +174,7 @@ class RecepcionUnidadesData
             ru.id_empleado_recepcion,
             CONCAT(emp_rec.nombre, " ", emp_rec.apellido) AS empleado_recepcion_nombre,
             ru.es_programacion,
+            ru.id_distribucion,
             ru.fecha_estimada_llegada,
             ru.guia_remitente,
             ru.guia_transportista,
@@ -491,8 +493,9 @@ class RecepcionUnidadesData
             tabla: 'lote_mineral',
             prefijo: 'LOT',
             filtros: [],
-            longitudCeros: 5,
+            longitudCeros: 3,
             reseteo: Periodo::Anual,
+            estado: EstadoBase::Activo->value,
         );
 
         // Crear automáticamente el registro en ticket_balanza al generar el lote
@@ -505,6 +508,7 @@ class RecepcionUnidadesData
             'id_empleado_registro' => $idEmpleadoRegistro,
             'correlativo' => $correlativoData['correlativo'],
             'numero_correlativo' => $correlativoData['numero_correlativo'],
+            'con_codigo_temporal' => false,
             'id_ticket_balanza' => $ticketId,
             'created_at' => now()->toDateTimeString(),
         ]);

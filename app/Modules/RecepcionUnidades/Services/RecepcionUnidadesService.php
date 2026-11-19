@@ -8,11 +8,11 @@ use App\Models\RecepcionVisitaDetalle;
 use App\Modules\ProgramacionDespachos\Data\ProgramacionDespachosData;
 use App\Modules\ProgramacionDespachos\Services\ProgramacionDespachosService;
 use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
+use App\Modules\RecepcionVisitas\Services\RecepcionVisitasService;
 use App\Shared\Enums\_Generic\EstadoUnidad;
 use App\Shared\Enums\_Generic\EstadoVisita;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
-use App\Modules\RecepcionVisitas\Services\RecepcionVisitasService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 
@@ -109,6 +109,7 @@ class RecepcionUnidadesService
         $visitantesValidos = array_filter($visitaData['visitantes'] ?? [], function ($v) {
             $nombre = trim($v['nombre'] ?? '');
             $dni = trim($v['dni'] ?? '');
+
             return $nombre !== '' || $dni !== '' || ! empty($v['id_visitante']);
         });
         $hasVisitantes = ! empty($visitantesValidos);
@@ -128,6 +129,10 @@ class RecepcionUnidadesService
         }
 
         $nuevaRecepcion = RecepcionUnidadesData::get_recepcion_by_id($id);
+
+        // La unidad queda "En Planta" y "Sin Pesar": avisar a la balanza para
+        // que la liste sin que el operador recargue la página.
+        UnidadesParaPesarNotifier::notificar($id);
 
         return ApiResponse::success($nuevaRecepcion, 'Recepción de unidad registrada correctamente');
     }
@@ -200,6 +205,7 @@ class RecepcionUnidadesService
                 if (is_string($item)) {
                     $nombre = pathinfo(parse_url($item, PHP_URL_PATH) ?? '', PATHINFO_FILENAME);
                     $ext = pathinfo(parse_url($item, PHP_URL_PATH) ?? '', PATHINFO_EXTENSION);
+
                     return [
                         'url' => $item,
                         'path_relativo' => str_replace(asset('storage/').'/', '', $item),
@@ -207,6 +213,7 @@ class RecepcionUnidadesService
                         'extension' => $ext ?: 'bin',
                     ];
                 }
+
                 return $item;
             }, $existingEv);
 

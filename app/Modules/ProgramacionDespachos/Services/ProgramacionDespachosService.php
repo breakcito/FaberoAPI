@@ -4,6 +4,7 @@ namespace App\Modules\ProgramacionDespachos\Services;
 
 use App\Modules\ProgramacionDespachos\Data\ProgramacionDespachosData;
 use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
+use App\Modules\RecepcionUnidades\Services\UnidadesParaPesarNotifier;
 use App\Services\EmpresasService;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoSalida;
@@ -570,9 +571,13 @@ class ProgramacionDespachosService
     /**
      * Confirmar una distribución (En Espera → En Planta). Marca también la recepción_unidad relacionada.
      *
+     * @param  bool  $notificar  Si es false no se avisa a la balanza por WebSocket.
+     *                           Se usa cuando el llamador ya avisa (p.ej. la
+     *                           confirmación de una programación de recepción,
+     *                           que confirma en cascada la distribución).
      * @return array<string, mixed>
      */
-    public static function confirmar_distribucion(int $id, int $idEmpleadoRecepcion): array
+    public static function confirmar_distribucion(int $id, int $idEmpleadoRecepcion, bool $notificar = true): array
     {
         try {
             DB::transaction(function () use ($id, $idEmpleadoRecepcion) {
@@ -621,6 +626,15 @@ class ProgramacionDespachosService
 
         $dist = ProgramacionDespachosData::get_distribucion($id);
         $dist['log_cambios'] = $dist['log_cambios'] ?? null;
+
+        // La recepción de unidad del despacho pasa a "En Planta": entra a la
+        // lista de unidades para pesar, así que se avisa por WebSocket.
+        if ($notificar) {
+            $recepcionDespachoId = self::get_recepcion_unidad_id_para_distribucion($id);
+            if ($recepcionDespachoId !== null) {
+                UnidadesParaPesarNotifier::notificar($recepcionDespachoId);
+            }
+        }
 
         return ApiResponse::success($dist, 'Distribución confirmada correctamente');
     }

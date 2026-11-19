@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use App\Shared\Enums\_Generic\EstadoBase;
-use App\Shared\Enums\_Generic\EstadoLeyes;
 use Illuminate\Database\Eloquent\Model;
 
 class LoteMineral extends Model
@@ -20,7 +19,8 @@ class LoteMineral extends Model
         'id_zona_origen',
         'correlativo',
         'numero_correlativo',
-        'con_codigo_manual',
+        'con_codigo_temporal',
+        'muestreo_confirmado',
         'numero_contacto',
         'tipo_producto',
         'tipo_mineral',
@@ -46,8 +46,6 @@ class LoteMineral extends Model
         'ley_humedad',
         'ley_recuperacion',
         'con_valor_comercial',
-        'fecha_hora_inicio_analisis',
-        'fecha_hora_confirmacion_analisis',
         'esta_valorizado_oro',
         'esta_valorizado_plata',
         'observaciones',
@@ -59,7 +57,8 @@ class LoteMineral extends Model
         'peso_final' => 'float',
         'peso_neto' => 'float',
         'peso_actual' => 'float',
-        'con_codigo_manual' => 'boolean',
+        'con_codigo_temporal' => 'boolean',
+        'muestreo_confirmado' => 'boolean',
         'tiene_particion' => 'boolean',
         'particionado_desde_balanza' => 'boolean',
         'particion_finalizada' => 'boolean',

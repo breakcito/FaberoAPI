@@ -28,6 +28,8 @@ class ParticionLoteMineral extends Model
         'id_empleado_valida',
         'fecha_hora_validacion',
         'evidencias',
+        'con_codigo_temporal',
+        'muestreo_confirmado',
     ];
 
     protected $casts = [
@@ -39,6 +41,8 @@ class ParticionLoteMineral extends Model
         'esta_validado' => 'boolean',
         'fecha_hora_validacion' => 'datetime',
         'evidencias' => 'array',
+        'con_codigo_temporal' => 'boolean',
+        'muestreo_confirmado' => 'boolean',
     ];
 
     public function loteMineral()

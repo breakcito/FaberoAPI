@@ -14,6 +14,20 @@ use Illuminate\Support\Facades\DB;
 class ValidacionDistribucionService
 {
     /**
+     * Campos enteros de la recepcion que el operador puede enviar al crear
+     * una particion. Si vienen informados, GANAN sobre lo heredado del padre.
+     */
+    private const CAMPOS_RECEPCION_ENTEROS = [
+        'id_vehiculo',
+        'id_vehiculo_carreta',
+        'id_conductor',
+        'id_empresa_transporte',
+        'id_tipo_vehiculo',
+        'id_proveedor_minero',
+        'id_sucursal',
+    ];
+
+    /**
      * Listar lotes pendientes de particion (indicador).
      */
     public static function get_lotes_pendientes(array $filtros): array
@@ -86,7 +100,7 @@ class ValidacionDistribucionService
      *   peso_inicial?: float|null, fecha_hora_peso_inicial?: string|null,
      *   peso_final?: float|null, fecha_hora_peso_final?: string|null,
      *   peso_neto?: float|null,
-     *   recepcion?: array{id_vehiculo?: int|null, id_conductor?: int|null, id_sucursal?: int|null, fecha_hora_ingreso?: string|null, id_vehiculo_carreta?: int|null},
+     *   recepcion?: array{id_vehiculo?: int|null, id_conductor?: int|null, id_sucursal?: int|null, fecha_hora_ingreso?: string|null, id_vehiculo_carreta?: int|null, id_empresa_transporte?: int|null, id_tipo_vehiculo?: int|null, id_proveedor_minero?: int|null},
      *   id_empleado_registro?: int|null
      * }  $data
      */
@@ -125,6 +139,11 @@ class ValidacionDistribucionService
                     ? DB::table('recepcion_unidad')->where('id', $lote->id_recepcion_unidad)->first()
                     : null;
 
+                // Datos explicitos del operador (van en el payload `recepcion`).
+                // Si vienen, GANAN sobre lo heredado: asi una particion puede
+                // tener su propio proveedor, empresa o tipo de vehiculo.
+                $recepcionInput = $data['recepcion'] ?? [];
+
                 if ($parentRecepcion) {
                     $copia = $parentRecepcion;
                     unset($copia->id);
@@ -140,10 +159,23 @@ class ValidacionDistribucionService
                     $copia->estado_salida = 'Vacío';
                     $copia->estado_pesaje = 'Pesado';
                     $copiaArr = (array) $copia;
+
+                    foreach (self::CAMPOS_RECEPCION_ENTEROS as $campo) {
+                        if (! empty($recepcionInput[$campo])) {
+                            $copiaArr[$campo] = (int) $recepcionInput[$campo];
+                        }
+                    }
+                    if (! empty($recepcionInput['fecha_hora_ingreso'])) {
+                        $copiaArr['fecha_hora_ingreso'] = date('Y-m-d H:i:s', strtotime($recepcionInput['fecha_hora_ingreso']));
+                    }
+                    if (! empty($recepcionInput['fecha_hora_salida'])) {
+                        $copiaArr['fecha_hora_salida'] = date('Y-m-d H:i:s', strtotime($recepcionInput['fecha_hora_salida']));
+                    }
+
                     $idRecepA = DB::table('recepcion_unidad')->insertGetId($copiaArr);
                 } else {
                     // Sin recepcion padre: caer al patron de la rama else.
-                    $idRecepA = self::crearRecepcionFicticia($lote, $data)->id;
+                    $idRecepA = self::crearRecepcionFicticia($lote, $data, $recepcionInput)->id;
                 }
 
                 $creaciones[] = [
@@ -153,7 +185,7 @@ class ValidacionDistribucionService
                 ];
 
                 // Particion B: sin ticket al crear. Se asigna al validar.
-                $idRecepB = self::crearRecepcionFicticia($lote, $data)->id;
+                $idRecepB = self::crearRecepcionFicticia($lote, $data, $recepcionInput)->id;
                 $creaciones[] = [
                     'letra' => self::letraPara($countExistentes + 1),
                     'idRecepcion' => $idRecepB,
@@ -286,6 +318,9 @@ class ValidacionDistribucionService
             $idVehiculoCarreta = null;
             $idConductor = null;
             $idSucursal = $idSucursalPadre;
+            $idEmpresaTransporte = null;
+            $idTipoVehiculo = null;
+            $idProveedorMinero = null;
             $segundaPlaca = null;
         } else {
             $idEmpleadoRegistro = (int) ($data['id_empleado_registro'] ?? auth()->id() ?? 0);
@@ -302,14 +337,25 @@ class ValidacionDistribucionService
                 ? (int) $recepcionInput['id_sucursal']
                 : $idSucursalPadre;
             $idVehiculoCarreta = ! empty($recepcionInput['id_vehiculo_carreta']) ? (int) $recepcionInput['id_vehiculo_carreta'] : null;
+            // Estos tres si se descarten: el DTO los declara y el operador puede
+            // querer una partición con su propio proveedor/empresa/tipo.
+            $idEmpresaTransporte = ! empty($recepcionInput['id_empresa_transporte'])
+                ? (int) $recepcionInput['id_empresa_transporte']
+                : null;
+            $idTipoVehiculo = ! empty($recepcionInput['id_tipo_vehiculo'])
+                ? (int) $recepcionInput['id_tipo_vehiculo']
+                : null;
+            $idProveedorMinero = ! empty($recepcionInput['id_proveedor_minero'])
+                ? (int) $recepcionInput['id_proveedor_minero']
+                : null;
         }
 
         return RecepcionUnidad::create([
             'id_empleado_recepcion' => $idEmpleadoRegistro,
             'id_vehiculo' => $idVehiculo,
             'id_vehiculo_carreta' => $idVehiculoCarreta,
-            'id_empresa_transporte' => null,
-            'id_tipo_vehiculo' => null,
+            'id_empresa_transporte' => $idEmpresaTransporte,
+            'id_tipo_vehiculo' => $idTipoVehiculo,
             'id_conductor' => $idConductor,
             'tipo_ingreso' => 'Recepción de Mineral',
             'fecha_hora_ingreso' => $fechaIngreso,
@@ -323,7 +369,7 @@ class ValidacionDistribucionService
             'estado_salida' => 'Vacío',
             'estado_pesaje' => 'Pesado',
             'id_sucursal' => $idSucursal,
-            'id_proveedor_minero' => null,
+            'id_proveedor_minero' => $idProveedorMinero,
             'id_empleado_autoriza' => null,
             'es_programacion' => 0,
             'fecha_estimada_llegada' => null,

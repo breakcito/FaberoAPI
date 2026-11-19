@@ -2,8 +2,8 @@
 
 namespace App\Modules\ValidacionDistribucion\Data;
 
-use App\Shared\Enums\_Generic\EstadoBase;
 use App\Data\GuiasData;
+use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Support\Facades\DB;
 
 class ValidacionDistribucionData
@@ -287,13 +287,15 @@ class ValidacionDistribucionData
                 ru.id_sucursal,
                 ru.id_empresa_transporte,
                 ru.id_tipo_vehiculo,
-                ru.id_proveedor_minero,
+                COALESCE(ru.id_proveedor_minero, lm.id_proveedor_minero, ru_padre.id_proveedor_minero) AS id_proveedor_minero,
                 ru.fecha_hora_ingreso,
                 ru.fecha_hora_salida,
                 v.placa AS vehiculo_placa,
                 v.tara AS vehiculo_tara,
                 v.capacidad AS vehiculo_capacidad,
                 vc.placa AS vehiculo_carreta_placa,
+                prov.razon_social AS proveedor_razon_social,
+                prov.ruc AS proveedor_ruc,
                 lm.observaciones
             FROM particion_lote_mineral plm
             LEFT JOIN ticket_balanza tb ON tb.id = plm.id_ticket_balanza
@@ -301,6 +303,8 @@ class ValidacionDistribucionData
             LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
             LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
             LEFT JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
+            LEFT JOIN recepcion_unidad ru_padre ON ru_padre.id = lm.id_recepcion_unidad
+            LEFT JOIN proveedor prov ON prov.id = COALESCE(ru.id_proveedor_minero, lm.id_proveedor_minero, ru_padre.id_proveedor_minero)
             WHERE plm.id_lote_mineral = :id_lote
               AND plm.estado = :estado_particion_activo
             ORDER BY plm.id ASC
