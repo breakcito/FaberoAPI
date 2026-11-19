@@ -12,8 +12,11 @@ use App\Modules\RecepcionVisitas\Services\RecepcionVisitasService;
 use App\Shared\Enums\_Generic\EstadoUnidad;
 use App\Shared\Enums\_Generic\EstadoVisita;
 use App\Shared\Helpers\ArchivoHelper;
+use App\Shared\Helpers\CamposBloqueadosHelper;
+use App\Shared\Responses\_Generic\RES_CambiosLog;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class RecepcionUnidadesService
@@ -172,6 +175,164 @@ class RecepcionUnidadesService
         );
 
         return $data;
+    }
+
+    /**
+     * Editar campos puntuales de una recepción de unidad.
+     *
+     * Los campos que se registraron en una PROGRAMACIÓN (de recepción o de
+     * despacho) están bloqueados: se rechazan con un mensaje claro.
+     * Cada cambio queda registrado en `log_cambios`.
+     *
+     * @param  array<string, mixed>  $campos  Claves admitidas: id_vehiculo,
+     *                                        id_tipo_vehiculo, id_vehiculo_carreta,
+     *                                        id_empresa_transporte, id_conductor,
+     *                                        id_proveedor_minero
+     */
+    public static function actualizar_campos(int $id, array $campos, int $idEmpleado, ?string $motivo = null): array
+    {
+        $recepcion = RecepcionUnidad::find($id);
+        if (! $recepcion) {
+            return ApiResponse::error('No se encontró el registro de recepción.', 404);
+        }
+
+        if (empty($campos)) {
+            return ApiResponse::error('No se envió ningún campo a actualizar.', 422);
+        }
+
+        $bloqueados = CamposBloqueadosHelper::normalizar($recepcion->campos_bloqueados);
+
+        // Validación de campos desconocidos y de campos bloqueados.
+        foreach ($campos as $campo => $valor) {
+            if (! in_array($campo, CamposBloqueadosHelper::CAMPOS, true)) {
+                return ApiResponse::error('El campo "'.$campo.'" no se puede editar.', 422);
+            }
+
+            if (in_array($campo, $bloqueados, true)) {
+                return ApiResponse::error(
+                    'El campo "'.CamposBloqueadosHelper::etiqueta($campo).'" fue registrado en la programación y no se puede editar.',
+                    422
+                );
+            }
+        }
+
+        // Validación de existencia (FKs lógicas, sin constraints en BD).
+        $tablas = [
+            'id_vehiculo' => 'vehiculo',
+            'id_vehiculo_carreta' => 'vehiculo',
+            'id_tipo_vehiculo' => 'tipo_vehiculo',
+            'id_empresa_transporte' => 'empresa_transporte',
+            'id_conductor' => 'conductor',
+            'id_proveedor_minero' => 'proveedor',
+        ];
+
+        foreach ($campos as $campo => $valor) {
+            if ($valor === null || $valor === '') {
+                continue;
+            }
+
+            $tabla = $tablas[$campo] ?? null;
+            if ($tabla === null) {
+                continue;
+            }
+
+            $existe = DB::table($tabla)->where('id', (int) $valor)->exists();
+            if (! $existe) {
+                return ApiResponse::error(
+                    'El valor indicado para "'.CamposBloqueadosHelper::etiqueta($campo).'" no existe.',
+                    422
+                );
+            }
+        }
+
+        try {
+            DB::transaction(function () use ($recepcion, $campos, $idEmpleado, $motivo) {
+                $cambios = [];
+
+                foreach ($campos as $campo => $valor) {
+                    $valorAnterior = $recepcion->{$campo};
+                    $valorNuevo = ($valor === null || $valor === '') ? null : (int) $valor;
+
+                    if ((int) ($valorAnterior ?? 0) === (int) ($valorNuevo ?? 0)) {
+                        continue;
+                    }
+
+                    $cambios[] = [
+                        'campo_bd' => $campo,
+                        'campo' => CamposBloqueadosHelper::etiqueta($campo),
+                        // En el historial se muestran los NOMBRES (placa, razón
+                        // social, conductor), no los ids crudos.
+                        'valor_anterior' => self::nombre_legible($campo, $valorAnterior),
+                        'valor_nuevo' => self::nombre_legible($campo, $valorNuevo),
+                    ];
+
+                    $recepcion->{$campo} = $valorNuevo;
+                }
+
+                if (empty($cambios)) {
+                    return;
+                }
+
+                $recepcion->save();
+
+                $log = $recepcion->log_cambios ?? [];
+                if (! is_array($log)) {
+                    $log = [];
+                }
+                $log[] = RES_CambiosLog::crear(
+                    $idEmpleado,
+                    $motivo ?: 'Edición de datos de la recepción de unidad',
+                    $cambios
+                );
+                $recepcion->log_cambios = $log;
+                $recepcion->save();
+            });
+        } catch (\Throwable $e) {
+            return ApiResponse::error('Error al actualizar la recepción: '.$e->getMessage(), 500);
+        }
+
+        $actualizada = RecepcionUnidadesData::get_recepcion_by_id($id);
+
+        return ApiResponse::success($actualizada, 'Recepción actualizada correctamente.');
+    }
+
+    /**
+     * Nombre legible de un campo referenciado (para el historial de cambios).
+     *
+     * En vez del id crudo se devuelve la placa, la razón social o el nombre
+     * del conductor, según el campo.
+     */
+    private static function nombre_legible(string $campo, mixed $valor): string
+    {
+        if ($valor === null || $valor === '') {
+            return '— (vacío)';
+        }
+
+        $id = (int) $valor;
+        $nombre = null;
+
+        if ($campo === 'id_vehiculo' || $campo === 'id_vehiculo_carreta') {
+            $nombre = DB::table('vehiculo')->where('id', $id)->value('placa');
+        } elseif ($campo === 'id_tipo_vehiculo') {
+            $nombre = DB::table('tipo_vehiculo')->where('id', $id)->value('nombre');
+        } elseif ($campo === 'id_empresa_transporte') {
+            $nombre = DB::table('empresa_transporte')->where('id', $id)->value('razon_social');
+        } elseif ($campo === 'id_conductor') {
+            $conductor = DB::table('conductor')
+                ->where('id', $id)
+                ->first(['nombre', 'apellido', 'dni']);
+
+            if ($conductor) {
+                $nombre = trim($conductor->nombre.' '.$conductor->apellido);
+                if ($conductor->dni) {
+                    $nombre .= ' ('.$conductor->dni.')';
+                }
+            }
+        } elseif ($campo === 'id_proveedor_minero') {
+            $nombre = DB::table('proveedor')->where('id', $id)->value('razon_social');
+        }
+
+        return ($nombre !== null && $nombre !== '') ? (string) $nombre : '#'.$id;
     }
 
     /**

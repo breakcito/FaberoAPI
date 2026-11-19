@@ -6,6 +6,7 @@ use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
 use App\Shared\Enums\_Generic\EstadoPesaje;
 use App\Shared\Enums\_Generic\EstadoVisita;
 use App\Shared\Helpers\ArchivoHelper;
+use App\Shared\Helpers\CamposBloqueadosHelper;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
 use Illuminate\Support\Facades\DB;
 
@@ -206,6 +207,14 @@ class ProgramarRecepcionData
         $documentos = self::normalizar_documentos_input($data['documentos_programacion'] ?? null);
         if ($documentos !== null) {
             $insert['documentos_programacion'] = json_encode($documentos);
+        }
+
+        // Los campos que se registran en la programación quedan bloqueados
+        // para edición posterior (esos datos los registró y autorizó otra
+        // persona).
+        $bloqueados = CamposBloqueadosHelper::calcular($insert);
+        if (! empty($bloqueados)) {
+            $insert['campos_bloqueados'] = json_encode($bloqueados);
         }
 
         return DB::table('recepcion_unidad')->insertGetId($insert);

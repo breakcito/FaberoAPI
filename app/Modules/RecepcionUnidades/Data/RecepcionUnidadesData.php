@@ -8,6 +8,7 @@ use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoPesaje;
 use App\Shared\Enums\_Generic\EstadoVisita;
 use App\Shared\Enums\_Generic\Periodo;
+use App\Shared\Helpers\CamposBloqueadosHelper;
 use App\Shared\Helpers\CorrelativoHelper;
 use Illuminate\Support\Facades\DB;
 
@@ -60,6 +61,7 @@ class RecepcionUnidadesData
             ru.documentos_programacion,
             ru.es_recepcion_ficticia,
             ru.id_ticket_recepcion_unidades,
+            ru.campos_bloqueados,
             tru.correlativo AS ticket_correlativo,
             tru.numero_correlativo AS ticket_numero_correlativo
         FROM
@@ -126,6 +128,7 @@ class RecepcionUnidadesData
             if (isset($item->documentos_programacion)) {
                 $item->documentos_programacion = self::normalizar_documentos_programacion($item->documentos_programacion);
             }
+            $item->campos_bloqueados = CamposBloqueadosHelper::normalizar($item->campos_bloqueados ?? null);
         }
 
         return $results;
@@ -180,6 +183,7 @@ class RecepcionUnidadesData
             ru.guia_transportista,
             ru.es_recepcion_ficticia,
             ru.id_ticket_recepcion_unidades,
+            ru.campos_bloqueados,
             tru.correlativo AS ticket_correlativo,
             tru.numero_correlativo AS ticket_numero_correlativo
         FROM
@@ -211,6 +215,7 @@ class RecepcionUnidadesData
             if (isset($item->documentos_programacion)) {
                 $item->documentos_programacion = self::normalizar_documentos_programacion($item->documentos_programacion);
             }
+            $item->campos_bloqueados = CamposBloqueadosHelper::normalizar($item->campos_bloqueados ?? null);
         }
 
         return $item ? (array) $item : null;

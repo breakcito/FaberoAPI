@@ -6,6 +6,7 @@ use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoGuiaPrimerTramo;
 use App\Shared\Enums\_Generic\Periodo;
 use App\Shared\Enums\ContabilidadCompra\EstadoComprobanteCompra;
+use App\Shared\Helpers\CamposBloqueadosHelper;
 use App\Shared\Helpers\CorrelativoHelper;
 use Illuminate\Support\Facades\DB;
 
@@ -878,10 +879,19 @@ class ProgramacionDespachosData
     /**
      * Insertar recepcion_unidad automática para la distribución.
      *
+     * Los campos que se registran en la programación de despacho quedan
+     * bloqueados para edición posterior (mismo criterio que la programación
+     * de recepción).
+     *
      * @param  array<string, mixed>  $data
      */
     public static function crear_recepcion_unidad_despacho(array $data): int
     {
+        $bloqueados = CamposBloqueadosHelper::calcular($data);
+        if (! empty($bloqueados)) {
+            $data['campos_bloqueados'] = json_encode($bloqueados);
+        }
+
         return DB::table('recepcion_unidad')->insertGetId($data);
     }
 

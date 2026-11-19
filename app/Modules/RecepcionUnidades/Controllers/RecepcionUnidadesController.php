@@ -8,7 +8,6 @@ use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
 class RecepcionUnidadesController extends Controller
@@ -173,7 +172,7 @@ class RecepcionUnidadesController extends Controller
         if ($request->hasFile('evidencias')) {
             $files = $request->file('evidencias');
             $evidencias = is_array($files) ? $files : [$files];
-        } else if ($request->hasFile('evidencias_salida')) {
+        } elseif ($request->hasFile('evidencias_salida')) {
             $files = $request->file('evidencias_salida');
             $evidencias = is_array($files) ? $files : [$files];
         }
@@ -187,6 +186,44 @@ class RecepcionUnidadesController extends Controller
         );
 
         return response()->json($result);
+    }
+
+    /**
+     * Editar campos puntuales de una recepción de unidad.
+     *
+     * Los campos registrados en una programación (de recepción o de despacho)
+     * vienen bloqueados en `campos_bloqueados` y el backend los rechaza.
+     * Cada cambio queda registrado en `log_cambios`.
+     */
+    public function actualizar_campos(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'campos' => 'required|array',
+            'id_vehiculo' => 'nullable|integer',
+            'id_tipo_vehiculo' => 'nullable|integer',
+            'id_vehiculo_carreta' => 'nullable|integer',
+            'id_empresa_transporte' => 'nullable|integer',
+            'id_conductor' => 'nullable|integer',
+            'id_proveedor_minero' => 'nullable|integer',
+            'motivo' => 'nullable|string|max:255',
+        ]);
+
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        $campos = $request->input('campos', []);
+        if (! is_array($campos)) {
+            $campos = [];
+        }
+
+        return response()->json(RecepcionUnidadesService::actualizar_campos(
+            $id,
+            $campos,
+            (int) $authUser->id_empleado,
+            $request->input('motivo')
+        ));
     }
 
     /**

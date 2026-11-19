@@ -42,12 +42,14 @@ class RecepcionUnidad extends Model
         'guia_transportista',
         'es_recepcion_ficticia',
         'id_ticket_recepcion_unidades',
+        'campos_bloqueados',
     ];
 
     protected $casts = [
         'evidencias' => 'array',
         'log_cambios' => 'array',
         'es_recepcion_ficticia' => 'boolean',
+        'campos_bloqueados' => 'array',
     ];
 
     public function guiasPrimerTramo(): \Illuminate\Database\Eloquent\Relations\HasMany

@@ -12,6 +12,9 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::post('/', 'crear_recepcion');
         Route::put('/{id}/salida', 'registrar_salida');
 
+        // Edición de campos puntuales (bloqueados si vinieron de una programación)
+        Route::put('/{id}/campos', 'actualizar_campos');
+
         // Lotes de la recepción de unidad
         Route::get('/{id}/lotes', 'get_lotes');
         Route::post('/{id}/lotes', 'crear_lote');
