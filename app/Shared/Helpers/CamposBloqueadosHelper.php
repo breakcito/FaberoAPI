@@ -37,6 +37,25 @@ class CamposBloqueadosHelper
     ];
 
     /**
+     * Campos que se registran en una programación (y por tanto se bloquean).
+     *
+     * Incluye los editables (`CAMPOS`) más las guías, que también se registran
+     * en el formulario de programación pero se gestionan por su propio flujo.
+     *
+     * @var array<int, string>
+     */
+    public const CAMPOS_REGISTRADOS_EN_PROGRAMACION = [
+        'id_empresa_transporte',
+        'id_vehiculo',
+        'id_vehiculo_carreta',
+        'id_conductor',
+        'id_tipo_vehiculo',
+        'id_proveedor_minero',
+        'guia_remitente',
+        'guia_transportista',
+    ];
+
+    /**
      * Etiquetas legibles para el log de cambios y los mensajes de error.
      *
      * @var array<string, string>
@@ -63,7 +82,7 @@ class CamposBloqueadosHelper
     {
         $bloqueados = [];
 
-        foreach (self::CAMPOS as $campo) {
+        foreach (self::CAMPOS_REGISTRADOS_EN_PROGRAMACION as $campo) {
             if (! empty($data[$campo])) {
                 $bloqueados[] = $campo;
             }

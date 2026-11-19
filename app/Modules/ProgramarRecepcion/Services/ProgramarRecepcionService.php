@@ -185,7 +185,24 @@ class ProgramarRecepcionService
             $archivosEvidencias,
         );
         if (! $ok) {
-            return ApiResponse::error('No se pudo confirmar la programación (ya estaba confirmada o no existe).', 400);
+            // Diagnóstico del motivo real: el mensaje genérico confundía
+            // (p.ej. una programación ya confirmada se reportaba como
+            // "no existe").
+            $recepcion = RecepcionUnidadesData::get_recepcion_by_id($id);
+
+            if (! $recepcion) {
+                return ApiResponse::error('No se encontró la programación indicada.', 404);
+            }
+
+            if (! (int) ($recepcion['es_programacion'] ?? 0)) {
+                return ApiResponse::error('El registro indicado no es una programación de unidad.', 422);
+            }
+
+            if (! empty($recepcion['id_empleado_recepcion'])) {
+                return ApiResponse::error('Esta programación ya fue confirmada.', 409);
+            }
+
+            return ApiResponse::error('No se pudo confirmar la programación.', 400);
         }
 
         $distribucionId = ProgramacionDespachosData::get_distribucion_id_for_recepcion_unidad($id);

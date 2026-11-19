@@ -202,6 +202,18 @@ class RecepcionUnidadesService
 
         $bloqueados = CamposBloqueadosHelper::normalizar($recepcion->campos_bloqueados);
 
+        // Una programación sin confirmar todavía no tiene llegada registrada:
+        // sus datos no se pueden editar hasta confirmarla.
+        $llegadaPendiente = (bool) $recepcion->es_programacion
+            && empty($recepcion->id_empleado_recepcion);
+
+        if ($llegadaPendiente) {
+            return ApiResponse::error(
+                'No se puede editar: primero debe confirmar la llegada de la unidad.',
+                422
+            );
+        }
+
         // Validación de campos desconocidos y de campos bloqueados.
         foreach ($campos as $campo => $valor) {
             if (! in_array($campo, CamposBloqueadosHelper::CAMPOS, true)) {
