@@ -1454,6 +1454,19 @@ class ValorizacionCompraService
             $leyHumedad = $leyHumedadManual;
         } elseif ($grupo && (float) ($grupo->ley_humedad_cierre ?? 0) > 0) {
             $leyHumedad = (float) $grupo->ley_humedad_cierre;
+        } elseif ($grupo) {
+            // Respaldo: el grupo puede no tener cierre de humedad cargado,
+            // pero sus análisis sí la tienen (promedio de los válidos).
+            $leyHumedad = ValorizacionCompraData::promedio_ley_analisis_grupo(
+                (int) $grupo->id,
+                'ley_humedad'
+            );
+
+            if ($leyHumedad <= 0) {
+                $leyHumedad = isset($det['ley_humedad']) && (float) $det['ley_humedad'] > 0
+                    ? (float) $det['ley_humedad']
+                    : (float) ($lote->ley_humedad ?? 0);
+            }
         } elseif (isset($det['ley_humedad']) && (float) $det['ley_humedad'] > 0) {
             $leyHumedad = (float) $det['ley_humedad'];
         } else {
