@@ -318,7 +318,6 @@ class ValorizacionCompraData
 
                     $tmh = $lm ? (float) ($lm->peso_neto ?? 0) : 0;
                     $leyHumedad = $lm ? (float) $lm->ley_humedad : 0;
-                    $tms = round($tmh * (1 - ($leyHumedad / 100)), 4);
 
                     $idLote = $lm ? (int) $lm->id : null;
                     $pesoContab = $idLote && isset($pesosContabilizadosMap[$idLote]) && $pesosContabilizadosMap[$idLote] > 0
@@ -330,7 +329,21 @@ class ValorizacionCompraData
                     $leyDetalle = $ga
                         ? (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro' ? $ga->ley_oro_cierre : $ga->ley_plata_cierre)
                         : ($lm ? (float) ($d->elemento_quimico && $d->elemento_quimico->value === 'Oro' ? $lm->ley_oro : $lm->ley_plata) : 0);
-                    $leyHumedadDetalle = $ga && $ga->ley_humedad_cierre > 0 ? (float) $ga->ley_humedad_cierre : $leyHumedad;
+
+                    // Ley de humedad: cierre del grupo > ley del lote (que solo se
+                    // asigna al aprobar la valorización) > promedio de los
+                    // análisis del grupo. El último respaldo hace que la
+                    // propuesta y su documento ya muestren la humedad real,
+                    // sin esperar la aprobación.
+                    $leyHumedadDetalle = $ga && $ga->ley_humedad_cierre > 0
+                        ? (float) $ga->ley_humedad_cierre
+                        : $leyHumedad;
+
+                    if ($leyHumedadDetalle <= 0 && $idGrupo) {
+                        $leyHumedadDetalle = self::promedio_ley_analisis_grupo($idGrupo, 'ley_humedad');
+                    }
+
+                    $tms = round($tmh * (1 - ($leyHumedadDetalle / 100)), 4);
 
                     return [
                         'id' => $d->id,
