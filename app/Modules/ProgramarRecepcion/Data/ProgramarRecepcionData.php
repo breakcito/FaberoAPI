@@ -31,6 +31,7 @@ class ProgramarRecepcionData
             tv.nombre AS tipo_vehiculo_nombre,
             ru.id_conductor,
             CONCAT(c.nombre, " ", c.apellido) AS conductor_nombre_completo,
+            c.numero_licencia AS conductor_numero_licencia,
             ru.id_proveedor_minero,
             pr.razon_social AS proveedor_razon_social,
             ru.tipo_ingreso,
@@ -44,7 +45,10 @@ class ProgramarRecepcionData
             ru.id_empleado_recepcion,
             ru.fecha_hora_ingreso,
             ru.estado,
-            ru.created_at
+            ru.created_at,
+            ru.id_ticket_recepcion_unidades,
+            tru.correlativo AS ticket_correlativo,
+            tru.numero_correlativo AS ticket_numero_correlativo
         FROM
             recepcion_unidad ru
         LEFT JOIN empleado emp_aut ON emp_aut.id = ru.id_empleado_autoriza
@@ -53,6 +57,7 @@ class ProgramarRecepcionData
         LEFT JOIN tipo_vehiculo tv ON tv.id = ru.id_tipo_vehiculo
         LEFT JOIN conductor c ON c.id = ru.id_conductor
         LEFT JOIN proveedor pr ON pr.id = ru.id_proveedor_minero
+        LEFT JOIN ticket_recepcion_unidades tru ON tru.id = ru.id_ticket_recepcion_unidades
         WHERE ru.es_programacion = 1
         -- Las recepciones ficticias (copias técnicas que alojan particiones)
         -- heredan es_programacion de su origen, pero NO son programaciones:
@@ -110,6 +115,16 @@ class ProgramarRecepcionData
         if ($programacion === null) {
             return null;
         }
+
+        // `get_recepcion_by_id` no proyecta `documentos_programacion`: se lee de
+        // la fila cruda para que el modal de edición muestre los archivos ya
+        // adjuntos a la programación y no se pierdan al guardar.
+        $documentosProgramacion = DB::table('recepcion_unidad')
+            ->where('id', $id)
+            ->value('documentos_programacion');
+        $programacion['documentos_programacion'] = RecepcionUnidadesData::normalizar_documentos_programacion(
+            $documentosProgramacion
+        );
 
         // Buscar visita asociada (si fue confirmada)
         $visita = DB::selectOne('
@@ -221,24 +236,193 @@ class ProgramarRecepcionData
     }
 
     /**
+     * Columnas que admiten edición en una programación NO confirmada.
+     *
+     * `tipo_ingreso` queda deliberadamente fuera: lo fija el proceso de la
+     * unidad, no la agenda. Tampoco se tocan los campos del proceso
+     * (autorización, estado, ticket de ingreso, confirmación).
+     *
+     * @var array<int, string>
+     */
+    public const COLUMNAS_EDITABLES = [
+        'id_empresa_transporte',
+        'id_vehiculo',
+        'id_tipo_vehiculo',
+        'id_conductor',
+        'id_proveedor_minero',
+        'id_sucursal',
+        'fecha_estimada_llegada',
+        'guia_remitente',
+        'guia_transportista',
+        'observacion',
+    ];
+
+    /**
+     * Etiquetas legibles de las columnas editables (para `log_cambios`).
+     *
+     * @var array<string, string>
+     */
+    public const ETIQUETAS_COLUMNAS = [
+        'id_empresa_transporte' => 'Empresa de transporte',
+        'id_vehiculo' => 'Vehículo',
+        'id_tipo_vehiculo' => 'Tipo de vehículo',
+        'id_conductor' => 'Conductor',
+        'id_proveedor_minero' => 'Proveedor minero',
+        'id_sucursal' => 'Sucursal',
+        'fecha_estimada_llegada' => 'Fecha estimada de llegada',
+        'guia_remitente' => 'Guía remitente',
+        'guia_transportista' => 'Guía transportista',
+        'observacion' => 'Observación',
+    ];
+
+    /**
      * Actualizar programación (solo permitido mientras NO esté confirmada).
      *
      * Acepta `documentos_programacion` (array normalizado) y persiste como JSON.
+     * Los cambios se registran en `log_cambios` con motivo "Edición de programación".
      */
-    public static function actualizar_programacion(int $id, array $data): bool
+    public static function actualizar_programacion(int $id, array $data, int $idEmpleado): bool
     {
+        $fila = DB::table('recepcion_unidad')
+            ->where('id', $id)
+            ->where('es_programacion', 1)
+            ->where('es_recepcion_ficticia', 0)
+            ->first();
+
+        if ($fila === null || ! empty($fila->id_empleado_recepcion)) {
+            return false;
+        }
+
+        $update = [];
+        foreach (self::COLUMNAS_EDITABLES as $columna) {
+            if (! array_key_exists($columna, $data)) {
+                continue;
+            }
+            $valor = $data[$columna];
+            $update[$columna] = ($valor === '' ? null : $valor);
+        }
+
+        $cambios = [];
+
         if (array_key_exists('documentos_programacion', $data)) {
             $documentos = self::normalizar_documentos_input($data['documentos_programacion']);
-            $data['documentos_programacion'] = $documentos !== null
+            $documentosAnteriores = RecepcionUnidadesData::normalizar_documentos_programacion(
+                $fila->documentos_programacion ?? null
+            );
+            $resumenAnterior = self::resumen_documentos($documentosAnteriores);
+            $resumenNuevo = self::resumen_documentos($documentos);
+            if ($resumenAnterior !== $resumenNuevo) {
+                $cambios[] = [
+                    'campo_bd' => 'documentos_programacion',
+                    'campo' => 'Documentos de programación',
+                    'valor_anterior' => $resumenAnterior,
+                    'valor_nuevo' => $resumenNuevo,
+                ];
+            }
+            $update['documentos_programacion'] = $documentos !== null
                 ? json_encode($documentos)
                 : null;
         }
 
-        return DB::table('recepcion_unidad')
+        foreach ($update as $columna => $valorNuevo) {
+            if ($columna === 'documentos_programacion') {
+                continue;
+            }
+            $valorAnterior = $fila->{$columna} ?? null;
+            if (self::mismo_valor($valorAnterior, $valorNuevo)) {
+                continue;
+            }
+            $cambios[] = [
+                'campo_bd' => $columna,
+                'campo' => self::ETIQUETAS_COLUMNAS[$columna] ?? $columna,
+                'valor_anterior' => self::valor_legible($valorAnterior),
+                'valor_nuevo' => self::valor_legible($valorNuevo),
+            ];
+        }
+
+        if (! empty($cambios)) {
+            $logActual = $fila->log_cambios ?? null;
+            if (is_string($logActual)) {
+                $logActual = json_decode($logActual, true) ?? [];
+            }
+            if (! is_array($logActual)) {
+                $logActual = [];
+            }
+            array_unshift($logActual, RES_CambiosLog::crear($idEmpleado, 'Edición de programación', $cambios));
+            $update['log_cambios'] = json_encode($logActual);
+        }
+
+        if (empty($update)) {
+            return true;
+        }
+
+        $afectadas = DB::table('recepcion_unidad')
             ->where('id', $id)
             ->where('es_programacion', 1)
             ->whereNull('id_empleado_recepcion')
-            ->update($data) > 0;
+            ->update($update);
+
+        // `update()` devuelve 0 cuando los valores ya eran idénticos: eso NO es
+        // un fallo. Solo se considera fallo si había cambios reales y la fila
+        // no se pudo escribir (p.ej. se confirmó en paralelo).
+        return $afectadas > 0 || empty($cambios);
+    }
+
+    /**
+     * Comparar el valor anterior con el nuevo (null y vacío son equivalentes).
+     *
+     * Las fechas se comparan solo por su parte `YYYY-MM-DD`: la API devuelve
+     * la fecha estimada con hora y el formulario la envía solo con el día.
+     */
+    private static function mismo_valor(mixed $anterior, mixed $nuevo): bool
+    {
+        if ($anterior === null || $anterior === '') {
+            return $nuevo === null || $nuevo === '';
+        }
+        if ($nuevo === null || $nuevo === '') {
+            return false;
+        }
+
+        $anteriorTexto = (string) $anterior;
+        $nuevoTexto = (string) $nuevo;
+
+        if (
+            preg_match('/^\d{4}-\d{2}-\d{2}/', $anteriorTexto) === 1
+            && preg_match('/^\d{4}-\d{2}-\d{2}/', $nuevoTexto) === 1
+        ) {
+            return substr($anteriorTexto, 0, 10) === substr($nuevoTexto, 0, 10);
+        }
+
+        return $anteriorTexto === $nuevoTexto;
+    }
+
+    /**
+     * Valor legible para el `log_cambios`.
+     */
+    private static function valor_legible(mixed $valor): string
+    {
+        if ($valor === null || $valor === '') {
+            return '— (vacío)';
+        }
+
+        return (string) $valor;
+    }
+
+    /**
+     * Resumen comparable de `documentos_programacion` (nombres de archivo).
+     */
+    private static function resumen_documentos(?array $documentos): string
+    {
+        $documentos = $documentos ?? ['guia_remitente' => null, 'guia_transportista' => null];
+
+        $partes = [];
+        foreach (['guia_remitente', 'guia_transportista'] as $clave) {
+            $nombre = $documentos[$clave]['nombre_original'] ?? null;
+            $etiqueta = $clave === 'guia_remitente' ? 'Remitente' : 'Transportista';
+            $partes[] = $etiqueta.': '.(! empty($nombre) ? $nombre : '—');
+        }
+
+        return implode(' | ', $partes);
     }
 
     /**

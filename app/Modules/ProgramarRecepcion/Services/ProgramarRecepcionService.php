@@ -73,8 +73,11 @@ class ProgramarRecepcionService
 
     /**
      * Actualizar una programación (solo si NO está confirmada).
+     *
+     * `tipo_ingreso` no se envía: lo fija el proceso de la unidad y no es
+     * editable. Los cambios quedan registrados en `log_cambios`.
      */
-    public static function actualizar_programacion(int $id, array $data): array
+    public static function actualizar_programacion(int $id, array $data, int $idEmpleado): array
     {
         $data = self::resolver_documentos_programacion(
             $data,
@@ -93,11 +96,20 @@ class ProgramarRecepcionService
             return ApiResponse::error($erroresUnicidad, 409);
         }
 
-        $ok = ProgramarRecepcionData::actualizar_programacion($id, $data);
+        $ok = ProgramarRecepcionData::actualizar_programacion($id, $data, $idEmpleado);
         if (! $ok) {
-            return ApiResponse::error('No se pudo actualizar la programación (puede estar confirmada o no existir).', 400);
+            $recepcion = RecepcionUnidadesData::get_recepcion_by_id($id);
+            if (! $recepcion) {
+                return ApiResponse::error('No se encontró la programación indicada.', 404);
+            }
+            if (! empty($recepcion['id_empleado_recepcion'])) {
+                return ApiResponse::error('Esta programación ya fue confirmada y no admite cambios.', 409);
+            }
+
+            return ApiResponse::error('No se pudo actualizar la programación.', 400);
         }
-        $actualizada = RecepcionUnidadesData::get_recepcion_by_id($id);
+
+        $actualizada = ProgramarRecepcionData::get_programacion_full($id);
 
         return ApiResponse::success($actualizada, 'Programación actualizada correctamente');
     }

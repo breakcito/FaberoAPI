@@ -55,6 +55,16 @@ class TipoCambioService
     }
 
     /**
+     * Obtener historial de tipos de cambio registrados (ordenado por fecha descendente).
+     */
+    public static function get_historial_tipo_cambio(int $limit = 20): array
+    {
+        $data = TipoCambioData::get_historial($limit);
+
+        return ApiResponse::success($data, 'Historial de tipos de cambio obtenido correctamente.');
+    }
+
+    /**
      * Registrar un nuevo tipo de cambio para una fecha (regla: un solo registro activo por día).
      */
     public static function crear_tipo_cambio(

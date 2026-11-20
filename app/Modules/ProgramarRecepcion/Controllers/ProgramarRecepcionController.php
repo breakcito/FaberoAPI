@@ -88,15 +88,25 @@ class ProgramarRecepcionController extends Controller
 
     /**
      * Actualizar una programación (solo si aún no fue confirmada).
+     *
+     * `tipo_ingreso` no forma parte del contrato de actualización: queda
+     * bloqueado y el backend lo ignora aunque llegue en el request.
      */
     public function actualizar_programacion(Request $request, int $id): JsonResponse
     {
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado para registrar la edición.'), 401);
+        }
+
         $validator = Validator::make($request->all(), [
-            'id_empresa_transporte' => 'nullable|integer|exists:empresa_transporte,id',
+            'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
             'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
             'id_tipo_vehiculo' => 'nullable|integer|exists:tipo_vehiculo,id',
             'id_conductor' => 'nullable|integer|exists:conductor,id',
             'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'id_sucursal' => 'nullable|integer|exists:sucursal,id',
+            'id_vehiculo_carreta' => 'nullable|integer|exists:vehiculo,id',
             'fecha_estimada_llegada' => 'nullable|date',
             'guia_remitente' => 'nullable|string|max:20',
             'guia_transportista' => 'nullable|string|max:20',
@@ -104,7 +114,6 @@ class ProgramarRecepcionController extends Controller
             'guia_transportista_file' => 'nullable|file',
             'documentos_programacion_existentes' => 'nullable|string',
             'observacion' => 'nullable|string',
-            'tipo_ingreso' => 'nullable|string|max:50',
         ]);
 
         if ($validator->fails()) {
@@ -122,7 +131,11 @@ class ProgramarRecepcionController extends Controller
             }
         }
 
-        return response()->json(ProgramarRecepcionService::actualizar_programacion($id, $data));
+        return response()->json(ProgramarRecepcionService::actualizar_programacion(
+            $id,
+            $data,
+            (int) $authUser->id_empleado,
+        ));
     }
 
     /**

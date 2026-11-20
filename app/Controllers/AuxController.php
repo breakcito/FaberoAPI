@@ -559,6 +559,16 @@ class AuxController extends Controller
     }
 
     /**
+     * Obtener historial de tipos de cambio (ordenado por fecha descendente).
+     */
+    public function get_historial_tipo_cambio(Request $request): JsonResponse
+    {
+        $limit = $request->query('limit') ? (int) $request->query('limit') : 20;
+
+        return response()->json(TipoCambioService::get_historial_tipo_cambio($limit));
+    }
+
+    /**
      * Registrar un nuevo tipo de cambio (regla: 1 por fecha).
      */
     public function crear_tipo_cambio(Request $request): JsonResponse

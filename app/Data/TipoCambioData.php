@@ -155,6 +155,46 @@ class TipoCambioData
     }
 
     /**
+     * Listar historial de tipos de cambio ordenado por fecha descendente.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public static function get_historial(int $limit = 20): array
+    {
+        $limit = max(1, min(100, $limit));
+
+        $sql = '
+        SELECT
+            tc.id,
+            tc.id_empleado_registro,
+            CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre,
+            tc.valor_compra,
+            tc.valor_venta,
+            tc.fecha,
+            tc.created_at,
+            tc.estado
+        FROM tipo_cambio tc
+        LEFT JOIN empleado emp ON emp.id = tc.id_empleado_registro
+        ORDER BY tc.fecha DESC, tc.id DESC
+        LIMIT '.(int) $limit;
+
+        $rows = DB::select($sql);
+
+        return array_map(static function ($row): array {
+            return [
+                'id' => (int) $row->id,
+                'id_empleado_registro' => $row->id_empleado_registro !== null ? (int) $row->id_empleado_registro : null,
+                'empleado_registro_nombre' => $row->empleado_registro_nombre,
+                'valor_compra' => (float) $row->valor_compra,
+                'valor_venta' => (float) $row->valor_venta,
+                'fecha' => $row->fecha,
+                'created_at' => $row->created_at,
+                'estado' => $row->estado,
+            ];
+        }, $rows);
+    }
+
+    /**
      * Verificar si ya existe un tipo de cambio activo registrado para la fecha dada.
      */
     public static function existe_tipo_cambio_en_fecha(string $fecha): bool
