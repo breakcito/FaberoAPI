@@ -235,6 +235,16 @@ class CierreLeyesController
         return response()->json(CierreLeyesService::eliminar_analisis($idAnalisis));
     }
 
+    /**
+     * Eliminación física de una muestra externa (con sus ensayos).
+     */
+    public function eliminar_muestra_externa(int $idMuestraExterna): JsonResponse
+    {
+        return response()->json(
+            CierreLeyesService::eliminar_muestra_externa($idMuestraExterna)
+        );
+    }
+
     public function confirmar_lote(Request $request, int $idLote): JsonResponse
     {
         $request->validate([

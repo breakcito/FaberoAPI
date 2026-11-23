@@ -39,6 +39,7 @@ class CondicionesComercialesProveedorController
             'recuperacion' => 'required|numeric|min:0|max:100',
             'consumo' => 'required|numeric|min:0',
             'riesgo_comercial' => 'required|numeric|min:0',
+            'observacion' => 'nullable|string|max:1000',
         ]);
 
         $idProveedor = $request->input('id_proveedor_minero') ?? $request->input('id_proveedor');
@@ -51,7 +52,9 @@ class CondicionesComercialesProveedorController
             (float) $request->input('maquila'),
             (float) $request->input('recuperacion'),
             (float) $request->input('consumo'),
-            (float) $request->input('riesgo_comercial')
+            (float) $request->input('riesgo_comercial'),
+            $request->input('observacion') !== null && $request->input('observacion') !== ''
+                ? (string) $request->input('observacion') : null
         ));
     }
 
@@ -68,6 +71,7 @@ class CondicionesComercialesProveedorController
             'recuperacion' => 'required|numeric|min:0|max:100',
             'consumo' => 'required|numeric|min:0',
             'riesgo_comercial' => 'required|numeric|min:0',
+            'observacion' => 'nullable|string|max:1000',
         ]);
 
         return response()->json(CondicionesComercialesProveedorService::editar_condicion(
@@ -78,7 +82,9 @@ class CondicionesComercialesProveedorController
             (float) $request->input('maquila'),
             (float) $request->input('recuperacion'),
             (float) $request->input('consumo'),
-            (float) $request->input('riesgo_comercial')
+            (float) $request->input('riesgo_comercial'),
+            $request->input('observacion') !== null && $request->input('observacion') !== ''
+                ? (string) $request->input('observacion') : null
         ));
     }
 

@@ -20,6 +20,7 @@ class CondicionComercialProveedor extends Model
         'recuperacion',
         'consumo',
         'riesgo_comercial',
+        'observacion',
         'estado',
         'created_at',
     ];

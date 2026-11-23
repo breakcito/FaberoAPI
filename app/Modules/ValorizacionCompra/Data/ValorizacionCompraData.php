@@ -666,6 +666,83 @@ class ValorizacionCompraData
     }
 
     /**
+     * Verificar si un lote ya está valorizado en OTRA valorización viva (Propuesta o Aprobado).
+     *
+     * A diferencia de `existe_otra_valorizacion_con_lote`, NO filtra por elemento:
+     * la regla de negocio exige que el Oro y la Plata de un mismo lote se valoricen
+     * siempre en la MISMA valorización (documento). Sí se permite que el lote tenga
+     * un elemento en una propuesta y el otro en otra propuesta del mismo documento.
+     *
+     * Se consideran "la misma valorización":
+     *  - la fila actual ($idValorizacionActual), y
+     *  - cualquier propuesta hermana que comparta su $uuidGrupoActual.
+     *
+     * @param  int  $idLoteMineral  Lote mineral físico (directo o vía partición)
+     * @param  int  $idValorizacionActual  Valorización actual (0 si aún no existe)
+     * @param  string|null  $uuidGrupoActual  Grupo (documento) de la valorización actual
+     * @param  string  $estadoAnulado  Estado que se considera no vivo
+     */
+    public static function lote_valorizado_en_otra_valorizacion(
+        int $idLoteMineral,
+        int $idValorizacionActual,
+        ?string $uuidGrupoActual = null,
+        string $estadoAnulado = 'Anulado'
+    ): bool {
+        return self::elementos_valorizados_en_otra_valorizacion(
+            $idLoteMineral,
+            $idValorizacionActual,
+            $uuidGrupoActual,
+            $estadoAnulado
+        ) !== [];
+    }
+
+    /**
+     * Elementos (Oro / Plata) de un lote que ya están valorizados en otra valorización viva.
+     *
+     * Se usa para el mensaje de error del operador: permite indicar qué elemento
+     * concreto está en la otra valorización.
+     *
+     * @return array<int, string> Elementos valorizados fuera de la valorización actual
+     */
+    public static function elementos_valorizados_en_otra_valorizacion(
+        int $idLoteMineral,
+        int $idValorizacionActual,
+        ?string $uuidGrupoActual = null,
+        string $estadoAnulado = 'Anulado'
+    ): array {
+        $estadosVivos = array_values(array_filter(
+            [
+                EstadoValorizacionCompra::Propuesta->value,
+                EstadoValorizacionCompra::Aprobado->value,
+            ],
+            static fn (string $estado): bool => $estado !== $estadoAnulado
+        ));
+
+        $query = DB::table('valorizacion_compramineral_detalle as vcd')
+            ->join('valorizacion_compra as vc', 'vc.id', '=', 'vcd.id_valorizacion_compra')
+            ->join('lote_guia as lg_check', 'lg_check.id', '=', 'vcd.id_lote_guia')
+            ->leftJoin('particion_lote_mineral as plm', 'plm.id', '=', 'lg_check.id_particion_lote_mineral')
+            ->whereRaw('COALESCE(lg_check.id_lote_mineral, plm.id_lote_mineral) = ?', [$idLoteMineral])
+            ->whereIn('vc.estado', $estadosVivos)
+            ->where('vc.id', '!=', $idValorizacionActual);
+
+        if (! empty($uuidGrupoActual)) {
+            // Las propuestas hermanas del mismo documento (mismo uuid_grupo) no bloquean:
+            // allí sí se puede repartir el lote (p.ej. Au en una propuesta y Ag en otra).
+            $query->where(function ($q) use ($uuidGrupoActual) {
+                $q->whereNull('vc.uuid_grupo')
+                    ->orWhere('vc.uuid_grupo', '!=', $uuidGrupoActual);
+            });
+        }
+
+        return $query
+            ->distinct()
+            ->pluck('vcd.elemento_quimico')
+            ->map(static fn ($elemento): string => (string) $elemento)
+            ->all();
+    }
+
+    /**
      * Verificar si existe otra valorización viva (Propuesta o Aprobado) que utilice el mismo grupo de análisis y elemento
      */
     public static function existe_otra_valorizacion_viva_con_grupo_analisis(

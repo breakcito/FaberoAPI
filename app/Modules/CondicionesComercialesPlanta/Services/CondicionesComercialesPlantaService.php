@@ -39,7 +39,8 @@ class CondicionesComercialesPlantaService
         ?float $maquila,
         ?float $recuperacion,
         ?float $consumo,
-        ?float $riesgoComercial
+        ?float $riesgoComercial,
+        ?string $observacion = null
     ): array {
         $planta = PlantaDestino::find($idPlanta);
         if (! $planta) {
@@ -66,6 +67,7 @@ class CondicionesComercialesPlantaService
                 'recuperacion' => $recuperacion,
                 'consumo' => $consumo,
                 'riesgo_comercial' => $riesgoComercial,
+                'observacion' => $observacion,
                 'estado' => EstadoBase::Activo->value,
                 'created_at' => Carbon::now(),
             ]);
@@ -93,7 +95,8 @@ class CondicionesComercialesPlantaService
         ?float $maquila,
         ?float $recuperacion,
         ?float $consumo,
-        ?float $riesgoComercial
+        ?float $riesgoComercial,
+        ?string $observacion = null
     ): array {
         $condicion = CondicionComercialPlanta::find($id);
         if (! $condicion) {
@@ -118,6 +121,7 @@ class CondicionesComercialesPlantaService
             $condicion->recuperacion = $recuperacion;
             $condicion->consumo = $consumo;
             $condicion->riesgo_comercial = $riesgoComercial;
+            $condicion->observacion = $observacion;
             $condicion->save();
 
             DB::commit();

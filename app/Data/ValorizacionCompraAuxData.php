@@ -515,6 +515,7 @@ class ValorizacionCompraAuxData
                 vc.id,
                 vc.id_proveedor_minero,
                 vc.numero_correlativo,
+                vc.correlativo,
                 vc.tipo_pago,
                 vc.fecha_hora_aprobacion,
                 vc.estado,
@@ -558,6 +559,8 @@ class ValorizacionCompraAuxData
             $r->id = (int) $r->id;
             $r->id_proveedor_minero = (int) $r->id_proveedor_minero;
             $r->id_cuenta_bancaria = $r->id_cuenta_bancaria !== null ? (int) $r->id_cuenta_bancaria : null;
+            $r->correlativo = (string) ($r->correlativo ?? '');
+            $r->numero_correlativo = (string) ($r->numero_correlativo ?? '');
             $r->monto_penalidad = (float) ($r->monto_penalidad ?? 0);
             $r->monto_flete = (float) ($r->monto_flete ?? 0);
             $r->total_dolares = (float) $r->total_dolares;

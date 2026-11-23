@@ -2,6 +2,7 @@
 
 namespace App\Modules\ValorizacionCompra\Services;
 
+use App\Models\CondicionComercialProveedor;
 use App\Models\LoteGuia;
 use App\Models\LoteMineral;
 use App\Models\TransaccionAnticipoProveedor;
@@ -53,6 +54,11 @@ class ValorizacionCompraService
      */
     public static function crear_valorizacion(array $data, array $archivos = []): array
     {
+        $errorRecuperacion = self::validarRecuperacionMaxima($data['detalles'] ?? []);
+        if ($errorRecuperacion !== null) {
+            return $errorRecuperacion;
+        }
+
         DB::beginTransaction();
         try {
             $correlativoRes = CorrelativoHelper::generar(
@@ -69,25 +75,35 @@ class ValorizacionCompraService
             // Obtener nombre de concesion para auditoria inicial
             $concesionNombre = ValorizacionCompraData::get_nombre_concesion((int) $data['id_concesion']);
 
+            // Resolver los lotes físicos de los detalles (id_lote_guia => lote mineral)
+            $lotesResueltos = self::resolverLotesDetalles($data['detalles']);
+
             // Verificar si todos los lotes incluidos carecen de valor comercial
             $todosSinValorComercial = ! empty($data['detalles']);
-            foreach ($data['detalles'] as $dCheck) {
-                $lgCheck = ValorizacionCompraData::find_lote_guia_con_mineral((int) $dCheck['id_lote_guia']);
-                $lCheck = $lgCheck?->loteMineral ?? $lgCheck?->particionLoteMineral?->loteMineral;
-                if (! self::loteEsSinValorComercial($lCheck)) {
+            foreach ($lotesResueltos as $resLote) {
+                if (! self::loteEsSinValorComercial($resLote['lote'])) {
                     $todosSinValorComercial = false;
                     break;
                 }
             }
 
-            // Validar límite de 10 lotes físicos únicos
-            $lotesUnicos = [];
-            foreach ($data['detalles'] as $d) {
-                $lotesUnicos[$d['id_lote_guia']] = true;
+            // Validar límite de 10 lotes (items) únicos por propuesta.
+            // Cada lote admite hasta 2 elementos (Oro y Plata): 10 lotes = 20 detalles.
+            if (self::contarLotesUnicos($lotesResueltos) > 10) {
+                throw new Exception(
+                    'Solo se puede valorizar un máximo de 10 lotes (items) por propuesta, equivalente a 20 elementos (Oro/Plata).'
+                );
             }
-            if (count($lotesUnicos) > 10) {
-                throw new Exception('Solo se puede valorizar/hacer propuesta de hasta 10 lotes.');
-            }
+
+            // Regla de negocio: el Oro y la Plata de un mismo lote deben valorizarse
+            // en la MISMA valorización. Una valorización nueva no tiene grupo previo,
+            // por lo que cualquier valorización viva con ese lote la bloquea.
+            self::validarLotesNoRepartidosEntreValorizaciones(
+                $data['detalles'],
+                $lotesResueltos,
+                0,
+                null
+            );
 
             // Cada lote debe tener definido si tiene o no valor comercial.
             self::validarValorComercialDefinido($data['detalles']);
@@ -434,6 +450,11 @@ class ValorizacionCompraService
      */
     public static function editar_valorizacion(int $id, array $data, array $archivos = []): array
     {
+        $errorRecuperacion = self::validarRecuperacionMaxima($data['detalles'] ?? []);
+        if ($errorRecuperacion !== null) {
+            return $errorRecuperacion;
+        }
+
         DB::beginTransaction();
         try {
             $valorizacion = ValorizacionCompraData::find_model($id);
@@ -449,24 +470,24 @@ class ValorizacionCompraService
                 return ApiResponse::error('Solo se pueden editar valorizaciones en estado Propuesta. Las valorizaciones aprobadas no pueden modificarse.');
             }
 
+            // Resolver los lotes físicos de los detalles (id_lote_guia => lote mineral)
+            $lotesResueltos = self::resolverLotesDetalles($data['detalles'] ?? []);
+
             // Verificar si todos los lotes incluidos carecen de valor comercial
             $todosSinValorComercial = ! empty($data['detalles']);
-            foreach ($data['detalles'] ?? [] as $dCheck) {
-                $lgCheck = ValorizacionCompraData::find_lote_guia_con_mineral((int) $dCheck['id_lote_guia']);
-                $lCheck = $lgCheck?->loteMineral ?? $lgCheck?->particionLoteMineral?->loteMineral;
-                if (! self::loteEsSinValorComercial($lCheck)) {
+            foreach ($lotesResueltos as $resLote) {
+                if (! self::loteEsSinValorComercial($resLote['lote'])) {
                     $todosSinValorComercial = false;
                     break;
                 }
             }
 
-            // Validar límite de 10 lotes físicos únicos
-            $lotesUnicos = [];
-            foreach ($data['detalles'] ?? [] as $d) {
-                $lotesUnicos[$d['id_lote_guia']] = true;
-            }
-            if (count($lotesUnicos) > 10) {
-                throw new Exception('Solo se puede valorizar/hacer propuesta de hasta 10 lotes.');
+            // Validar límite de 10 lotes (items) únicos por propuesta.
+            // Cada lote admite hasta 2 elementos (Oro y Plata): 10 lotes = 20 detalles.
+            if (self::contarLotesUnicos($lotesResueltos) > 10) {
+                throw new Exception(
+                    'Solo se puede valorizar un máximo de 10 lotes (items) por propuesta, equivalente a 20 elementos (Oro/Plata).'
+                );
             }
 
             // Cada lote debe tener definido si tiene o no valor comercial.
@@ -523,6 +544,17 @@ class ValorizacionCompraService
             $cambios = array_merge($cambios, $resDetallesAud['cambios']);
             $newTotalSubtotal = $resDetallesAud['new_total_subtotal'];
             $oldDetMap = $resDetallesAud['old_det_map'];
+
+            // Regla de negocio: el Oro y la Plata de un mismo lote deben valorizarse
+            // en la MISMA valorización. Las propuestas hermanas del mismo documento
+            // (mismo uuid_grupo) no bloquean: allí el lote puede repartirse.
+            self::validarLotesNoRepartidosEntreValorizaciones(
+                $data['detalles'] ?? [],
+                $lotesResueltos,
+                $id,
+                $valorizacion->uuid_grupo,
+                array_keys($oldDetMap)
+            );
 
             // 3. Auditoría y procesamiento de evidencias (existentes conservadas + nuevas subidas)
             $rawEvidencias = $valorizacion->evidencias;
@@ -1492,6 +1524,12 @@ class ValorizacionCompraService
         }
 
         if ($esSinValor) {
+            // Un lote SIN valor comercial no genera importes: inter, des_inter,
+            // recuperación, maquila y consumo se fuerzan a 0, por lo que el PTN
+            // y el subtotal son 0 con cualquier factor. El factor capturado por
+            // el operador sí se conserva (queda registrado en el detalle).
+            $factorOperador = (float) ($det['factor'] ?? 1.0);
+
             return [
                 'es_sin_valor_comercial' => true,
                 'elemento' => $elementoEnum->value,
@@ -1504,7 +1542,7 @@ class ValorizacionCompraService
                 'recuperacion' => 0.0,
                 'maquila' => 0.0,
                 'consumo' => 0.0,
-                'factor' => 1.0,
+                'factor' => $factorOperador,
                 'ptn' => 0.0,
                 'monto_penalidad' => 0.0,
                 'monto_flete' => 0.0,
@@ -1573,6 +1611,134 @@ class ValorizacionCompraService
         }
 
         return [$lote, $correlativo];
+    }
+
+    /**
+     * Resuelve el lote mineral de cada lote guía usado en los detalles.
+     *
+     * @param  array<int, array<string,mixed>>  $detalles
+     * @return array<int, array{lote: LoteMineral|null, correlativo: string}> Mapa por id_lote_guia
+     */
+    private static function resolverLotesDetalles(array $detalles): array
+    {
+        $resueltos = [];
+        foreach ($detalles as $det) {
+            $idLoteGuia = (int) ($det['id_lote_guia'] ?? 0);
+            if ($idLoteGuia <= 0 || array_key_exists($idLoteGuia, $resueltos)) {
+                continue;
+            }
+            [$lote, $correlativo] = self::resolverLoteGuia($idLoteGuia);
+            $resueltos[$idLoteGuia] = ['lote' => $lote, 'correlativo' => $correlativo];
+        }
+
+        return $resueltos;
+    }
+
+    /**
+     * Cuenta los lotes físicos únicos de los detalles.
+     *
+     * Un mismo lote puede tener dos detalles (Oro y Plata): cuenta una sola vez.
+     * El límite de la propuesta es de 10 lotes (items) = 20 elementos.
+     *
+     * @param  array<int, array{lote: LoteMineral|null, correlativo: string}>  $lotesResueltos
+     */
+    private static function contarLotesUnicos(array $lotesResueltos): int
+    {
+        $unicos = [];
+        foreach ($lotesResueltos as $idLoteGuia => $resLote) {
+            $clave = $resLote['lote'] ? (int) $resLote['lote']->id : (int) $idLoteGuia;
+            $unicos[$clave] = true;
+        }
+
+        return count($unicos);
+    }
+
+    /**
+     * Valida que un lote no quede repartido entre valorizaciones distintas.
+     *
+     * Regla de negocio: el Oro y la Plata de un mismo lote deben valorizarse en la
+     * MISMA valorización (documento). Dentro de una valorización puede haber varias
+     * propuestas/versiones (mismo uuid_grupo) y allí sí se permite que cada propuesta
+     * lleve un elemento distinto del lote.
+     *
+     * @param  array<int, array<string,mixed>>  $detalles
+     * @param  array<int, array{lote: LoteMineral|null, correlativo: string}>  $lotesResueltos
+     * @param  int  $idValorizacionActual  Valorización que se está guardando (0 si es nueva)
+     * @param  string|null  $uuidGrupoActual  Grupo (documento) de la valorización actual
+     * @param  array<int, string>  $clavesExistentes  Claves "idLoteGuia_elemento" ya presentes en la propuesta editada
+     *
+     * @throws Exception
+     */
+    private static function validarLotesNoRepartidosEntreValorizaciones(
+        array $detalles,
+        array $lotesResueltos,
+        int $idValorizacionActual,
+        ?string $uuidGrupoActual,
+        array $clavesExistentes = []
+    ): void {
+        $detallesPorLote = [];
+        foreach ($detalles as $det) {
+            $idLoteGuia = (int) ($det['id_lote_guia'] ?? 0);
+            if ($idLoteGuia <= 0) {
+                continue;
+            }
+            $detallesPorLote[$idLoteGuia][] = $det;
+        }
+
+        foreach ($detallesPorLote as $idLoteGuia => $detallesDelLote) {
+            $lote = $lotesResueltos[$idLoteGuia]['lote'] ?? null;
+            if (! $lote) {
+                continue;
+            }
+            $correlativo = $lotesResueltos[$idLoteGuia]['correlativo'] ?? "Lote #{$idLoteGuia}";
+
+            if (! ValorizacionCompraData::lote_valorizado_en_otra_valorizacion(
+                (int) $lote->id,
+                $idValorizacionActual,
+                $uuidGrupoActual
+            )) {
+                continue;
+            }
+
+            // Detalle NUEVO del lote: los que ya existían en la propuesta se arrastran
+            // sin validar, para no bloquear la edición de propuestas históricas que
+            // ya tenían el lote repartido entre valorizaciones.
+            $detalleNuevo = null;
+            foreach ($detallesDelLote as $det) {
+                $elemento = (string) ($det['elemento_quimico'] ?? '');
+                if (! in_array("{$idLoteGuia}_{$elemento}", $clavesExistentes, true)) {
+                    $detalleNuevo = $det;
+                    break;
+                }
+            }
+            if ($detalleNuevo === null) {
+                continue;
+            }
+
+            // Elemento conflictivo en concreto (para el mensaje del operador)
+            $conflictos = ValorizacionCompraData::elementos_valorizados_en_otra_valorizacion(
+                (int) $lote->id,
+                $idValorizacionActual,
+                $uuidGrupoActual
+            );
+
+            $elementoNuevo = (string) ($detalleNuevo['elemento_quimico'] ?? '');
+            $complementario = $elementoNuevo === ElementoQuimicoValorizacion::Oro->value
+                ? ElementoQuimicoValorizacion::Plata->value
+                : ElementoQuimicoValorizacion::Oro->value;
+
+            if (in_array($complementario, $conflictos, true)) {
+                throw new Exception(
+                    "El lote {$correlativo} ya tiene el {$complementario} en otra valorización. "
+                    .'Ambos elementos (Oro y Plata) del mismo lote deben valorizarse en la misma valorización.'
+                );
+            }
+
+            throw new Exception(
+                "El lote {$correlativo} ya tiene el ".implode(' / ', $conflictos).' valorizado en otra valorización. '
+                .'Un lote no puede valorizarse en dos valorizaciones distintas.'
+            );
+        }
     }
 
     private static function procesarAuditoriaDetallesEdicion(int $idValorizacion, array $detalles): array
@@ -1957,6 +2123,66 @@ class ValorizacionCompraService
                 );
             }
         }
+    }
+
+    /**
+     * Verifica que la recuperación de cada detalle no supere el máximo permitido
+     * por la condición comercial aplicada (tabla condicion_comercial_proveedor).
+     *
+     * La recuperación registrada en la condición comercial es el MÁXIMO: en la
+     * valorización el operador puede usar un valor menor, nunca mayor. Una
+     * condición con recuperación en 0 se interpreta como "sin máximo
+     * configurado" y no restringe el valor.
+     *
+     * @param  array<int, array<string,mixed>>  $detalles
+     * @return array<string,mixed>|null Respuesta de error, o null si todo es válido
+     */
+    private static function validarRecuperacionMaxima(array $detalles): ?array
+    {
+        $idsCondicion = [];
+        foreach ($detalles as $det) {
+            $idCondicion = $det['id_condicion_comercial'] ?? null;
+            if ($idCondicion !== null && $idCondicion !== '') {
+                $idsCondicion[(int) $idCondicion] = true;
+            }
+        }
+
+        if (empty($idsCondicion)) {
+            return null;
+        }
+
+        $condiciones = CondicionComercialProveedor::query()
+            ->whereIn('id', array_keys($idsCondicion))
+            ->get()
+            ->keyBy('id');
+
+        foreach ($detalles as $det) {
+            $idCondicion = $det['id_condicion_comercial'] ?? null;
+            if ($idCondicion === null || $idCondicion === '') {
+                continue;
+            }
+
+            $condicion = $condiciones->get((int) $idCondicion);
+            if (! $condicion) {
+                continue;
+            }
+
+            $maximo = (float) $condicion->recuperacion;
+            $recuperacion = (float) ($det['recuperacion'] ?? 0);
+
+            if ($maximo > 0 && $recuperacion > $maximo) {
+                return ApiResponse::error(
+                    sprintf(
+                        'La recuperación (%s) supera el máximo de la condición comercial (%s).',
+                        number_format($recuperacion, 3, '.', ''),
+                        number_format($maximo, 3, '.', '')
+                    ),
+                    422
+                );
+            }
+        }
+
+        return null;
     }
 
     /**

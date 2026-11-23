@@ -2,8 +2,8 @@
 
 namespace App\Modules\RecepcionMineral\Data;
 
-use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
 use App\Data\GuiasData;
+use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoPesaje;
 use App\Shared\Enums\ValorizacionCompra\EstadoValorizacionCompra;
@@ -49,7 +49,9 @@ class RecepcionMineralData
             ru.es_programacion,
             ru.documentos_programacion,
             ru.id_proveedor_minero,
-            prr.razon_social AS proveedor_nombre_recepcion_unidad
+            prr.razon_social AS proveedor_nombre_recepcion_unidad,
+            ru.id_ticket_recepcion_unidades,
+            tru.correlativo AS ticket_correlativo
         FROM
             recepcion_unidad ru
         LEFT JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_recepcion
@@ -59,6 +61,7 @@ class RecepcionMineralData
         LEFT JOIN tipo_vehiculo tv ON tv.id = ru.id_tipo_vehiculo
         LEFT JOIN conductor c ON c.id = ru.id_conductor
         LEFT JOIN proveedor prr ON prr.id = ru.id_proveedor_minero
+        LEFT JOIN ticket_recepcion_unidades tru ON tru.id = ru.id_ticket_recepcion_unidades
         WHERE ru.id_sucursal = :id_sucursal
           AND ru.estado = "En Planta"
         ';
@@ -422,7 +425,9 @@ class RecepcionMineralData
             ru.id_distribucion AS id_distribucion,
             ru.es_recepcion_ficticia,
             ru.es_programacion,
-            ru.documentos_programacion
+            ru.documentos_programacion,
+            ru.id_ticket_recepcion_unidades,
+            tru.correlativo AS ticket_correlativo
         FROM
             recepcion_unidad ru
         LEFT JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_recepcion
@@ -431,6 +436,7 @@ class RecepcionMineralData
         LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte
         LEFT JOIN tipo_vehiculo tv ON tv.id = ru.id_tipo_vehiculo
         LEFT JOIN conductor c ON c.id = ru.id_conductor
+        LEFT JOIN ticket_recepcion_unidades tru ON tru.id = ru.id_ticket_recepcion_unidades
         WHERE ru.id = :id
         LIMIT 1
         ';
@@ -948,8 +954,8 @@ class RecepcionMineralData
             $item->id_blending_origen = $item->id_blending_origen !== null ? (int) $item->id_blending_origen : null;
             $item->numero_particion = $item->numero_particion !== null ? (int) $item->numero_particion : null;
             $item->id_particion = $item->id_particion !== null ? (int) $item->id_particion : null;
-            $item->particionado_desde_balanza = !empty($item->particionado_desde_balanza);
-            $item->particion_finalizada = !empty($item->particion_finalizada);
+            $item->particionado_desde_balanza = ! empty($item->particionado_desde_balanza);
+            $item->particion_finalizada = ! empty($item->particion_finalizada);
             $item->valorizacion = $valorizacionesPorLote[(int) $item->id_lote] ?? null;
         }
 

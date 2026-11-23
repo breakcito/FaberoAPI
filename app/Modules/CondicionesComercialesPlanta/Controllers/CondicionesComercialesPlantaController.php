@@ -38,6 +38,7 @@ class CondicionesComercialesPlantaController
             'recuperacion' => 'nullable|numeric|min:0|max:100',
             'consumo' => 'nullable|numeric|min:0',
             'riesgo_comercial' => 'nullable|numeric|min:0',
+            'observacion' => 'nullable|string|max:1000',
         ]);
 
         return response()->json(CondicionesComercialesPlantaService::crear_condicion(
@@ -54,7 +55,9 @@ class CondicionesComercialesPlantaController
             $request->input('consumo') !== null && $request->input('consumo') !== ''
                 ? (float) $request->input('consumo') : null,
             $request->input('riesgo_comercial') !== null && $request->input('riesgo_comercial') !== ''
-                ? (float) $request->input('riesgo_comercial') : null
+                ? (float) $request->input('riesgo_comercial') : null,
+            $request->input('observacion') !== null && $request->input('observacion') !== ''
+                ? (string) $request->input('observacion') : null
         ));
     }
 
@@ -71,6 +74,7 @@ class CondicionesComercialesPlantaController
             'recuperacion' => 'nullable|numeric|min:0|max:100',
             'consumo' => 'nullable|numeric|min:0',
             'riesgo_comercial' => 'nullable|numeric|min:0',
+            'observacion' => 'nullable|string|max:1000',
         ]);
 
         return response()->json(CondicionesComercialesPlantaService::editar_condicion(
@@ -87,7 +91,9 @@ class CondicionesComercialesPlantaController
             $request->input('consumo') !== null && $request->input('consumo') !== ''
                 ? (float) $request->input('consumo') : null,
             $request->input('riesgo_comercial') !== null && $request->input('riesgo_comercial') !== ''
-                ? (float) $request->input('riesgo_comercial') : null
+                ? (float) $request->input('riesgo_comercial') : null,
+            $request->input('observacion') !== null && $request->input('observacion') !== ''
+                ? (string) $request->input('observacion') : null
         ));
     }
 

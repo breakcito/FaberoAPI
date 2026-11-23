@@ -2,6 +2,7 @@
 
 namespace App\Modules\ValorizacionVenta\Services;
 
+use App\Models\CondicionComercialPlanta;
 use App\Models\Empresa;
 use App\Models\PlantaDestino;
 use App\Models\ValorizacionVenta;
@@ -51,6 +52,11 @@ class ValorizacionVentaService
      */
     public static function crear_valorizacion(array $data, array $archivos = []): array
     {
+        $errorRecuperacion = self::validarRecuperacionMaxima($data['detalles'] ?? []);
+        if ($errorRecuperacion !== null) {
+            return $errorRecuperacion;
+        }
+
         DB::beginTransaction();
         try {
             $correlativoRes = CorrelativoHelper::generar(
@@ -192,6 +198,11 @@ class ValorizacionVentaService
      */
     public static function editar_valorizacion(int $id, array $data, array $archivos = []): array
     {
+        $errorRecuperacion = self::validarRecuperacionMaxima($data['detalles'] ?? []);
+        if ($errorRecuperacion !== null) {
+            return $errorRecuperacion;
+        }
+
         DB::beginTransaction();
         try {
             $valorizacion = ValorizacionVentaData::find_model($id);
@@ -757,6 +768,66 @@ class ValorizacionVentaService
 
             return ApiResponse::error('Error al anular valorización: '.$e->getMessage());
         }
+    }
+
+    /**
+     * Verifica que la recuperación de cada detalle no supere el máximo permitido
+     * por la condición comercial aplicada (tabla condicion_comercial_planta).
+     *
+     * La recuperación registrada en la condición comercial es el MÁXIMO: en la
+     * valorización el operador puede usar un valor menor, nunca mayor. Una
+     * condición con recuperación en 0 se interpreta como "sin máximo
+     * configurado" y no restringe el valor.
+     *
+     * @param  array<int, array<string,mixed>>  $detalles
+     * @return array<string,mixed>|null Respuesta de error, o null si todo es válido
+     */
+    private static function validarRecuperacionMaxima(array $detalles): ?array
+    {
+        $idsCondicion = [];
+        foreach ($detalles as $det) {
+            $idCondicion = $det['id_condicion_comercial'] ?? null;
+            if ($idCondicion !== null && $idCondicion !== '') {
+                $idsCondicion[(int) $idCondicion] = true;
+            }
+        }
+
+        if (empty($idsCondicion)) {
+            return null;
+        }
+
+        $condiciones = CondicionComercialPlanta::query()
+            ->whereIn('id', array_keys($idsCondicion))
+            ->get()
+            ->keyBy('id');
+
+        foreach ($detalles as $det) {
+            $idCondicion = $det['id_condicion_comercial'] ?? null;
+            if ($idCondicion === null || $idCondicion === '') {
+                continue;
+            }
+
+            $condicion = $condiciones->get((int) $idCondicion);
+            if (! $condicion) {
+                continue;
+            }
+
+            $maximo = (float) $condicion->recuperacion;
+            $recuperacion = (float) ($det['recuperacion'] ?? 0);
+
+            if ($maximo > 0 && $recuperacion > $maximo) {
+                return ApiResponse::error(
+                    sprintf(
+                        'La recuperación (%s) supera el máximo de la condición comercial (%s).',
+                        number_format($recuperacion, 3, '.', ''),
+                        number_format($maximo, 3, '.', '')
+                    ),
+                    422
+                );
+            }
+        }
+
+        return null;
     }
 
     /**

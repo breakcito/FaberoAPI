@@ -273,7 +273,9 @@ class ProgramarRecepcionService
             $evidenciasExistentes,
             $archivosNuevos,
             $idEmpleado,
-            $motivo,
+            // El motivo es opcional: si no lo manda el operador, el historial
+            // registra la edición de la observación de la recepción.
+            $motivo ?: 'Edición de observación de la recepción de unidad',
         );
 
         $actualizada = RecepcionUnidadesData::get_recepcion_by_id($id);

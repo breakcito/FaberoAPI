@@ -28,6 +28,7 @@ class CondicionesComercialesPlantaData
             'ccp.recuperacion',
             'ccp.consumo',
             'ccp.riesgo_comercial',
+            'ccp.observacion',
             'ccp.estado',
             'ccp.created_at',
         ])

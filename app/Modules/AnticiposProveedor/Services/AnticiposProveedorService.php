@@ -9,6 +9,7 @@ use App\Shared\Enums\_Generic\EstadoAnticipoProveedor;
 use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class AnticiposProveedorService
 {
@@ -154,6 +155,121 @@ class AnticiposProveedorService
             DB::rollBack();
 
             return ApiResponse::error('Error al anular el anticipo: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Gestionar las evidencias de un anticipo de proveedor: agregar archivos nuevos
+     * y/o eliminar los que ya estaban adjuntos.
+     *
+     * @param  array<\Illuminate\Http\UploadedFile>  $archivosNuevos
+     * @param  array<int, string>  $pathsEliminar  path_relativo de las evidencias a quitar
+     */
+    public static function gestionar_evidencias(int $id, array $archivosNuevos, array $pathsEliminar, int $idEmpleado, ?string $motivo = null): array
+    {
+        $anticipo = AnticipoProveedor::find($id);
+        if (! $anticipo) {
+            return ApiResponse::error('No se encontró el anticipo.', 404);
+        }
+
+        $evidenciasActuales = $anticipo->evidencias ?? [];
+        if (! is_array($evidenciasActuales)) {
+            $evidenciasActuales = json_decode((string) $evidenciasActuales, true) ?? [];
+        }
+
+        $pathsEliminar = array_values(array_unique(array_filter(
+            array_map(static fn ($path): string => is_string($path) ? trim($path) : '', $pathsEliminar),
+            static fn (string $path): bool => $path !== ''
+        )));
+
+        $nuevosGuardados = [];
+        if (! empty($archivosNuevos)) {
+            $nuevosGuardados = ArchivoHelper::guardarArchivos('anticipos', $archivosNuevos);
+        }
+
+        DB::beginTransaction();
+        try {
+            $eliminados = [];
+            $restantes = [];
+
+            foreach ($evidenciasActuales as $evidencia) {
+                $pathRelativo = is_array($evidencia) ? (string) ($evidencia['path_relativo'] ?? '') : '';
+
+                if ($pathRelativo !== '' && in_array($pathRelativo, $pathsEliminar, true)) {
+                    try {
+                        Storage::disk('public')->delete($pathRelativo);
+                    } catch (\Throwable) {
+                        // El archivo puede haber sido borrado antes: se ignora y se quita del listado.
+                    }
+                    $eliminados[] = $evidencia;
+
+                    continue;
+                }
+
+                $restantes[] = $evidencia;
+            }
+
+            $anticipo->evidencias = array_merge($restantes, $nuevosGuardados);
+
+            $cambios = [];
+            foreach ($eliminados as $evidencia) {
+                $cambios[] = [
+                    'campo_bd' => 'evidencias',
+                    'campo' => 'Evidencia eliminada',
+                    'valor_anterior' => (string) ($evidencia['nombre_original'] ?? $evidencia['path_relativo'] ?? '—'),
+                    'valor_nuevo' => '—',
+                ];
+            }
+            foreach ($nuevosGuardados as $evidencia) {
+                $cambios[] = [
+                    'campo_bd' => 'evidencias',
+                    'campo' => 'Evidencia agregada',
+                    'valor_anterior' => '—',
+                    'valor_nuevo' => (string) ($evidencia['nombre_original'] ?? $evidencia['path_relativo'] ?? '—'),
+                ];
+            }
+
+            if (! empty($cambios)) {
+                $logActual = $anticipo->log_cambios ?? [];
+                if (! is_array($logActual)) {
+                    $logActual = json_decode((string) $logActual, true) ?? [];
+                }
+
+                $logActual[] = [
+                    'id_empleado' => $idEmpleado,
+                    'fecha_hora' => now()->toDateTimeString(),
+                    'update_at' => now()->toDateTimeString(),
+                    'accion' => 'Gestión de Evidencias',
+                    'motivo' => $motivo,
+                    'cambios' => $cambios,
+                ];
+
+                $anticipo->log_cambios = $logActual;
+            }
+
+            $anticipo->save();
+
+            DB::commit();
+
+            $anticipoDetalle = AnticiposProveedorData::get_anticipo_by_id($id);
+
+            return ApiResponse::success($anticipoDetalle, 'Evidencias actualizadas correctamente.');
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            foreach ($nuevosGuardados as $evidencia) {
+                $pathRelativo = (string) ($evidencia['path_relativo'] ?? '');
+                if ($pathRelativo === '') {
+                    continue;
+                }
+                try {
+                    Storage::disk('public')->delete($pathRelativo);
+                } catch (\Throwable) {
+                    // El archivo huérfano ya no está en el disco: nada que limpiar.
+                }
+            }
+
+            return ApiResponse::error('Error al actualizar las evidencias del anticipo: '.$e->getMessage());
         }
     }
 

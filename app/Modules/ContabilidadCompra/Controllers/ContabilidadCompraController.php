@@ -5,6 +5,7 @@ namespace App\Modules\ContabilidadCompra\Controllers;
 use App\Modules\ContabilidadCompra\Services\ContabilidadCompraService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Controller;
 
 class ContabilidadCompraController extends Controller
@@ -53,6 +54,7 @@ class ContabilidadCompraController extends Controller
             'fecha_emision' => 'required|date_format:Y-m-d',
             'porcentaje_igv' => 'nullable|numeric|min:0|max:1',
             'porcentaje_detraccion' => 'nullable|numeric|min:0|max:1',
+            'tipo_cambio_venta' => 'nullable|numeric|min:0',
             'es_al_contado' => 'nullable',
             'es_al_credito' => 'nullable',
             'plazo_credito' => 'nullable|integer|min:0',
@@ -73,6 +75,9 @@ class ContabilidadCompraController extends Controller
             'fecha_emision' => (string) $request->input('fecha_emision'),
             'porcentaje_igv' => $request->input('porcentaje_igv'),
             'porcentaje_detraccion' => $request->input('porcentaje_detraccion'),
+            'tipo_cambio_venta' => $request->filled('tipo_cambio_venta')
+                ? (float) $request->input('tipo_cambio_venta')
+                : null,
             'es_al_contado' => filter_var($request->input('es_al_contado'), FILTER_VALIDATE_BOOLEAN),
             'es_al_credito' => filter_var($request->input('es_al_credito'), FILTER_VALIDATE_BOOLEAN),
             'plazo_credito' => $request->filled('plazo_credito') ? (int) $request->input('plazo_credito') : null,
@@ -92,6 +97,45 @@ class ContabilidadCompraController extends Controller
 
         $res = ContabilidadCompraService::crear_comprobante($payload, $archivos);
         $status = ($res['success'] ?? false) ? 201 : 400;
+
+        return response()->json($res, $status);
+    }
+
+    /**
+     * Gestionar las evidencias de un comprobante de compra (agregar y/o eliminar).
+     *
+     * El cuerpo es multipart: `evidencias[]` con los archivos nuevos y
+     * `eliminar[]` con los `path_relativo` de las evidencias a quitar.
+     */
+    public function gestionar_evidencias(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'evidencias' => 'nullable|array',
+            'evidencias.*' => 'file',
+            'eliminar' => 'nullable|array',
+            'eliminar.*' => 'string',
+        ]);
+
+        $archivos = $request->file('evidencias', []);
+        if (! is_array($archivos)) {
+            $archivos = [$archivos];
+        }
+        $archivos = array_values(array_filter(
+            $archivos,
+            static fn ($archivo): bool => $archivo instanceof UploadedFile
+        ));
+
+        $eliminar = $request->input('eliminar', []);
+        if (! is_array($eliminar)) {
+            $eliminar = [$eliminar];
+        }
+        $eliminar = array_values(array_filter(
+            $eliminar,
+            static fn ($path): bool => is_string($path) && trim($path) !== ''
+        ));
+
+        $res = ContabilidadCompraService::gestionar_evidencias($id, $archivos, $eliminar);
+        $status = ($res['success'] ?? false) ? 200 : 400;
 
         return response()->json($res, $status);
     }

@@ -134,6 +134,7 @@ class ValidacionDistribucionData
                 lm.correlativo AS lote_correlativo,
                 lm.peso_neto AS lote_peso_neto,
                 lm.tiene_particion,
+                lm.id_proveedor_minero,
                 ru.id AS id_recepcion_unidad,
                 v.id AS id_vehiculo,
                 v.placa AS vehiculo_placa,
@@ -522,8 +523,13 @@ class ValidacionDistribucionData
      * - cumple_fechas: fecha_hora_peso_inicial y fecha_hora_peso_final no nulos.
      * - cumple_recepcion: id_vehiculo, id_conductor, id_empresa_transporte,
      *                    id_tipo_vehiculo, id_proveedor_minero,
-     *                    fecha_hora_ingreso, fecha_hora_salida no nulos.
+     *                    fecha_hora_ingreso no nulos.
      * - cumple: cumple_pesos AND cumple_fechas AND cumple_recepcion.
+     *
+     * El proveedor se evalua con la MISMA resolucion que el listado de
+     * particiones: COALESCE(recepcion, lote padre, recepcion padre). Una
+     * particion hereda el proveedor del lote, asi que su propia recepcion
+     * ficticia puede tenerlo en NULL sin que eso impida validar.
      *
      * Reglas a nivel lote:
      * - cumple_suma: ABS(SUM(participaciones.peso_neto) - lote.peso_neto) <= 0.01.
@@ -557,12 +563,13 @@ class ValidacionDistribucionData
                 ru.id_conductor,
                 ru.id_empresa_transporte,
                 ru.id_tipo_vehiculo,
-                ru.id_proveedor_minero,
+                COALESCE(ru.id_proveedor_minero, lm.id_proveedor_minero, ru_padre.id_proveedor_minero) AS id_proveedor_minero,
                 ru.fecha_hora_ingreso,
                 ru.fecha_hora_salida
             FROM particion_lote_mineral plm
             INNER JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
             LEFT JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
+            LEFT JOIN recepcion_unidad ru_padre ON ru_padre.id = lm.id_recepcion_unidad
             WHERE plm.id_lote_mineral IN ({$placeholders})
               AND plm.estado = 'Activo'
             ORDER BY plm.id_lote_mineral ASC, plm.id ASC

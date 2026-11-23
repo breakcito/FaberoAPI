@@ -19,6 +19,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/muestras-externas', 'get_muestras_externas');
         Route::post('/muestras-externas/iniciar', 'iniciar_muestra_externa');
         Route::post('/muestras-externas/{idMuestraExterna}/analisis', 'agregar_analisis_muestra_externa');
+        Route::delete('/muestras-externas/{idMuestraExterna}', 'eliminar_muestra_externa');
         Route::post('/muestras-externas/asociar-multiple', 'asociar_muestras_multiples_a_grupo');
         Route::post('/muestras-externas/{idMuestraExterna}/asociar', 'asociar_muestra_a_grupo');
         Route::get('/muestras-externas/asociadas-por-grupo', 'get_muestras_asociadas_por_grupo');

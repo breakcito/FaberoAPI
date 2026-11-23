@@ -187,7 +187,8 @@ class RecepcionUnidadesService
      * @param  array<string, mixed>  $campos  Claves admitidas: id_vehiculo,
      *                                        id_tipo_vehiculo, id_vehiculo_carreta,
      *                                        id_empresa_transporte, id_conductor,
-     *                                        id_proveedor_minero
+     *                                        id_proveedor_minero,
+     *                                        guia_remitente, guia_transportista
      */
     public static function actualizar_campos(int $id, array $campos, int $idEmpleado, ?string $motivo = null): array
     {
@@ -228,6 +229,38 @@ class RecepcionUnidadesService
             }
         }
 
+        // Unicidad de las guías por proveedor: una guía no puede repetirse en
+        // dos recepciones del mismo proveedor.
+        $editaGuias = array_intersect(
+            array_keys($campos),
+            CamposBloqueadosHelper::CAMPOS_TEXTO
+        );
+
+        if (! empty($editaGuias)) {
+            $idProveedor = array_key_exists('id_proveedor_minero', $campos)
+                ? $campos['id_proveedor_minero']
+                : $recepcion->id_proveedor_minero;
+
+            $guiaRemitente = array_key_exists('guia_remitente', $campos)
+                ? $campos['guia_remitente']
+                : $recepcion->guia_remitente;
+
+            $guiaTransportista = array_key_exists('guia_transportista', $campos)
+                ? $campos['guia_transportista']
+                : $recepcion->guia_transportista;
+
+            $errorGuia = RecepcionUnidadesData::validar_unicidad_guia_proveedor(
+                $idProveedor !== null ? (int) $idProveedor : null,
+                $guiaRemitente !== null ? trim((string) $guiaRemitente) : null,
+                $guiaTransportista !== null ? trim((string) $guiaTransportista) : null,
+                $id,
+            );
+
+            if ($errorGuia !== null) {
+                return ApiResponse::error($errorGuia, 409);
+            }
+        }
+
         // Validación de existencia (FKs lógicas, sin constraints en BD).
         $tablas = [
             'id_vehiculo' => 'vehiculo',
@@ -263,9 +296,18 @@ class RecepcionUnidadesService
 
                 foreach ($campos as $campo => $valor) {
                     $valorAnterior = $recepcion->{$campo};
-                    $valorNuevo = ($valor === null || $valor === '') ? null : (int) $valor;
+                    $esTexto = in_array($campo, CamposBloqueadosHelper::CAMPOS_TEXTO, true);
 
-                    if ((int) ($valorAnterior ?? 0) === (int) ($valorNuevo ?? 0)) {
+                    // Las guías son strings (serie-número); el resto son ids.
+                    $valorNuevo = ($valor === null || $valor === '')
+                        ? null
+                        : ($esTexto ? trim((string) $valor) : (int) $valor);
+
+                    $sinCambio = $esTexto
+                        ? (string) ($valorAnterior ?? '') === (string) ($valorNuevo ?? '')
+                        : (int) ($valorAnterior ?? 0) === (int) ($valorNuevo ?? 0);
+
+                    if ($sinCambio) {
                         continue;
                     }
 
@@ -318,6 +360,11 @@ class RecepcionUnidadesService
     {
         if ($valor === null || $valor === '') {
             return '— (vacío)';
+        }
+
+        // Las guías ya son texto legible (serie-número).
+        if (in_array($campo, CamposBloqueadosHelper::CAMPOS_TEXTO, true)) {
+            return (string) $valor;
         }
 
         $id = (int) $valor;

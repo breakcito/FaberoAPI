@@ -18,12 +18,13 @@ namespace App\Shared\Helpers;
  *    programación.
  *  - `fecha_estimada_llegada`: es una estimación de agenda, no un dato de la
  *    unidad.
- *  - las guías: se gestionan desde su propio flujo.
+ *  - `observacion`: la programación no registra observación, así que el
+ *    operador siempre puede anotarla al cierre de la unidad.
  */
 class CamposBloqueadosHelper
 {
     /**
-     * Campos que pueden quedar bloqueados.
+     * Campos que pueden quedar bloqueados (y editarse si no lo están).
      *
      * @var array<int, string>
      */
@@ -34,6 +35,19 @@ class CamposBloqueadosHelper
         'id_conductor',
         'id_tipo_vehiculo',
         'id_proveedor_minero',
+        'guia_remitente',
+        'guia_transportista',
+    ];
+
+    /**
+     * Campos de TEXTO dentro de `CAMPOS`: se guardan como string (serie y
+     * número de la guía), no como id referenciado.
+     *
+     * @var array<int, string>
+     */
+    public const CAMPOS_TEXTO = [
+        'guia_remitente',
+        'guia_transportista',
     ];
 
     /**
@@ -67,6 +81,8 @@ class CamposBloqueadosHelper
         'id_conductor' => 'Conductor',
         'id_tipo_vehiculo' => 'Tipo de vehículo',
         'id_proveedor_minero' => 'Proveedor minero',
+        'guia_remitente' => 'Guía remitente',
+        'guia_transportista' => 'Guía transportista',
     ];
 
     /**

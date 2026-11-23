@@ -15,6 +15,8 @@ use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Throwable;
 
 class ContabilidadCompraService
 {
@@ -57,30 +59,62 @@ class ContabilidadCompraService
             // 1. Validar que la valorización existe y está aprobada
             $valorizacion = ValorizacionCompra::find($idValorizacion);
             if (! $valorizacion) {
+                DB::rollBack();
+
                 return ApiResponse::error("La valorización con ID {$idValorizacion} no existe.");
             }
             if ($valorizacion->estado->value !== \App\Shared\Enums\ValorizacionCompra\EstadoValorizacionCompra::Aprobado->value) {
+                DB::rollBack();
+
                 return ApiResponse::error('Solo se pueden registrar comprobantes de valorizaciones aprobadas.');
             }
 
             // 2. Validar que no exista ya un comprobante para esta valorización
             if (ContabilidadCompraData::existe_comprobante_para_valorizacion($idValorizacion)) {
+                DB::rollBack();
+
                 return ApiResponse::error('Ya existe un comprobante activo para esta valorización.');
             }
 
-            // 3. Resolver Tipo de Cambio por la fecha_emision
+            // 3. Resolver Tipo de Cambio por la fecha_emision.
+            //    El tipo de cambio REGISTRADO es la referencia de trazabilidad
+            //    (se guarda en id_tipo_cambio). El valor APLICADO al comprobante
+            //    puede ser ajustado por el operador: si viene 'tipo_cambio_venta'
+            //    se usa ese, si no, el valor de venta del TC registrado.
             $fechaEmision = (string) $payload['fecha_emision'];
             $tipoCambio = TipoCambio::where('fecha', $fechaEmision)
                 ->where('estado', EstadoBase::Activo->value)
                 ->first();
+
+            $tipoCambioOperador = isset($payload['tipo_cambio_venta']) && $payload['tipo_cambio_venta'] !== null
+                ? (float) $payload['tipo_cambio_venta']
+                : null;
+
             if (! $tipoCambio) {
-                return ApiResponse::error(
-                    "No existe un tipo de cambio registrado para la fecha {$fechaEmision}. ".
-                    'Registre primero el tipo de cambio de esa jornada.'
-                );
+                if ($tipoCambioOperador === null || $tipoCambioOperador <= 0) {
+                    DB::rollBack();
+
+                    return ApiResponse::error(
+                        "No existe un tipo de cambio registrado para la fecha {$fechaEmision}. ".
+                        'Registre primero el tipo de cambio de esa jornada.'
+                    );
+                }
+
+                // Sin TC registrado solo se acepta el valor ingresado a mano por el operador.
+                $idTipoCambio = null;
+                $valorVenta = $tipoCambioOperador;
+            } else {
+                $idTipoCambio = (int) $tipoCambio->id;
+                $valorVenta = $tipoCambioOperador !== null
+                    ? $tipoCambioOperador
+                    : (float) $tipoCambio->valor_venta;
             }
 
-            $valorVenta = (float) $tipoCambio->valor_venta;
+            if ($valorVenta <= 0) {
+                DB::rollBack();
+
+                return ApiResponse::error('El tipo de cambio de venta debe ser mayor a 0.');
+            }
 
             // 4. Calcular importes derivados
             $rawIgv = isset($payload['porcentaje_igv']) && $payload['porcentaje_igv'] !== null
@@ -112,7 +146,7 @@ class ContabilidadCompraService
 
             $campos = [
                 'id_valorizacion_compra' => $idValorizacion,
-                'id_tipo_cambio' => (int) $tipoCambio->id,
+                'id_tipo_cambio' => $idTipoCambio,
                 'id_empleado_registro' => $idEmpleadoRegistro,
                 'serie' => strtoupper(trim((string) $payload['serie'])),
                 'numero' => trim((string) $payload['numero']),
@@ -150,6 +184,95 @@ class ContabilidadCompraService
 
             return ApiResponse::error('Error al crear comprobante: '.$e->getMessage());
         }
+    }
+
+    /**
+     * Gestionar las evidencias de un comprobante de compra: agregar archivos
+     * nuevos y/o eliminar los que ya estaban adjuntos.
+     *
+     * Solo se borra del disco lo que efectivamente estaba en la lista de
+     * evidencias del comprobante: nunca se aceptan rutas arbitrarias.
+     *
+     * @param  array<int,\Illuminate\Http\UploadedFile>  $archivosNuevos
+     * @param  array<int,string>  $pathsEliminar  path_relativo de las evidencias a quitar
+     */
+    public static function gestionar_evidencias(int $id, array $archivosNuevos = [], array $pathsEliminar = []): array
+    {
+        $comprobante = ComprobanteCompra::find($id);
+        if (! $comprobante) {
+            return ApiResponse::error("Comprobante con ID {$id} no encontrado.");
+        }
+
+        $evidenciasActuales = $comprobante->evidencias ?? [];
+        if (! is_array($evidenciasActuales)) {
+            $evidenciasActuales = json_decode((string) $evidenciasActuales, true) ?? [];
+        }
+
+        $pathsEliminar = array_values(array_unique(array_filter(
+            array_map(static fn ($path): string => is_string($path) ? trim($path) : '', $pathsEliminar),
+            static fn (string $path): bool => $path !== ''
+        )));
+
+        $nuevosGuardados = [];
+        if (! empty($archivosNuevos)) {
+            $nuevosGuardados = ArchivoHelper::guardarArchivos('comprobantes', $archivosNuevos);
+        }
+
+        $pathsEliminados = [];
+
+        DB::beginTransaction();
+        try {
+            $restantes = [];
+
+            foreach ($evidenciasActuales as $evidencia) {
+                $pathRelativo = is_array($evidencia) ? (string) ($evidencia['path_relativo'] ?? '') : '';
+
+                if ($pathRelativo !== '' && in_array($pathRelativo, $pathsEliminar, true)) {
+                    $pathsEliminados[] = $pathRelativo;
+
+                    continue;
+                }
+
+                $restantes[] = $evidencia;
+            }
+
+            $comprobante->evidencias = array_merge($restantes, $nuevosGuardados);
+            $comprobante->save();
+
+            DB::commit();
+        } catch (Exception $e) {
+            DB::rollBack();
+
+            // Los archivos nuevos quedaron huérfanos en el disco: se limpian.
+            foreach ($nuevosGuardados as $evidencia) {
+                $pathRelativo = (string) ($evidencia['path_relativo'] ?? '');
+                if ($pathRelativo === '') {
+                    continue;
+                }
+                try {
+                    Storage::disk('public')->delete($pathRelativo);
+                } catch (Throwable) {
+                    // El archivo huérfano ya no está en el disco: nada que limpiar.
+                }
+            }
+
+            return ApiResponse::error('Error al actualizar las evidencias del comprobante: '.$e->getMessage());
+        }
+
+        // El borrado físico se hace tras el commit: si la transacción falló, el
+        // comprobante sigue apuntando a los archivos originales.
+        foreach ($pathsEliminados as $pathRelativo) {
+            try {
+                Storage::disk('public')->delete($pathRelativo);
+            } catch (Throwable) {
+                // El archivo puede haber sido borrado antes: se ignora.
+            }
+        }
+
+        return ApiResponse::success(
+            ContabilidadCompraData::get_comprobante_by_id($id),
+            'Evidencias actualizadas correctamente.'
+        );
     }
 
     /**

@@ -399,8 +399,10 @@ class CierreLeyesData
      * Recalcular las leyes de cierre (humedad y recuperación) de un grupo a
      * partir de sus análisis.
      *
-     * La ley de cierre del grupo es el PROMEDIO de sus análisis válidos (> 0).
-     * Sin este recálculo el grupo se queda con 0 y, al aprobar una
+     * Regla de negocio: mandan las leyes YA REGISTRADAS en el grupo. Por eso
+     * el promedio se calcula sobre los análisis propios del grupo; los análisis
+     * de las muestras asociadas sólo se usan cuando el grupo no tiene leyes
+     * propias. Sin este recálculo el grupo se queda con 0 y, al aprobar una
      * valorización, esas leyes nunca llegan al lote mineral.
      */
     public static function recalcular_leyes_cierre_grupo(int $idGrupo): void
@@ -411,12 +413,7 @@ class CierreLeyesData
         ];
 
         foreach ($columnas as $columnaAnalisis => $columnaGrupo) {
-            $valores = DB::table('analisis_mineral')
-                ->where('id_grupo_analisis', $idGrupo)
-                ->where($columnaAnalisis, '>', 0)
-                ->pluck($columnaAnalisis)
-                ->map(static fn ($v) => (float) $v)
-                ->all();
+            $valores = self::obtener_leyes_para_cierre($idGrupo, $columnaAnalisis);
 
             if (empty($valores)) {
                 continue;
@@ -426,6 +423,42 @@ class CierreLeyesData
                 ->where('id', $idGrupo)
                 ->update([$columnaGrupo => round(array_sum($valores) / count($valores), 3)]);
         }
+    }
+
+    /**
+     * Valores válidos (> 0) de una ley para el cierre de un grupo.
+     *
+     * Se priorizan los análisis propios del grupo: si ya tiene leyes
+     * registradas, esas mandan y no se mezclan con las de las muestras
+     * asociadas. Sólo si el grupo no tiene leyes propias se toman las de las
+     * muestras asociadas.
+     *
+     * @return float[]
+     */
+    private static function obtener_leyes_para_cierre(int $idGrupo, string $columna): array
+    {
+        $valoresPropios = DB::table('analisis_mineral')
+            ->where('id_grupo_analisis', $idGrupo)
+            ->where(function ($q) {
+                $q->whereNull('id_muestra_externa')->orWhere('id_muestra_externa', 0);
+            })
+            ->where($columna, '>', 0)
+            ->pluck($columna)
+            ->map(static fn ($v) => (float) $v)
+            ->all();
+
+        if (! empty($valoresPropios)) {
+            return $valoresPropios;
+        }
+
+        return DB::table('analisis_mineral')
+            ->where('id_grupo_analisis', $idGrupo)
+            ->whereNotNull('id_muestra_externa')
+            ->where('id_muestra_externa', '>', 0)
+            ->where($columna, '>', 0)
+            ->pluck($columna)
+            ->map(static fn ($v) => (float) $v)
+            ->all();
     }
 
     /**
@@ -603,6 +636,38 @@ class CierreLeyesData
     }
 
     /**
+     * Eliminación FÍSICA de una muestra externa.
+     *
+     * Borra la fila de `muestra_externa` y TODOS sus análisis (los propios y
+     * los que ya estaban asociados a un grupo). Devuelve los ids de grupo
+     * afectados para que el service recalcule sus leyes de cierre.
+     *
+     * @return array{eliminada: bool, grupos_afectados: array<int, int>}
+     */
+    public static function eliminar_muestra_externa(int $idMuestra): array
+    {
+        return DB::transaction(function () use ($idMuestra) {
+            $gruposAfectados = DB::table('analisis_mineral')
+                ->where('id_muestra_externa', $idMuestra)
+                ->whereNotNull('id_grupo_analisis')
+                ->pluck('id_grupo_analisis')
+                ->map(static fn ($id): int => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+
+            $eliminada = DB::table('muestra_externa')->where('id', $idMuestra)->delete() > 0;
+
+            DB::table('analisis_mineral')->where('id_muestra_externa', $idMuestra)->delete();
+
+            return [
+                'eliminada' => $eliminada,
+                'grupos_afectados' => $gruposAfectados,
+            ];
+        });
+    }
+
+    /**
      * Confirmar cierre del lote mineral (indicador informativo de valor comercial)
      */
     public static function confirmar_lote(int $idLote, bool $conValorComercial, int $idEmpleado): bool
@@ -627,7 +692,7 @@ class CierreLeyesData
                 me.correlativo,
                 me.numero_correlativo,
                 me.codigo_cliente,
-                COALESCE(me.codigo_cliente, me.correlativo) AS nombre,
+                COALESCE(me.correlativo, me.codigo_cliente) AS nombre,
                 me.fecha_hora_ingreso,
                 me.created_at,
                 CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
@@ -847,7 +912,8 @@ class CierreLeyesData
         $nombreProveedorGrupo = (string) ($grupo->proveedor_grupo_nombre ?: "proveedor #{$grupo->id_proveedor_minero}");
 
         foreach ($muestras as $m) {
-            $codigo = (string) ($m->codigo_cliente ?: ($m->correlativo ?: "Muestra #{$m->id}"));
+            // El RC (correlativo) tiene prioridad sobre el código cliente.
+            $codigo = (string) ($m->correlativo ?: ($m->codigo_cliente ?: "Muestra #{$m->id}"));
 
             // Muestra sin proveedor: no se puede verificar la regla, y asociarla
             // a un grupo con proveedor contaminaría el cierre de ese proveedor.
@@ -866,7 +932,11 @@ class CierreLeyesData
     }
 
     /**
-     * Asociar múltiples muestras externas a un grupo de análisis de un lote calculando promedios de humedad y recuperación
+     * Asociar múltiples muestras externas a un grupo de análisis de un lote.
+     *
+     * Regla de negocio de humedad y recuperación: si el grupo ya tiene leyes
+     * registradas mandan las del grupo (las de la muestra no se mezclan con
+     * ellas); si el grupo no tiene leyes, se toman las de la muestra.
      *
      * @param  int[]  $idsMuestraExterna
      */
@@ -877,42 +947,40 @@ class CierreLeyesData
             return false;
         }
 
-        // 1. Obtener valores de humedad y recuperación del grupo o de sus análisis actuales
+        // 1. Leyes ya registradas en el grupo (propias del grupo, no de muestras).
+        //    Si el grupo tiene cierre vigente se usa ese; si no, se busca en los
+        //    análisis propios del grupo.
         $humedadGrupo = (float) ($grupoDestino->ley_humedad_cierre ?? 0);
         $recupGrupo = (float) ($grupoDestino->ley_recuperacion_cierre ?? 0);
 
-        $existentesAnalisisGrupo = DB::table('analisis_mineral')
+        $analisisPropios = DB::table('analisis_mineral')
             ->where('id_grupo_analisis', $idGrupoDestino)
+            ->where(function ($q) {
+                $q->whereNull('id_muestra_externa')->orWhere('id_muestra_externa', 0);
+            })
             ->get();
 
         if ($humedadGrupo <= 0) {
-            foreach ($existentesAnalisisGrupo as $eg) {
-                if ((float) $eg->ley_humedad > 0) {
-                    $humedadGrupo = (float) $eg->ley_humedad;
+            foreach ($analisisPropios as $ap) {
+                if ((float) $ap->ley_humedad > 0) {
+                    $humedadGrupo = (float) $ap->ley_humedad;
                     break;
                 }
             }
         }
 
         if ($recupGrupo <= 0) {
-            foreach ($existentesAnalisisGrupo as $eg) {
-                if ((float) $eg->ley_recuperacion > 0) {
-                    $recupGrupo = (float) $eg->ley_recuperacion;
+            foreach ($analisisPropios as $ap) {
+                if ((float) $ap->ley_recuperacion > 0) {
+                    $recupGrupo = (float) $ap->ley_recuperacion;
                     break;
                 }
             }
         }
 
-        // 2. Recolectar valores válidos (> 0) de humedad y recuperación
-        $valoresHumedad = [];
-        if ($humedadGrupo > 0) {
-            $valoresHumedad[] = $humedadGrupo;
-        }
-
-        $valoresRecuperacion = [];
-        if ($recupGrupo > 0) {
-            $valoresRecuperacion[] = $recupGrupo;
-        }
+        // 2. Valores válidos (> 0) de humedad y recuperación de las muestras a asociar
+        $valoresHumedadMuestra = [];
+        $valoresRecuperacionMuestra = [];
 
         $analisisMuestras = DB::table('analisis_mineral')
             ->whereIn('id_muestra_externa', $idsMuestraExterna)
@@ -921,17 +989,31 @@ class CierreLeyesData
         foreach ($analisisMuestras as $am) {
             $h = (float) $am->ley_humedad;
             if ($h > 0) {
-                $valoresHumedad[] = $h;
+                $valoresHumedadMuestra[] = $h;
             }
             $r = (float) $am->ley_recuperacion;
             if ($r > 0) {
-                $valoresRecuperacion[] = $r;
+                $valoresRecuperacionMuestra[] = $r;
             }
         }
 
-        // 3. Calcular promedios de los valores válidos (> 0)
-        $promedioHumedad = count($valoresHumedad) > 0 ? (array_sum($valoresHumedad) / count($valoresHumedad)) : null;
-        $promedioRecuperacion = count($valoresRecuperacion) > 0 ? (array_sum($valoresRecuperacion) / count($valoresRecuperacion)) : null;
+        /*
+         * 3. Regla de negocio:
+         * - Si el grupo YA tiene leyes de humedad/recuperación registradas, mandan
+         *   las del grupo: las de la muestra no se mezclan con ellas.
+         * - Si el grupo no tiene leyes, se toman las de la muestra.
+         */
+        $promedioHumedad = $humedadGrupo > 0
+            ? $humedadGrupo
+            : (count($valoresHumedadMuestra) > 0
+                ? (array_sum($valoresHumedadMuestra) / count($valoresHumedadMuestra))
+                : null);
+
+        $promedioRecuperacion = $recupGrupo > 0
+            ? $recupGrupo
+            : (count($valoresRecuperacionMuestra) > 0
+                ? (array_sum($valoresRecuperacionMuestra) / count($valoresRecuperacionMuestra))
+                : null);
 
         // 4. Asociar análisis de cada muestra al grupo destino
         $maxEnsayo = (int) (DB::table('analisis_mineral')
@@ -1031,7 +1113,7 @@ class CierreLeyesData
             SELECT
                 me.id AS id_muestra_externa,
                 me.correlativo,
-                COALESCE(me.codigo_cliente, me.correlativo) AS codigo_cliente,
+                me.codigo_cliente,
                 me.fecha_hora_ingreso,
                 p.razon_social AS proveedor_nombre,
                 GROUP_CONCAT(DISTINCT COALESCE(lab.nombre, "Sin Laboratorio") ORDER BY lab.nombre SEPARATOR ", ") AS laboratorio_nombre,

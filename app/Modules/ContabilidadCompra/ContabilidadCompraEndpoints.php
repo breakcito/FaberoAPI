@@ -11,6 +11,7 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::post('/comprobantes', 'crear_comprobante');
         Route::post('/comprobantes/{id}/aprobar', 'aprobar_comprobante');
         Route::post('/comprobantes/{id}/anular', 'anular_comprobante');
+        Route::put('/comprobantes/{id}/evidencias', 'gestionar_evidencias');
 
         Route::get('/comprobantes/{id}/pagos', 'listar_pagos');
         Route::post('/comprobantes/{id}/pagos', 'registrar_pago');

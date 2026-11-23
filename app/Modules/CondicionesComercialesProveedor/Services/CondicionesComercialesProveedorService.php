@@ -39,7 +39,8 @@ class CondicionesComercialesProveedorService
         float $maquila,
         float $recuperacion,
         float $consumo,
-        float $riesgoComercial
+        float $riesgoComercial,
+        ?string $observacion = null
     ): array {
         $proveedor = Proveedor::find($idProveedor);
         if (! $proveedor) {
@@ -66,6 +67,7 @@ class CondicionesComercialesProveedorService
                 'recuperacion' => $recuperacion,
                 'consumo' => $consumo,
                 'riesgo_comercial' => $riesgoComercial,
+                'observacion' => $observacion,
                 'estado' => EstadoBase::Activo->value,
                 'created_at' => Carbon::now(),
             ]);
@@ -93,7 +95,8 @@ class CondicionesComercialesProveedorService
         float $maquila,
         float $recuperacion,
         float $consumo,
-        float $riesgoComercial
+        float $riesgoComercial,
+        ?string $observacion = null
     ): array {
         $condicion = CondicionComercialProveedor::find($id);
         if (! $condicion) {
@@ -118,6 +121,7 @@ class CondicionesComercialesProveedorService
             $condicion->recuperacion = $recuperacion;
             $condicion->consumo = $consumo;
             $condicion->riesgo_comercial = $riesgoComercial;
+            $condicion->observacion = $observacion;
             $condicion->save();
 
             DB::commit();

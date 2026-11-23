@@ -5,6 +5,7 @@ namespace App\Modules\AnticiposPlanta\Controllers;
 use App\Modules\AnticiposPlanta\Services\AnticiposPlantaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 
 class AnticiposPlantaController
 {
@@ -72,6 +73,53 @@ class AnticiposPlantaController
             $id,
             (string) $request->input('motivo'),
             (int) $authUser->id_empleado
+        );
+
+        return response()->json($response);
+    }
+
+    /**
+     * Gestionar las evidencias de un anticipo de planta (agregar y/o eliminar).
+     */
+    public function gestionar_evidencias(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'evidencias' => 'nullable|array',
+            'evidencias.*' => 'file',
+            'eliminar' => 'nullable|array',
+            'eliminar.*' => 'string',
+            'motivo' => 'nullable|string|max:255',
+        ]);
+
+        $authUser = $request->attributes->get('auth_user');
+
+        $archivos = $request->file('evidencias', []);
+        if (! is_array($archivos)) {
+            $archivos = [$archivos];
+        }
+        $archivos = array_values(array_filter(
+            $archivos,
+            static fn ($archivo): bool => $archivo instanceof UploadedFile
+        ));
+
+        $eliminar = $request->input('eliminar', []);
+        if (! is_array($eliminar)) {
+            $eliminar = [$eliminar];
+        }
+        $eliminar = array_values(array_filter(
+            $eliminar,
+            static fn ($path): bool => is_string($path) && trim($path) !== ''
+        ));
+
+        $motivo = $request->input('motivo');
+        $motivo = is_string($motivo) && trim($motivo) !== '' ? trim($motivo) : null;
+
+        $response = AnticiposPlantaService::gestionar_evidencias(
+            $id,
+            $archivos,
+            $eliminar,
+            (int) $authUser->id_empleado,
+            $motivo
         );
 
         return response()->json($response);

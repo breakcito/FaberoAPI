@@ -7,6 +7,7 @@ use App\Shared\Helpers\ArchivoHelper;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class CierreLeyesService
 {
@@ -276,6 +277,85 @@ class CierreLeyesService
             return ApiResponse::success(null, 'Análisis eliminado correctamente');
         } catch (\Exception $e) {
             return ApiResponse::error('Error al eliminar análisis: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Eliminación FÍSICA de una muestra externa.
+     *
+     * Borra la muestra y todos sus ensayos. Los grupos de análisis que tenían
+     * ensayos de esta muestra recalculan sus leyes de cierre (humedad y
+     * recuperación), porque ya no pueden promediar con ellos.
+     *
+     * No se permite borrar una muestra cuyos ensayos formen parte de una
+     * propuesta de valorización: ese estado está congelado por el proceso
+     * comercial.
+     */
+    public static function eliminar_muestra_externa(int $idMuestra): array
+    {
+        try {
+            $muestra = CierreLeyesData::get_muestra_externa_by_id($idMuestra);
+            if (! $muestra) {
+                return ApiResponse::error('Muestra externa no encontrada.', 404);
+            }
+
+            $grupos = DB::table('analisis_mineral')
+                ->where('id_muestra_externa', $idMuestra)
+                ->whereNotNull('id_grupo_analisis')
+                ->pluck('id_grupo_analisis')
+                ->map(static fn ($id): int => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+
+            foreach ($grupos as $idGrupo) {
+                $grupo = CierreLeyesData::get_grupo_by_id($idGrupo);
+                if ($grupo && ($grupo->tiene_propuesta_oro || $grupo->tiene_propuesta_plata)) {
+                    return ApiResponse::error(
+                        'No se puede eliminar una muestra con ensayos en un grupo que se encuentra en una propuesta de valorización.'
+                    );
+                }
+            }
+
+            // Archivos de evidencia de los ensayos de la muestra: se borran
+            // del disco antes de eliminar las filas.
+            $analisis = DB::table('analisis_mineral')
+                ->where('id_muestra_externa', $idMuestra)
+                ->get(['documentos']);
+
+            $resultado = CierreLeyesData::eliminar_muestra_externa($idMuestra);
+
+            if (! $resultado['eliminada']) {
+                return ApiResponse::error('No se pudo eliminar la muestra externa.');
+            }
+
+            foreach ($analisis as $fila) {
+                $docs = is_array($fila->documentos)
+                    ? $fila->documentos
+                    : (json_decode((string) $fila->documentos, true) ?? []);
+
+                foreach ($docs as $doc) {
+                    $path = is_array($doc) ? (string) ($doc['path_relativo'] ?? '') : '';
+                    if ($path === '') {
+                        continue;
+                    }
+                    try {
+                        Storage::disk('public')->delete($path);
+                    } catch (\Throwable) {
+                        // El archivo puede no existir: no interrumpe el borrado.
+                    }
+                }
+            }
+
+            // Los grupos afectados recalculan sus leyes de cierre: ya no
+            // pueden promediar con los ensayos de la muestra eliminada.
+            foreach ($resultado['grupos_afectados'] as $idGrupo) {
+                CierreLeyesData::recalcular_leyes_cierre_grupo((int) $idGrupo);
+            }
+
+            return ApiResponse::success(null, 'Muestra externa eliminada correctamente');
+        } catch (\Exception $e) {
+            return ApiResponse::error('Error al eliminar la muestra externa: '.$e->getMessage());
         }
     }
 

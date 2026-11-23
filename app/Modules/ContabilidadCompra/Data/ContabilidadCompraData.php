@@ -74,7 +74,7 @@ class ContabilidadCompraData
             INNER JOIN valorizacion_compra vc ON vc.id = cc.id_valorizacion_compra
             INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
             INNER JOIN concesion c ON c.id = vc.id_concesion
-            INNER JOIN tipo_cambio tc ON tc.id = cc.id_tipo_cambio
+            LEFT JOIN tipo_cambio tc ON tc.id = cc.id_tipo_cambio
             INNER JOIN empleado emp_reg ON emp_reg.id = cc.id_empleado_registro
             LEFT JOIN empleado emp_sol_oc ON emp_sol_oc.id = vc.id_empleado_solicita_oc
             WHERE 1 = 1
@@ -220,7 +220,7 @@ class ContabilidadCompraData
             INNER JOIN valorizacion_compra vc ON vc.id = cc.id_valorizacion_compra
             INNER JOIN proveedor p ON p.id = vc.id_proveedor_minero
             INNER JOIN concesion c ON c.id = vc.id_concesion
-            INNER JOIN tipo_cambio tc ON tc.id = cc.id_tipo_cambio
+            LEFT JOIN tipo_cambio tc ON tc.id = cc.id_tipo_cambio
             INNER JOIN empleado emp_reg ON emp_reg.id = cc.id_empleado_registro
             LEFT JOIN empleado emp_sol_oc ON emp_sol_oc.id = vc.id_empleado_solicita_oc
             WHERE cc.id = :id
@@ -280,7 +280,7 @@ class ContabilidadCompraData
     {
         $row->id = (int) $row->id;
         $row->id_valorizacion_compra = (int) $row->id_valorizacion_compra;
-        $row->id_tipo_cambio = (int) $row->id_tipo_cambio;
+        $row->id_tipo_cambio = $row->id_tipo_cambio !== null ? (int) $row->id_tipo_cambio : null;
         $row->id_empleado_registro = (int) $row->id_empleado_registro;
         $row->id_proveedor = (int) $row->id_proveedor;
         if (isset($row->tipo_cambio_valor_compra)) {
