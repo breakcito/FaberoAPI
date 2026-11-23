@@ -7,6 +7,8 @@ Route::middleware('auth.jwt.custom')->group(function () {
     Route::prefix('guias-primer-tramo')->controller(GuiasPrimerTramoController::class)->group(function () {
         Route::get('/', 'get_guias');
         Route::get('/filtros-metadata', 'get_filtros_metadata');
+        Route::get('/unidades', 'get_unidades_disponibles');
+        Route::get('/unidades/{idUnidad}/proveedores', 'get_proveedores_unidad');
         Route::post('/validar-duplicado', 'validar_duplicado');
         Route::get('/{id}', 'get_guia_by_id');
         Route::post('/', 'crear_guia');

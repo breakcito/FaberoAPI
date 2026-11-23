@@ -44,6 +44,27 @@ class GuiasPrimerTramoController extends Controller
     }
 
     /**
+     * Listar las unidades (recepciones de unidad) que todavía tienen items de
+     * mineral pendientes de asociar a una guía de primer tramo.
+     */
+    public function get_unidades_disponibles(Request $request): JsonResponse
+    {
+        $idSucursal = $request->query('id_sucursal');
+        $idSucursal = $idSucursal !== null && $idSucursal !== '' ? (int) $idSucursal : null;
+
+        return response()->json(GuiasPrimerTramoService::get_unidades_disponibles($idSucursal));
+    }
+
+    /**
+     * Listar los proveedores de la carga de una unidad. Alimenta el filtro del
+     * selector de proveedor del modal de registro de guía.
+     */
+    public function get_proveedores_unidad(Request $request, int $idUnidad): JsonResponse
+    {
+        return response()->json(GuiasPrimerTramoService::get_proveedores_unidad($idUnidad));
+    }
+
+    /**
      * Obtener una guía específica.
      */
     public function get_guia_by_id(Request $request, int $id): JsonResponse

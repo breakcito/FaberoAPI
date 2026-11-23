@@ -22,6 +22,21 @@ use Illuminate\Support\Facades\Log;
 class RecepcionUnidadesService
 {
     /**
+     * Campos que ya no son columnas de `recepcion_unidad`.
+     *
+     * El proveedor de la unidad vive ahora en `proveedor_recepcion` y las
+     * guías en la columna JSON `guias`, así que se editan por sus propios
+     * endpoints (`/proveedores` y `/guias`).
+     *
+     * @var array<int, string>
+     */
+    private const CAMPOS_RETIRADOS = [
+        'id_proveedor_minero',
+        'guia_remitente',
+        'guia_transportista',
+    ];
+
+    /**
      * Obtener listado de recepciones filtradas.
      */
     public static function get_recepciones(array $filters): array
@@ -48,15 +63,35 @@ class RecepcionUnidadesService
 
     /**
      * Obtener los datos estructurados para el Ticket de Ingreso de Vehículos con Carga.
+     *
+     * `idProveedor` acota el ticket a UN proveedor de la carga y `idGuia` a
+     * UNA guía de primer tramo concreta (que identifica al proveedor).
      */
-    public static function get_ticket_ingreso(int $id, ?int $idGuia = null): array
+    public static function get_ticket_ingreso(int $id, ?int $idGuia = null, ?int $idProveedor = null): array
     {
-        $ticketInfo = RecepcionUnidadesData::get_ticket_ingreso_info($id, $idGuia);
+        $ticketInfo = RecepcionUnidadesData::get_ticket_ingreso_info($id, $idGuia, $idProveedor);
         if (! $ticketInfo) {
             return ApiResponse::error('No se encontró la recepción de unidad o no se pudo generar el ticket.', 404);
         }
 
         return ApiResponse::success($ticketInfo, 'Ticket de ingreso obtenido correctamente');
+    }
+
+    /**
+     * Listar los tickets de ingreso disponibles de una recepción de unidad.
+     *
+     * Una unidad puede traer la carga de varios proveedores: cada uno tiene su
+     * propio ticket de ingreso.
+     */
+    public static function get_tickets_ingreso(int $id): array
+    {
+        if (! RecepcionUnidad::find($id)) {
+            return ApiResponse::error('No se encontró el registro de recepción.', 404);
+        }
+
+        $tickets = RecepcionUnidadesData::get_tickets_ingreso($id);
+
+        return ApiResponse::success($tickets, 'Tickets de ingreso obtenidos correctamente');
     }
 
     /**
@@ -72,30 +107,32 @@ class RecepcionUnidadesService
     /**
      * Guardar archivos de evidencias y crear el registro de recepción.
      *
-     * @param  array  $data  Datos básicos. Claves opcionales para archivos de guías:
+     * @param  array  $data  Datos básicos. Claves opcionales para el contrato
+     *                       de guías y proveedores:
+     *                       - proveedores: int[] (ids de proveedor de la carga)
+     *                       - guias: array (una entrada por proveedor)
      *                       - guia_remitente_file: UploadedFile|null
      *                       - guia_transportista_file: UploadedFile|null
-     *                       - documentos_programacion_existentes: array con estado actual
+     *                       - documentos_programacion_existentes: array con
+     *                       los archivos ya adjuntos (formato legacy)
      */
     public static function crear_recepcion(array $data, array $archivos, ?array $visitaData = null): array
     {
-        // Resolver documentos_programacion a partir de archivos subidos + existentes.
-        $data = self::resolver_documentos_programacion(
-            $data,
-            $data['guia_remitente_file'] ?? null,
-            $data['guia_transportista_file'] ?? null,
-            is_array($data['documentos_programacion_existentes'] ?? null) ? $data['documentos_programacion_existentes'] : null,
-        );
+        // Resolver el contrato de proveedores y guías del modelo nuevo.
+        $data = self::resolver_contrato_guias($data);
 
         // Validar unicidad de guías por proveedor.
-        $erroresUnicidad = RecepcionUnidadesData::validar_unicidad_guia_proveedor(
-            $data['id_proveedor_minero'] ?? null,
-            $data['guia_remitente'] ?? null,
-            $data['guia_transportista'] ?? null,
-            null,
-        );
-        if ($erroresUnicidad !== null) {
-            return ApiResponse::error($erroresUnicidad, 409);
+        foreach ($data['guias'] as $guia) {
+            $errorGuia = RecepcionUnidadesData::validar_unicidad_guia_proveedor(
+                (int) $guia['id_proveedor'],
+                $guia['guia_remitente'] ?? null,
+                $guia['guia_transportista'] ?? null,
+                null,
+            );
+
+            if ($errorGuia !== null) {
+                return ApiResponse::error($errorGuia, 409);
+            }
         }
 
         // Guardar los archivos de evidencias físicas en storage/app/public/recepciones
@@ -141,32 +178,73 @@ class RecepcionUnidadesService
     }
 
     /**
-     * Resolver el estado final de documentos_programacion mezclando archivos existentes y nuevos.
+     * Resolver el contrato de proveedores y guías de la recepción.
+     *
+     * Acepta el modelo nuevo (`proveedores` + `guias`) y, por compatibilidad,
+     * el formulario de registro actual que manda un único proveedor y un
+     * único par de guías planas (`id_proveedor_minero`, `guia_remitente`,
+     * `guia_transportista`) junto con sus archivos.
+     *
+     * En recepción solo se capturan las guías; los archivos se definen en la
+     * programación. Los archivos que llegue el formulario actual se adjuntan a
+     * la guía del proveedor para no perderlos.
      */
-    private static function resolver_documentos_programacion(
-        array $data,
-        ?UploadedFile $guiaRemitente,
-        ?UploadedFile $guiaTransportista,
-        ?array $existentes,
-    ): array {
-        $existentes = $existentes ?? [];
-        $documentos = [
-            'guia_remitente' => $existentes['guia_remitente'] ?? null,
-            'guia_transportista' => $existentes['guia_transportista'] ?? null,
-        ];
-
-        if ($guiaRemitente instanceof UploadedFile && $guiaRemitente->isValid()) {
-            $subidos = ArchivoHelper::guardarArchivos('documentos-programacion', [$guiaRemitente]);
-            $documentos['guia_remitente'] = $subidos[0] ?? null;
-        }
-        if ($guiaTransportista instanceof UploadedFile && $guiaTransportista->isValid()) {
-            $subidos = ArchivoHelper::guardarArchivos('documentos-programacion', [$guiaTransportista]);
-            $documentos['guia_transportista'] = $subidos[0] ?? null;
+    private static function resolver_contrato_guias(array $data): array
+    {
+        $guias = [];
+        foreach (($data['guias'] ?? []) as $entrada) {
+            if (is_array($entrada)) {
+                $guias[] = $entrada;
+            }
         }
 
-        $data['documentos_programacion'] = ($documentos['guia_remitente'] || $documentos['guia_transportista'])
-            ? $documentos
+        $proveedores = [];
+        foreach (($data['proveedores'] ?? []) as $idProveedor) {
+            $idProveedor = (int) $idProveedor;
+            if ($idProveedor > 0 && ! in_array($idProveedor, $proveedores, true)) {
+                $proveedores[] = $idProveedor;
+            }
+        }
+
+        $idProveedorLegacy = isset($data['id_proveedor_minero']) ? (int) $data['id_proveedor_minero'] : 0;
+        if ($idProveedorLegacy > 0 && ! in_array($idProveedorLegacy, $proveedores, true)) {
+            $proveedores[] = $idProveedorLegacy;
+        }
+
+        if (empty($guias) && $idProveedorLegacy > 0) {
+            $guias[] = [
+                'id_proveedor' => $idProveedorLegacy,
+                'guia_remitente' => $data['guia_remitente'] ?? '',
+                'guia_transportista' => $data['guia_transportista'] ?? '',
+            ];
+        }
+
+        $guiaRemitenteFile = $data['guia_remitente_file'] ?? null;
+        $guiaTransportistaFile = $data['guia_transportista_file'] ?? null;
+        $existentes = is_array($data['documentos_programacion_existentes'] ?? null)
+            ? $data['documentos_programacion_existentes']
             : null;
+
+        $hayArchivoNuevo = ($guiaRemitenteFile instanceof UploadedFile && $guiaRemitenteFile->isValid())
+            || ($guiaTransportistaFile instanceof UploadedFile && $guiaTransportistaFile->isValid());
+
+        if (($hayArchivoNuevo || $existentes !== null) && ! empty($guias)) {
+            $indice = count($guias) - 1;
+
+            if ($existentes !== null) {
+                $guias[$indice]['guia_remitente_archivo'] = $existentes['guia_remitente'] ?? null;
+                $guias[$indice]['guia_transportista_archivo'] = $existentes['guia_transportista'] ?? null;
+            }
+
+            if ($guiaRemitenteFile instanceof UploadedFile && $guiaRemitenteFile->isValid()) {
+                $subidos = ArchivoHelper::guardarArchivos('documentos-programacion', [$guiaRemitenteFile]);
+                $guias[$indice]['guia_remitente_archivo'] = $subidos[0] ?? null;
+            }
+            if ($guiaTransportistaFile instanceof UploadedFile && $guiaTransportistaFile->isValid()) {
+                $subidos = ArchivoHelper::guardarArchivos('documentos-programacion', [$guiaTransportistaFile]);
+                $guias[$indice]['guia_transportista_archivo'] = $subidos[0] ?? null;
+            }
+        }
 
         unset(
             $data['guia_remitente_file'],
@@ -174,7 +252,467 @@ class RecepcionUnidadesService
             $data['documentos_programacion_existentes'],
         );
 
+        $data['proveedores'] = $proveedores;
+        $data['guias'] = $guias;
+
         return $data;
+    }
+
+    /**
+     * Listar los proveedores de una recepción de unidad.
+     */
+    public static function get_proveedores(int $id): array
+    {
+        if (! RecepcionUnidad::find($id)) {
+            return ApiResponse::error('No se encontró el registro de recepción.', 404);
+        }
+
+        $proveedores = RecepcionUnidadesData::get_proveedores_recepcion($id);
+
+        return ApiResponse::success($proveedores, 'Proveedores de la recepción obtenidos correctamente');
+    }
+
+    /**
+     * Sincronizar la lista de proveedores de una recepción de unidad.
+     *
+     * Un proveedor que ya tiene cargas registradas en la unidad no se puede
+     * quitar: el mineral pertenece a ese proveedor. Las guías de los
+     * proveedores que sí se quitan se eliminan del contrato, para que no
+     * queden guías huérfanas sin proveedor en la carga.
+     *
+     * @param  array<int, int>  $idsProveedor
+     */
+    public static function set_proveedores(int $id, array $idsProveedor, int $idEmpleado): array
+    {
+        $recepcion = RecepcionUnidad::find($id);
+        if (! $recepcion) {
+            return ApiResponse::error('No se encontró el registro de recepción.', 404);
+        }
+
+        $anteriores = RecepcionUnidadesData::get_proveedores_recepcion($id);
+        $nuevosIds = [];
+        foreach ($idsProveedor as $idProveedor) {
+            $idProveedor = (int) $idProveedor;
+            if ($idProveedor > 0 && ! in_array($idProveedor, $nuevosIds, true)) {
+                $nuevosIds[] = $idProveedor;
+            }
+        }
+
+        foreach ($anteriores as $proveedor) {
+            $idProveedor = (int) $proveedor['id_proveedor'];
+            if (in_array($idProveedor, $nuevosIds, true)) {
+                continue;
+            }
+
+            $cargas = self::cargas_de_proveedor($id, $idProveedor);
+            if (! empty($cargas)) {
+                return ApiResponse::error(
+                    'No se puede quitar '.$proveedor['razon_social'].' porque la unidad ya tiene '
+                    .implode(' y ', $cargas).' con ese proveedor.',
+                    422
+                );
+            }
+        }
+
+        try {
+            $proveedores = DB::transaction(function () use ($id, $nuevosIds, $recepcion, $idEmpleado, $anteriores): array {
+                $proveedores = RecepcionUnidadesData::sync_proveedores_recepcion($id, $nuevosIds);
+
+                self::eliminar_guias_de_proveedores_quitados($recepcion, $anteriores, $nuevosIds, $idEmpleado);
+
+                return $proveedores;
+            });
+        } catch (\InvalidArgumentException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        }
+
+        $cambios = self::diff_proveedores($anteriores, $proveedores);
+        if (! empty($cambios)) {
+            self::registrar_log_cambios(
+                $recepcion,
+                $idEmpleado,
+                'Edición de proveedores de la recepción',
+                $cambios
+            );
+        }
+
+        return ApiResponse::success($proveedores, 'Proveedores de la recepción actualizados correctamente');
+    }
+
+    /**
+     * Cargas ya registradas en la unidad para un proveedor.
+     *
+     * @return array<int, string> Descripción de las cargas encontradas.
+     */
+    private static function cargas_de_proveedor(int $idRecepcion, int $idProveedor): array
+    {
+        $lotes = DB::table('lote_mineral')
+            ->where('id_recepcion_unidad', $idRecepcion)
+            ->where('id_proveedor_minero', $idProveedor)
+            ->count();
+
+        $particiones = DB::table('particion_lote_mineral as plm')
+            ->join('lote_mineral as lm', 'lm.id', '=', 'plm.id_lote_mineral')
+            ->where('plm.id_recepcion_unidad', $idRecepcion)
+            ->where('lm.id_proveedor_minero', $idProveedor)
+            ->count();
+
+        $descripciones = [];
+        if ($lotes > 0) {
+            $descripciones[] = $lotes.($lotes === 1 ? ' lote' : ' lotes');
+        }
+        if ($particiones > 0) {
+            $descripciones[] = $particiones.($particiones === 1 ? ' partición' : ' particiones');
+        }
+
+        return $descripciones;
+    }
+
+    /**
+     * Eliminar del contrato de guías las entradas de los proveedores que se
+     * quitaron de la carga.
+     *
+     * La guía de la unidad (`id_proveedor = 0`) se conserva siempre: no
+     * pertenece a ningún proveedor de la carga.
+     *
+     * @param  array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>  $anteriores
+     * @param  array<int, int>  $nuevosIds
+     */
+    private static function eliminar_guias_de_proveedores_quitados(
+        RecepcionUnidad $recepcion,
+        array $anteriores,
+        array $nuevosIds,
+        int $idEmpleado
+    ): void {
+        $guias = RecepcionUnidadesData::get_guias($recepcion->id);
+        if (empty($guias)) {
+            return;
+        }
+
+        $conservadas = [];
+        $eliminadas = [];
+        foreach ($guias as $guia) {
+            $idProveedor = (int) $guia['id_proveedor'];
+            if ($idProveedor === 0 || in_array($idProveedor, $nuevosIds, true)) {
+                $conservadas[] = $guia;
+
+                continue;
+            }
+
+            $eliminadas[] = $guia;
+        }
+
+        if (empty($eliminadas)) {
+            return;
+        }
+
+        RecepcionUnidadesData::reemplazar_guias($recepcion->id, $conservadas);
+
+        $razones = [];
+        foreach ($anteriores as $proveedor) {
+            $idProveedor = (int) $proveedor['id_proveedor'];
+            if (in_array($idProveedor, $nuevosIds, true)) {
+                continue;
+            }
+            foreach ($eliminadas as $guia) {
+                if ((int) $guia['id_proveedor'] === $idProveedor) {
+                    $razones[$idProveedor] = $proveedor['razon_social'];
+                    break;
+                }
+            }
+        }
+
+        $cambios = [];
+        foreach ($eliminadas as $guia) {
+            $cambios[] = [
+                'campo_bd' => 'guias',
+                'campo' => 'Guía eliminada',
+                'valor_anterior' => self::resumen_guia($guia),
+                'valor_nuevo' => null,
+            ];
+        }
+
+        self::registrar_log_cambios(
+            $recepcion,
+            $idEmpleado,
+            'Guías retiradas al quitar proveedores de la carga',
+            $cambios
+        );
+    }
+
+    /**
+     * Obtener las guías normalizadas de una recepción de unidad.
+     */
+    public static function get_guias(int $id): array
+    {
+        if (! RecepcionUnidad::find($id)) {
+            return ApiResponse::error('No se encontró el registro de recepción.', 404);
+        }
+
+        $guias = RecepcionUnidadesData::get_guias($id);
+
+        return ApiResponse::success($guias, 'Guías de la recepción obtenidas correctamente');
+    }
+
+    /**
+     * Reemplazar el array de guías de una recepción de unidad.
+     *
+     * @param  array<int, mixed>  $guias
+     */
+    public static function set_guias(int $id, array $guias, int $idEmpleado): array
+    {
+        $recepcion = RecepcionUnidad::find($id);
+        if (! $recepcion) {
+            return ApiResponse::error('No se encontró el registro de recepción.', 404);
+        }
+
+        $anteriores = RecepcionUnidadesData::get_guias($id);
+
+        try {
+            $normalizadas = RecepcionUnidadesData::preparar_guias($guias);
+        } catch (\InvalidArgumentException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        }
+
+        // Las guías registradas en una PROGRAMACIÓN quedan bloqueadas: no se
+        // pueden modificar desde la recepción. Una programación que todavía
+        // no confirmó la llegada sí puede editar sus propias guías.
+        $esProgramacionPendiente = (bool) $recepcion->es_programacion
+            && empty($recepcion->id_empleado_recepcion);
+
+        $errorBloqueo = $esProgramacionPendiente
+            ? null
+            : self::validar_guias_bloqueadas(
+                $anteriores,
+                $normalizadas,
+                CamposBloqueadosHelper::normalizar($recepcion->campos_bloqueados),
+            );
+        if ($errorBloqueo !== null) {
+            return ApiResponse::error($errorBloqueo, 422);
+        }
+
+        // Unicidad de guías por proveedor contra el resto de recepciones.
+        // Se valida ANTES de escribir para no dejar guides inválidas.
+        foreach ($normalizadas as $guia) {
+            $errorGuia = RecepcionUnidadesData::validar_unicidad_guia_proveedor(
+                (int) $guia['id_proveedor'],
+                $guia['guia_remitente'],
+                $guia['guia_transportista'],
+                $id,
+            );
+
+            if ($errorGuia !== null) {
+                return ApiResponse::error($errorGuia, 409);
+            }
+        }
+
+        try {
+            $normalizadas = RecepcionUnidadesData::reemplazar_guias($id, $guias);
+        } catch (\InvalidArgumentException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        }
+
+        $cambios = self::diff_guias($anteriores, $normalizadas);
+        if (! empty($cambios)) {
+            self::registrar_log_cambios(
+                $recepcion,
+                $idEmpleado,
+                'Edición de guías de la recepción',
+                $cambios
+            );
+        }
+
+        return ApiResponse::success($normalizadas, 'Guías de la recepción actualizadas correctamente');
+    }
+
+    /**
+     * Verificar que las guías bloqueadas por una programación no cambien.
+     *
+     * @param  array<int, array<string, mixed>>  $anteriores
+     * @param  array<int, array<string, mixed>>  $nuevas
+     * @param  array<int, string>  $bloqueados
+     */
+    private static function validar_guias_bloqueadas(array $anteriores, array $nuevas, array $bloqueados): ?string
+    {
+        if (empty($bloqueados)) {
+            return null;
+        }
+
+        $mapaAnterior = [];
+        foreach ($anteriores as $guia) {
+            $mapaAnterior[(int) $guia['id_proveedor']] = $guia;
+        }
+
+        foreach ($nuevas as $guia) {
+            $anterior = $mapaAnterior[(int) $guia['id_proveedor']] ?? null;
+            if ($anterior === null) {
+                continue;
+            }
+
+            if (
+                in_array('guia_remitente', $bloqueados, true)
+                && (string) ($anterior['guia_remitente'] ?? '') !== (string) ($guia['guia_remitente'] ?? '')
+            ) {
+                return 'La guía remitente se registró en la programación y no se puede modificar.';
+            }
+
+            if (
+                in_array('guia_transportista', $bloqueados, true)
+                && (string) ($anterior['guia_transportista'] ?? '') !== (string) ($guia['guia_transportista'] ?? '')
+            ) {
+                return 'La guía transportista se registró en la programación y no se puede modificar.';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Diferencias entre la lista de proveedores anterior y la nueva.
+     *
+     * @param  array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>  $anteriores
+     * @param  array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>  $nuevos
+     * @return array<int, array{campo_bd: ?string, campo: ?string, valor_anterior: mixed, valor_nuevo: mixed}>
+     */
+    private static function diff_proveedores(array $anteriores, array $nuevos): array
+    {
+        $mapaAnterior = [];
+        foreach ($anteriores as $proveedor) {
+            $mapaAnterior[$proveedor['id_proveedor']] = $proveedor['razon_social'];
+        }
+
+        $mapaNuevo = [];
+        foreach ($nuevos as $proveedor) {
+            $mapaNuevo[$proveedor['id_proveedor']] = $proveedor['razon_social'];
+        }
+
+        $agregados = array_diff_key($mapaNuevo, $mapaAnterior);
+        $eliminados = array_diff_key($mapaAnterior, $mapaNuevo);
+
+        $cambios = [];
+        foreach ($agregados as $idProveedor => $razonSocial) {
+            $cambios[] = [
+                'campo_bd' => 'proveedor_recepcion',
+                'campo' => 'Proveedor agregado',
+                'valor_anterior' => null,
+                'valor_nuevo' => $razonSocial,
+            ];
+        }
+        foreach ($eliminados as $idProveedor => $razonSocial) {
+            $cambios[] = [
+                'campo_bd' => 'proveedor_recepcion',
+                'campo' => 'Proveedor eliminado',
+                'valor_anterior' => $razonSocial,
+                'valor_nuevo' => null,
+            ];
+        }
+
+        return $cambios;
+    }
+
+    /**
+     * Diferencias entre el array de guías anterior y el nuevo.
+     *
+     * @param  array<int, array<string, mixed>>  $anteriores
+     * @param  array<int, array<string, mixed>>  $nuevas
+     * @return array<int, array{campo_bd: ?string, campo: ?string, valor_anterior: mixed, valor_nuevo: mixed}>
+     */
+    private static function diff_guias(array $anteriores, array $nuevas): array
+    {
+        $mapaAnterior = [];
+        foreach ($anteriores as $guia) {
+            $mapaAnterior[(int) $guia['id_proveedor']] = $guia;
+        }
+
+        $mapaNuevo = [];
+        foreach ($nuevas as $guia) {
+            $mapaNuevo[(int) $guia['id_proveedor']] = $guia;
+        }
+
+        $cambios = [];
+        foreach ($mapaNuevo as $idProveedor => $guia) {
+            $anterior = $mapaAnterior[$idProveedor] ?? null;
+            if ($anterior === null) {
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Guía agregada',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => self::resumen_guia($guia),
+                ];
+
+                continue;
+            }
+
+            if ($anterior['guia_remitente'] !== $guia['guia_remitente']) {
+                $cambios[] = [
+                    'campo_bd' => 'guias.guia_remitente',
+                    'campo' => 'Guía remitente',
+                    'valor_anterior' => $anterior['guia_remitente'],
+                    'valor_nuevo' => $guia['guia_remitente'],
+                ];
+            }
+            if ($anterior['guia_transportista'] !== $guia['guia_transportista']) {
+                $cambios[] = [
+                    'campo_bd' => 'guias.guia_transportista',
+                    'campo' => 'Guía transportista',
+                    'valor_anterior' => $anterior['guia_transportista'],
+                    'valor_nuevo' => $guia['guia_transportista'],
+                ];
+            }
+        }
+
+        foreach ($mapaAnterior as $idProveedor => $guia) {
+            if (! isset($mapaNuevo[$idProveedor])) {
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Guía eliminada',
+                    'valor_anterior' => self::resumen_guia($guia),
+                    'valor_nuevo' => null,
+                ];
+            }
+        }
+
+        return $cambios;
+    }
+
+    /**
+     * Resumen legible de una guía para el log de cambios.
+     *
+     * @param  array<string, mixed>  $guia
+     */
+    private static function resumen_guia(array $guia): string
+    {
+        $remitente = (string) ($guia['guia_remitente'] ?? '');
+        $transportista = (string) ($guia['guia_transportista'] ?? '');
+
+        return 'Remitente: '.($remitente !== '' ? $remitente : '—')
+            .' | Transportista: '.($transportista !== '' ? $transportista : '—');
+    }
+
+    /**
+     * Registrar un cambio en el `log_cambios` de la recepción.
+     *
+     * @param  array<int, array{campo_bd: ?string, campo: ?string, valor_anterior: mixed, valor_nuevo: mixed}>  $cambios
+     */
+    private static function registrar_log_cambios(
+        RecepcionUnidad $recepcion,
+        int $idEmpleado,
+        string $motivo,
+        array $cambios
+    ): void {
+        $log = $recepcion->log_cambios ?? [];
+        if (is_string($log)) {
+            $log = json_decode($log, true) ?? [];
+        }
+        if (! is_array($log)) {
+            $log = [];
+        }
+
+        $log[] = RES_CambiosLog::crear($idEmpleado, $motivo, $cambios);
+
+        DB::table('recepcion_unidad')
+            ->where('id', $recepcion->id)
+            ->update(['log_cambios' => json_encode($log)]);
     }
 
     /**
@@ -186,9 +724,9 @@ class RecepcionUnidadesService
      *
      * @param  array<string, mixed>  $campos  Claves admitidas: id_vehiculo,
      *                                        id_tipo_vehiculo, id_vehiculo_carreta,
-     *                                        id_empresa_transporte, id_conductor,
-     *                                        id_proveedor_minero,
-     *                                        guia_remitente, guia_transportista
+     *                                        id_empresa_transporte, id_conductor.
+     *                                        El proveedor y las guías se editan
+     *                                        por sus propios endpoints.
      */
     public static function actualizar_campos(int $id, array $campos, int $idEmpleado, ?string $motivo = null): array
     {
@@ -217,6 +755,14 @@ class RecepcionUnidadesService
 
         // Validación de campos desconocidos y de campos bloqueados.
         foreach ($campos as $campo => $valor) {
+            if (in_array($campo, self::CAMPOS_RETIRADOS, true)) {
+                return ApiResponse::error(
+                    'El campo "'.CamposBloqueadosHelper::etiqueta($campo).'" ya no se edita aquí: '
+                    .'usa los endpoints de proveedores y guías de la recepción.',
+                    422
+                );
+            }
+
             if (! in_array($campo, CamposBloqueadosHelper::CAMPOS, true)) {
                 return ApiResponse::error('El campo "'.$campo.'" no se puede editar.', 422);
             }
@@ -229,38 +775,6 @@ class RecepcionUnidadesService
             }
         }
 
-        // Unicidad de las guías por proveedor: una guía no puede repetirse en
-        // dos recepciones del mismo proveedor.
-        $editaGuias = array_intersect(
-            array_keys($campos),
-            CamposBloqueadosHelper::CAMPOS_TEXTO
-        );
-
-        if (! empty($editaGuias)) {
-            $idProveedor = array_key_exists('id_proveedor_minero', $campos)
-                ? $campos['id_proveedor_minero']
-                : $recepcion->id_proveedor_minero;
-
-            $guiaRemitente = array_key_exists('guia_remitente', $campos)
-                ? $campos['guia_remitente']
-                : $recepcion->guia_remitente;
-
-            $guiaTransportista = array_key_exists('guia_transportista', $campos)
-                ? $campos['guia_transportista']
-                : $recepcion->guia_transportista;
-
-            $errorGuia = RecepcionUnidadesData::validar_unicidad_guia_proveedor(
-                $idProveedor !== null ? (int) $idProveedor : null,
-                $guiaRemitente !== null ? trim((string) $guiaRemitente) : null,
-                $guiaTransportista !== null ? trim((string) $guiaTransportista) : null,
-                $id,
-            );
-
-            if ($errorGuia !== null) {
-                return ApiResponse::error($errorGuia, 409);
-            }
-        }
-
         // Validación de existencia (FKs lógicas, sin constraints en BD).
         $tablas = [
             'id_vehiculo' => 'vehiculo',
@@ -268,7 +782,6 @@ class RecepcionUnidadesService
             'id_tipo_vehiculo' => 'tipo_vehiculo',
             'id_empresa_transporte' => 'empresa_transporte',
             'id_conductor' => 'conductor',
-            'id_proveedor_minero' => 'proveedor',
         ];
 
         foreach ($campos as $campo => $valor) {

@@ -42,46 +42,26 @@ class ProgramarRecepcionController extends Controller
 
     /**
      * Crear una nueva programación.
+     *
+     * El proveedor de la carga y las guías viajan en el contrato nuevo:
+     * `proveedores` (ids) y `guias` (una entrada por proveedor). Los archivos
+     * de cada guía suben aparte en `guias_archivos[<índice>][guia_*]`.
      */
     public function crear_programacion(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
-            'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
-            'id_tipo_vehiculo' => 'nullable|integer|exists:tipo_vehiculo,id',
-            'id_conductor' => 'nullable|integer|exists:conductor,id',
-            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
-            'id_sucursal' => 'nullable|integer|exists:sucursal,id',
-            'fecha_estimada_llegada' => 'nullable|date',
-            'guia_remitente' => 'nullable|string|max:20',
-            'guia_transportista' => 'nullable|string|max:20',
-            'guia_remitente_file' => 'nullable|file',
-            'guia_transportista_file' => 'nullable|file',
-            'documentos_programacion_existentes' => 'nullable|string',
-            'observacion' => 'nullable|string',
-            'tipo_ingreso' => 'nullable|string|max:50',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(ApiResponse::error($validator->errors()->first()), 400);
-        }
-
         $authUser = $request->attributes->get('auth_user');
         if (! $authUser || empty($authUser->id_empleado)) {
             return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado para autorizar la programación.'), 401);
         }
 
-        $data = $request->all();
-        $data['id_empleado_autoriza'] = (int) $authUser->id_empleado;
-        $data['guia_remitente_file'] = $request->file('guia_remitente_file');
-        $data['guia_transportista_file'] = $request->file('guia_transportista_file');
+        $data = $this->contrato_creacion($request);
 
-        if ($request->filled('documentos_programacion_existentes')) {
-            $decoded = json_decode($request->input('documentos_programacion_existentes'), true);
-            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                $data['documentos_programacion_existentes'] = $decoded;
-            }
+        $validator = Validator::make($data, self::REGLAS_CONTRATO);
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()), 400);
         }
+
+        $data['id_empleado_autoriza'] = (int) $authUser->id_empleado;
 
         return response()->json(ProgramarRecepcionService::crear_programacion($data));
     }
@@ -99,36 +79,11 @@ class ProgramarRecepcionController extends Controller
             return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado para registrar la edición.'), 401);
         }
 
-        $validator = Validator::make($request->all(), [
-            'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
-            'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
-            'id_tipo_vehiculo' => 'nullable|integer|exists:tipo_vehiculo,id',
-            'id_conductor' => 'nullable|integer|exists:conductor,id',
-            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
-            'id_sucursal' => 'nullable|integer|exists:sucursal,id',
-            'id_vehiculo_carreta' => 'nullable|integer|exists:vehiculo,id',
-            'fecha_estimada_llegada' => 'nullable|date',
-            'guia_remitente' => 'nullable|string|max:20',
-            'guia_transportista' => 'nullable|string|max:20',
-            'guia_remitente_file' => 'nullable|file',
-            'guia_transportista_file' => 'nullable|file',
-            'documentos_programacion_existentes' => 'nullable|string',
-            'observacion' => 'nullable|string',
-        ]);
+        $data = $this->contrato_creacion($request);
 
+        $validator = Validator::make($data, self::REGLAS_CONTRATO);
         if ($validator->fails()) {
             return response()->json(ApiResponse::error($validator->errors()->first()), 400);
-        }
-
-        $data = $request->all();
-        $data['guia_remitente_file'] = $request->file('guia_remitente_file');
-        $data['guia_transportista_file'] = $request->file('guia_transportista_file');
-
-        if ($request->filled('documentos_programacion_existentes')) {
-            $decoded = json_decode($request->input('documentos_programacion_existentes'), true);
-            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                $data['documentos_programacion_existentes'] = $decoded;
-            }
         }
 
         return response()->json(ProgramarRecepcionService::actualizar_programacion(
@@ -142,6 +97,9 @@ class ProgramarRecepcionController extends Controller
      * Confirmar una programación (la marca como 'En Planta' y registra id_empleado_recepcion).
      * Acepta opcionalmente `observacion` y archivos `evidencias[]` (multipart) para
      * persistir también en `recepcion_unidad` con su entrada en `log_cambios`.
+     *
+     * El proveedor y las guías NO se modifican aquí: los conserva la
+     * programación (misma fila de `recepcion_unidad`).
      */
     public function confirmar_programacion(Request $request, int $id): JsonResponse
     {
@@ -169,17 +127,11 @@ class ProgramarRecepcionController extends Controller
         if ($request->input('id_conductor')) {
             $overrides['id_conductor'] = (int) $request->input('id_conductor');
         }
-        if ($request->input('id_proveedor_minero')) {
-            $overrides['id_proveedor_minero'] = (int) $request->input('id_proveedor_minero');
-        }
         if ($request->input('id_empresa_transporte')) {
             $overrides['id_empresa_transporte'] = (int) $request->input('id_empresa_transporte');
         }
-        if ($request->filled('guia_remitente')) {
-            $overrides['guia_remitente'] = $request->input('guia_remitente');
-        }
-        if ($request->filled('guia_transportista')) {
-            $overrides['guia_transportista'] = $request->input('guia_transportista');
+        if ($request->filled('id_vehiculo_carreta')) {
+            $overrides['id_vehiculo_carreta'] = (int) $request->input('id_vehiculo_carreta');
         }
 
         $observacion = $request->input('observacion');
@@ -246,5 +198,103 @@ class ProgramarRecepcionController extends Controller
             (int) $authUser->id_empleado,
             $request->input('motivo'),
         ));
+    }
+
+    /**
+     * Reglas de validación del contrato de creación/edición.
+     *
+     * @var array<string, string>
+     */
+    private const REGLAS_CONTRATO = [
+        'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
+        'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
+        'id_tipo_vehiculo' => 'nullable|integer|exists:tipo_vehiculo,id',
+        'id_conductor' => 'nullable|integer|exists:conductor,id',
+        'id_sucursal' => 'nullable|integer|exists:sucursal,id',
+        'id_vehiculo_carreta' => 'nullable|integer|exists:vehiculo,id',
+        'fecha_estimada_llegada' => 'nullable|date',
+        'observacion' => 'nullable|string',
+        'tipo_ingreso' => 'nullable|string|max:50',
+        'proveedores' => 'required|array|min:1',
+        'proveedores.*' => 'integer|exists:proveedor,id',
+        'guias' => 'nullable|array',
+        'guias.*.id_proveedor' => 'required|integer|exists:proveedor,id',
+        'guias.*.guia_remitente' => 'nullable|string|max:20',
+        'guias.*.guia_transportista' => 'nullable|string|max:20',
+        'guias.*.guia_remitente_archivo' => 'nullable|array',
+        'guias.*.guia_remitente_archivo.url' => 'nullable|string|max:255',
+        'guias.*.guia_remitente_archivo.path_relativo' => 'nullable|string|max:255',
+        'guias.*.guia_remitente_archivo.nombre_original' => 'nullable|string|max:255',
+        'guias.*.guia_remitente_archivo.extension' => 'nullable|string|max:20',
+        'guias.*.guia_transportista_archivo' => 'nullable|array',
+        'guias.*.guia_transportista_archivo.url' => 'nullable|string|max:255',
+        'guias.*.guia_transportista_archivo.path_relativo' => 'nullable|string|max:255',
+        'guias.*.guia_transportista_archivo.nombre_original' => 'nullable|string|max:255',
+        'guias.*.guia_transportista_archivo.extension' => 'nullable|string|max:20',
+    ];
+
+    /**
+     * Armar el contrato de datos de la programación desde el request.
+     *
+     * `proveedores` y `guias` pueden llegar como array (JSON body) o como
+     * string JSON (FormData multipart, que es lo que usa el formulario por
+     * los archivos adjuntos).
+     */
+    private function contrato_creacion(Request $request): array
+    {
+        $data = $request->all();
+        $data['proveedores'] = self::decodificar_lista_int($request->input('proveedores'));
+        $data['guias'] = self::decodificar_guias($request->input('guias'));
+        $data['guias_archivos'] = $request->file('guias_archivos', []);
+
+        return $data;
+    }
+
+    /**
+     * Decodificar una lista de enteros que puede llegar como array o como
+     * string JSON (FormData).
+     *
+     * @return array<int, int>
+     */
+    private static function decodificar_lista_int(mixed $valor): array
+    {
+        if (is_string($valor)) {
+            $decoded = json_decode($valor, true);
+            $valor = is_array($decoded) ? $decoded : [];
+        }
+
+        if (! is_array($valor)) {
+            return [];
+        }
+
+        $ids = [];
+        foreach ($valor as $item) {
+            $id = (int) $item;
+            if ($id > 0 && ! in_array($id, $ids, true)) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Decodificar el array de guías, que puede llegar como array o como
+     * string JSON (FormData).
+     *
+     * @return array<int, mixed>
+     */
+    private static function decodificar_guias(mixed $valor): array
+    {
+        if (is_string($valor)) {
+            $decoded = json_decode($valor, true);
+            $valor = is_array($decoded) ? $decoded : [];
+        }
+
+        if (! is_array($valor)) {
+            return [];
+        }
+
+        return array_values($valor);
     }
 }

@@ -8,7 +8,10 @@ use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class RecepcionUnidadesController extends Controller
 {
@@ -38,12 +41,25 @@ class RecepcionUnidadesController extends Controller
 
     /**
      * Obtener datos estructurados para imprimir el Ticket de Ingreso de Vehículos con Carga.
+     *
+     * `id_proveedor` acota el ticket a UN proveedor de la carga y `id_guia` a
+     * UNA guía de primer tramo concreta (que identifica al proveedor).
      */
     public function get_ticket_ingreso(Request $request, int $id): JsonResponse
     {
         $idGuia = $request->query('id_guia') ? (int) $request->query('id_guia') : null;
+        $idProveedor = $request->query('id_proveedor') ? (int) $request->query('id_proveedor') : null;
 
-        return response()->json(RecepcionUnidadesService::get_ticket_ingreso($id, $idGuia));
+        return response()->json(RecepcionUnidadesService::get_ticket_ingreso($id, $idGuia, $idProveedor));
+    }
+
+    /**
+     * Obtener los tickets de ingreso disponibles de una recepción de unidad
+     * (uno por proveedor de la carga).
+     */
+    public function get_tickets_ingreso(int $id): JsonResponse
+    {
+        return response()->json(RecepcionUnidadesService::get_tickets_ingreso($id));
     }
 
     /**
@@ -55,33 +71,138 @@ class RecepcionUnidadesController extends Controller
     }
 
     /**
+     * Obtener las guías (remitente/transportista + archivos) por proveedor de
+     * una recepción de unidad.
+     */
+    public function get_guias_recepcion(int $id): JsonResponse
+    {
+        return response()->json(RecepcionUnidadesService::get_guias($id));
+    }
+
+    /**
+     * Reemplazar las guías (por proveedor) de una recepción de unidad.
+     */
+    public function set_guias_recepcion(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'guias' => 'required|array',
+            'guias.*' => 'required|array',
+            'guias.*.id_proveedor' => 'required|integer|exists:proveedor,id',
+            'guias.*.guia_remitente' => 'nullable|string|max:20',
+            'guias.*.guia_transportista' => 'nullable|string|max:20',
+            'guias.*.guia_remitente_archivo' => 'nullable|array',
+            'guias.*.guia_remitente_archivo.url' => 'nullable|string|max:255',
+            'guias.*.guia_remitente_archivo.path_relativo' => 'nullable|string|max:255',
+            'guias.*.guia_remitente_archivo.nombre_original' => 'nullable|string|max:255',
+            'guias.*.guia_remitente_archivo.extension' => 'nullable|string|max:20',
+            'guias.*.guia_transportista_archivo' => 'nullable|array',
+            'guias.*.guia_transportista_archivo.url' => 'nullable|string|max:255',
+            'guias.*.guia_transportista_archivo.path_relativo' => 'nullable|string|max:255',
+            'guias.*.guia_transportista_archivo.nombre_original' => 'nullable|string|max:255',
+            'guias.*.guia_transportista_archivo.extension' => 'nullable|string|max:20',
+        ]);
+
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        return response()->json(RecepcionUnidadesService::set_guias(
+            $id,
+            $request->input('guias', []),
+            (int) $authUser->id_empleado
+        ));
+    }
+
+    /**
+     * Listar los proveedores de la carga de una recepción de unidad.
+     */
+    public function get_proveedores(int $id): JsonResponse
+    {
+        return response()->json(RecepcionUnidadesService::get_proveedores($id));
+    }
+
+    /**
+     * Sincronizar la lista de proveedores de una recepción de unidad.
+     */
+    public function set_proveedores(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'proveedores' => 'required|array',
+            'proveedores.*' => 'required|integer|exists:proveedor,id',
+        ]);
+
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        return response()->json(RecepcionUnidadesService::set_proveedores(
+            $id,
+            $request->input('proveedores', []),
+            (int) $authUser->id_empleado
+        ));
+    }
+
+    /**
      * Registrar un nuevo ingreso/recepción de unidad.
      */
     public function crear_recepcion(Request $request): JsonResponse
     {
-        $request->validate([
+        // `proveedores` y `guias` viajan como string JSON cuando el request
+        // es multipart (FormData): se decodifican ANTES de validar para que
+        // las reglas `array` apliquen sobre la estructura real.
+        $datos = $request->all();
+        $datos['proveedores'] = self::decodificar_lista_int($request->input('proveedores'));
+        $datos['guias'] = self::decodificar_guias($request->input('guias'));
+
+        $validator = Validator::make($datos, [
             'id_vehiculo' => 'nullable|integer|exists:vehiculo,id',
             'id_vehiculo_carreta' => 'nullable|integer|exists:vehiculo,id',
             'id_empresa_transporte' => 'required|integer|exists:empresa_transporte,id',
             'id_tipo_vehiculo' => 'required|integer|exists:tipo_vehiculo,id',
             'id_conductor' => 'required|integer|exists:conductor,id',
-            'id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
+            'proveedores' => 'nullable|array',
+            'proveedores.*' => 'integer|exists:proveedor,id',
+            'guias' => 'nullable|array',
+            'guias.*' => 'array',
+            'guias.*.id_proveedor' => 'required|integer|min:0',
+            'guias.*.guia_remitente' => 'nullable|string|max:20',
+            'guias.*.guia_transportista' => 'nullable|string|max:20',
+            'guias.*.guia_remitente_archivo' => 'nullable|array',
+            'guias.*.guia_transportista_archivo' => 'nullable|array',
             'tipo_ingreso' => 'nullable|string|max:50',
             'observacion' => 'nullable|string',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
             'id_sucursal' => 'required|integer|exists:sucursal,id',
-            'guia_remitente' => 'nullable|string|max:20',
-            'guia_transportista' => 'nullable|string|max:20',
-            'guia_remitente_file' => 'nullable|file',
-            'guia_transportista_file' => 'nullable|file',
-            'documentos_programacion_existentes' => 'nullable|string',
             'id_motivo_ingreso' => 'nullable|integer|exists:motivo_ingreso,id',
         ]);
+
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
 
         $authUser = $request->attributes->get('auth_user');
         if (! $authUser || empty($authUser->id_empleado)) {
             return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado para registrar el ingreso.'), 401);
+        }
+
+        $guias = $datos['guias'];
+
+        // `id_proveedor = 0` es la guía de la unidad (sin proveedor asignado
+        // todavía): el proveedor se conoce con el registro de las cargas.
+        foreach ($guias as $guia) {
+            if (! is_array($guia)) {
+                continue;
+            }
+            $idProveedor = (int) ($guia['id_proveedor'] ?? 0);
+            if ($idProveedor <= 0) {
+                continue;
+            }
+            if (! DB::table('proveedor')->where('id', $idProveedor)->exists()) {
+                return response()->json(ApiResponse::error('El proveedor indicado en las guías no existe.'), 422);
+            }
         }
 
         $documentosExistentes = null;
@@ -99,10 +220,14 @@ class RecepcionUnidadesController extends Controller
             'id_empresa_transporte' => (int) $request->input('id_empresa_transporte'),
             'id_tipo_vehiculo' => (int) $request->input('id_tipo_vehiculo'),
             'id_conductor' => (int) $request->input('id_conductor'),
-            'id_proveedor_minero' => $request->input('id_proveedor_minero') ? (int) $request->input('id_proveedor_minero') : null,
+            'proveedores' => self::decodificar_lista_int($request->input('proveedores')),
+            'guias' => $guias,
             'tipo_ingreso' => $request->input('tipo_ingreso', 'Recepción de Mineral'),
             'observacion' => $request->input('observacion'),
             'id_sucursal' => (int) $request->input('id_sucursal'),
+            // Campos legacy (un solo proveedor y un par de guías planas): los
+            // resuelve el servicio como proveedor/guía principal.
+            'id_proveedor_minero' => $request->input('id_proveedor_minero') ? (int) $request->input('id_proveedor_minero') : null,
             'guia_remitente' => $request->input('guia_remitente'),
             'guia_transportista' => $request->input('guia_transportista'),
             'guia_remitente_file' => $request->file('guia_remitente_file'),
@@ -254,5 +379,53 @@ class RecepcionUnidadesController extends Controller
     public function eliminar_lote(int $lote): JsonResponse
     {
         return response()->json(RecepcionUnidadesService::eliminar_lote($lote));
+    }
+
+    /**
+     * Decodificar una lista de enteros que puede llegar como array o como
+     * string JSON (FormData).
+     *
+     * @return array<int, int>
+     */
+    private static function decodificar_lista_int(mixed $valor): array
+    {
+        if (is_string($valor)) {
+            $decoded = json_decode($valor, true);
+            $valor = is_array($decoded) ? $decoded : [];
+        }
+
+        if (! is_array($valor)) {
+            return [];
+        }
+
+        $ids = [];
+        foreach ($valor as $item) {
+            $id = (int) $item;
+            if ($id > 0 && ! in_array($id, $ids, true)) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Decodificar el array de guías, que puede llegar como array o como
+     * string JSON (FormData).
+     *
+     * @return array<int, mixed>
+     */
+    private static function decodificar_guias(mixed $valor): array
+    {
+        if (is_string($valor)) {
+            $decoded = json_decode($valor, true);
+            $valor = is_array($decoded) ? $decoded : [];
+        }
+
+        if (! is_array($valor)) {
+            return [];
+        }
+
+        return array_values($valor);
     }
 }

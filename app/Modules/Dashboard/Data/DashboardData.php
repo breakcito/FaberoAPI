@@ -27,14 +27,27 @@ class DashboardData
     /**
      * Evolución mensual de los indicadores de operación y valorización.
      *
+     * FILTROS (independientes entre sí):
+     *  - `idProveedorMinero` acota las TN recepcionadas a las unidades
+     *    recibidas de ese proveedor (`proveedor_recepcion.id_proveedor_minero`).
+     *  - `idPlantaDestino` acota las TN despachadas a los despachos dirigidos
+     *    a esa planta (`despacho.id_planta_destino`).
+     *
+     * @param  int|null  $idProveedorMinero  Proveedor de las TN recepcionadas.
+     * @param  int|null  $idPlantaDestino  Planta de destino de los despachos.
      * @return array<string,array<string,mixed>> Clave `YYYY-MM` => indicadores
      */
-    public static function get_serie_mensual(string $fechaInicio, string $fechaFin, ?int $idSucursal): array
-    {
+    public static function get_serie_mensual(
+        string $fechaInicio,
+        string $fechaFin,
+        ?int $idSucursal,
+        ?int $idProveedorMinero = null,
+        ?int $idPlantaDestino = null
+    ): array {
         $sql = '
         WITH
         prm AS (
-            SELECT ? AS fi, ? AS ff, ? AS suc
+            SELECT ? AS fi, ? AS ff, ? AS suc, ? AS prov, ? AS planta
         ),
         rec AS (
             SELECT
@@ -45,6 +58,12 @@ class DashboardData
             CROSS JOIN prm p
             WHERE COALESCE(lm.fecha_hora_peso_final, lm.created_at) BETWEEN p.fi AND p.ff
               AND (p.suc IS NULL OR ru.id_sucursal = p.suc)
+              AND (p.prov IS NULL OR EXISTS (
+                  SELECT 1
+                  FROM proveedor_recepcion pr
+                  WHERE pr.id_recepcion_unidad = ru.id
+                    AND pr.id_proveedor_minero = p.prov
+              ))
               AND (lm.estado IS NULL OR lm.estado <> \'Eliminado\')
             GROUP BY ym
         ),
@@ -57,6 +76,7 @@ class DashboardData
             CROSS JOIN prm p
             WHERE d.created_at BETWEEN p.fi AND p.ff
               AND d.es_anulado = 0
+              AND (p.planta IS NULL OR d.id_planta_destino = p.planta)
             GROUP BY ym
         ),
         cmp AS (
@@ -193,7 +213,7 @@ class DashboardData
             (SELECT JSON_ARRAYAGG(JSON_OBJECT(\'ym\', ym, \'el\', el, \'final_pond\', final_pond, \'cliente_pond\', cliente_pond, \'peso\', peso)) FROM ley_vta) AS ley_vta
         ';
 
-        $row = DB::selectOne($sql, [$fechaInicio, $fechaFin, $idSucursal]);
+        $row = DB::selectOne($sql, [$fechaInicio, $fechaFin, $idSucursal, $idProveedorMinero, $idPlantaDestino]);
 
         if (! $row) {
             return [];
@@ -322,6 +342,10 @@ class DashboardData
      * No lleva filtros de período: son saldos y pendientes acumulados a la
      * fecha de consulta.
      *
+     * `por_pagar` y `por_cobrar` incluyen además `detalle`: el listado de
+     * comprobantes pendientes (documento, contraparte, saldo pendiente) que
+     * el dashboard muestra en el popover de cada tarjeta.
+     *
      * @return array<string,mixed>
      */
     public static function get_snapshot(): array
@@ -337,7 +361,12 @@ class DashboardData
         ),
         cp AS (
             SELECT
+                cc.id,
                 cc.id_valorizacion_compra,
+                cc.serie,
+                cc.numero,
+                cc.fecha_emision,
+                cc.estado,
                 GREATEST(COALESCE(cc.monto_neto, 0) - COALESCE(cc.avance_pago_neto, 0), 0) AS neto_usd,
                 GREATEST(COALESCE(cc.monto_detraccion_soles, 0) - COALESCE(cc.avance_pago_detraccion, 0), 0) AS detraccion_pen
             FROM comprobante_compra cc
@@ -345,7 +374,11 @@ class DashboardData
         ),
         cv AS (
             SELECT
+                cv.id,
                 cv.id_planta_destino,
+                cv.codigo_comprobante,
+                cv.fecha_emision,
+                cv.estado,
                 GREATEST(COALESCE(cv.monto_neto, 0) - COALESCE(cv.avance_pago_neto, 0), 0) AS neto_usd,
                 GREATEST(COALESCE(cv.monto_detraccion_soles, 0) - COALESCE(cv.avance_pago_detraccion, 0), 0) AS detraccion_pen
             FROM comprobante_venta cv
@@ -465,7 +498,32 @@ class DashboardData
                         ORDER BY saldo DESC
                         LIMIT 1
                     ) x
-                )
+                ),
+                \'detalle\', (SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                    \'documento\', z.documento,
+                    \'contraparte\', z.contraparte,
+                    \'valorizacion\', z.valorizacion,
+                    \'fecha\', z.fecha,
+                    \'neto_usd\', z.neto_usd,
+                    \'detraccion_pen\', z.detraccion_pen,
+                    \'estado\', z.estado
+                )) FROM (
+                    SELECT
+                        CONCAT_WS(\'-\', cp.serie, cp.numero) AS documento,
+                        COALESCE(p.razon_social, \'\') AS contraparte,
+                        vc.correlativo AS valorizacion,
+                        cp.fecha_emision AS fecha,
+                        cp.neto_usd,
+                        cp.detraccion_pen,
+                        cp.estado
+                    FROM cp
+                    INNER JOIN comprobante_compra cc ON cc.id = cp.id
+                    LEFT JOIN valorizacion_compra vc ON vc.id = cc.id_valorizacion_compra
+                    LEFT JOIN proveedor p ON p.id = vc.id_proveedor_minero
+                    WHERE cp.neto_usd > 0 OR cp.detraccion_pen > 0
+                    ORDER BY cp.neto_usd DESC
+                    LIMIT 25
+                ) z)
             )) AS por_pagar,
             (SELECT JSON_OBJECT(
                 \'neto_usd\', (SELECT COALESCE(SUM(neto_usd), 0) FROM cv),
@@ -480,7 +538,34 @@ class DashboardData
                         ORDER BY saldo DESC
                         LIMIT 1
                     ) x
-                )
+                ),
+                \'detalle\', (SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                    \'documento\', z.documento,
+                    \'contraparte\', z.contraparte,
+                    \'valorizacion\', z.valorizacion,
+                    \'fecha\', z.fecha,
+                    \'neto_usd\', z.neto_usd,
+                    \'detraccion_pen\', z.detraccion_pen,
+                    \'estado\', z.estado
+                )) FROM (
+                    SELECT
+                        cv.codigo_comprobante AS documento,
+                        COALESCE(pd.razon_social, \'\') AS contraparte,
+                        (SELECT GROUP_CONCAT(DISTINCT vv.correlativo ORDER BY vv.correlativo SEPARATOR \', \')
+                            FROM detalle_comprobante_venta dcv
+                            INNER JOIN valorizacion_venta_detalle vvd ON vvd.id = dcv.id_valorizacion_venta_detalle
+                            INNER JOIN valorizacion_venta vv ON vv.id = vvd.id_valorizacion_venta
+                            WHERE dcv.id_comprobante_venta = cv.id) AS valorizacion,
+                        cv.fecha_emision AS fecha,
+                        cv.neto_usd,
+                        cv.detraccion_pen,
+                        cv.estado
+                    FROM cv
+                    LEFT JOIN planta_destino pd ON pd.id = cv.id_planta_destino
+                    WHERE cv.neto_usd > 0 OR cv.detraccion_pen > 0
+                    ORDER BY cv.neto_usd DESC
+                    LIMIT 25
+                ) z)
             )) AS por_cobrar,
             (SELECT JSON_OBJECT(\'fecha\', tc.fecha, \'valor_compra\', tc.valor_compra, \'valor_venta\', tc.valor_venta) FROM tc) AS tipo_cambio,
             (SELECT JSON_OBJECT(

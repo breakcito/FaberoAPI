@@ -224,8 +224,13 @@ class RecepcionMineralService
         // El usuario puede ajustar el correlativo en el modal "Nuevo Lote". Si lo
         // hace, el correlativo es MANUAL: no pertenece a la secuencia oficial y
         // se libera al eliminarse (queda con `numero_correlativo` en NULL).
+        //
+        // Cuando el frontend envía el correlativo SIN número, el modo manual es
+        // explícito: el N° correlativo va en NULL aunque el texto coincida con
+        // el correlativo autogenerado.
         $correlativoIngresado = $correlativoManual !== null ? trim($correlativoManual) : '';
-        $esCorrelativoManual = $correlativoIngresado !== '' && $correlativoIngresado !== $correlativoAuto;
+        $esCorrelativoManual = $correlativoIngresado !== ''
+            && ($correlativoIngresado !== $correlativoAuto || $numeroCorrelativoManual === null);
 
         $correlativo = $esCorrelativoManual ? $correlativoIngresado : $correlativoAuto;
         $numeroCorrelativo = $esCorrelativoManual
@@ -1902,7 +1907,8 @@ class RecepcionMineralService
      * DESTINO de la partición (`plm.id_recepcion_unidad`):
      *  - ticket propio de la partición (`tb.id = plm.id_ticket_balanza`)
      *  - placa, conductor, transportista y operador desde la unidad destino
-     *  - proveedor con cascada `rec.id_proveedor_minero → gui.id_proveedor → lot.id_proveedor_minero`
+     *  - proveedor con cascada `lot.id_proveedor_minero → gui.id_proveedor → prp.id_proveedor_minero`
+     *    (proveedor principal de la unidad destino, vía `proveedor_recepcion`)
      *
      * Antes esta función reusaba `get_ticket_balanza_info($particion->id_lote_mineral)`,
      * que devolvía los datos del LOTE PADRE (ticket, unidad, operador, etc.) — no

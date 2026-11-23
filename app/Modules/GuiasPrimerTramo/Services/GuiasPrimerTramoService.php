@@ -51,6 +51,30 @@ class GuiasPrimerTramoService
     }
 
     /**
+     * Unidades con items de mineral pendientes de guía.
+     *
+     * @return array<int, array{id: int, placa: ?string, fecha_hora_ingreso: ?string}>
+     */
+    public static function get_unidades_disponibles(?int $idSucursal = null): array
+    {
+        $data = GuiasPrimerTramoData::get_unidades_disponibles($idSucursal);
+
+        return ApiResponse::success($data, 'Unidades disponibles obtenidas correctamente.');
+    }
+
+    /**
+     * Proveedores de la carga de una unidad.
+     *
+     * @return array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>
+     */
+    public static function get_proveedores_unidad(int $idUnidad): array
+    {
+        $data = GuiasPrimerTramoData::get_proveedores_unidad($idUnidad);
+
+        return ApiResponse::success($data, 'Proveedores de la unidad obtenidos correctamente.');
+    }
+
+    /**
      * Construye el JSON `documentos` a partir de los archivos subidos y los previos.
      *
      * @param  array{guia_remitente: ?\Illuminate\Http\UploadedFile, guia_transportista: ?\Illuminate\Http\UploadedFile}  $archivos
@@ -267,6 +291,124 @@ class GuiasPrimerTramoService
      * @param  array  $items  Cada item: {id_lote_mineral?: int, id_particion_lote_mineral?: int} (excluyentes).
      * @param  array{guia_remitente: ?\Illuminate\Http\UploadedFile, guia_transportista: ?\Illuminate\Http\UploadedFile}  $archivos
      */
+    /**
+     * Completar la guía de la unidad con la guía de su carga.
+     *
+     * La guía de primer tramo del lote es el documento que el proveedor emite
+     * para el mineral: es la fuente más exacta de la guía de remisión. Cuando
+     * la unidad ingresó a planta sin guía (el operador la dejó vacía al
+     * confirmar la llegada) y después se registra la guía de su carga, la de
+     * la unidad se completa.
+     *
+     * Reglas conservadoras:
+     * - Solo completa campos VACÍOS: nunca pisa una guía ya registrada.
+     * - Solo si el proveedor trae una sola carga en la unidad: con varias
+     *   cargas no se sabe cuál guía corresponde a cuál.
+     * - Solo si el campo no está bloqueado por la programación.
+     * - Solo si la llegada ya está registrada: una programación pendiente
+     *   conserva sus guías tal como las capturó la agenda.
+     */
+    private static function sincronizar_guia_unidad(
+        int $idRecepcionUnidad,
+        int $idProveedor,
+        ?string $guiaRemitente,
+        ?string $guiaTransportista,
+        ?int $idEmpleado
+    ): void {
+        if ($idRecepcionUnidad <= 0 || $idProveedor <= 0) {
+            return;
+        }
+
+        $recepcion = DB::table('recepcion_unidad')->where('id', $idRecepcionUnidad)->first();
+        if (! $recepcion || empty($recepcion->id_empleado_recepcion)) {
+            return;
+        }
+
+        $esProveedorDeLaCarga = DB::table('proveedor_recepcion')
+            ->where('id_recepcion_unidad', $idRecepcionUnidad)
+            ->where('id_proveedor_minero', $idProveedor)
+            ->exists();
+        if (! $esProveedorDeLaCarga) {
+            return;
+        }
+
+        $cargas = DB::table('lote_mineral')
+            ->where('id_recepcion_unidad', $idRecepcionUnidad)
+            ->where('id_proveedor_minero', $idProveedor)
+            ->count();
+        if ($cargas > 1) {
+            return;
+        }
+
+        $bloqueados = is_string($recepcion->campos_bloqueados ?? null)
+            ? (json_decode((string) $recepcion->campos_bloqueados, true) ?: [])
+            : (array) ($recepcion->campos_bloqueados ?? []);
+
+        $guias = is_string($recepcion->guias ?? null)
+            ? (json_decode((string) $recepcion->guias, true) ?: [])
+            : (array) ($recepcion->guias ?? []);
+
+        $cambios = [];
+        foreach ($guias as $indice => $guia) {
+            if (! is_array($guia) || (int) ($guia['id_proveedor'] ?? 0) !== $idProveedor) {
+                continue;
+            }
+
+            $remitenteActual = trim((string) ($guia['guia_remitente'] ?? ''));
+            if (
+                $remitenteActual === ''
+                && $guiaRemitente !== null
+                && trim($guiaRemitente) !== ''
+                && ! in_array('guia_remitente', $bloqueados, true)
+            ) {
+                $guias[$indice]['guia_remitente'] = trim($guiaRemitente);
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Guía de remisión de la unidad',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => trim($guiaRemitente),
+                ];
+            }
+
+            $transportistaActual = trim((string) ($guia['guia_transportista'] ?? ''));
+            if (
+                $transportistaActual === ''
+                && $guiaTransportista !== null
+                && trim($guiaTransportista) !== ''
+                && ! in_array('guia_transportista', $bloqueados, true)
+            ) {
+                $guias[$indice]['guia_transportista'] = trim($guiaTransportista);
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Guía de transporte de la unidad',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => trim($guiaTransportista),
+                ];
+            }
+        }
+
+        if (empty($cambios)) {
+            return;
+        }
+
+        $log = is_string($recepcion->log_cambios ?? null)
+            ? (json_decode((string) $recepcion->log_cambios, true) ?: [])
+            : (array) ($recepcion->log_cambios ?? []);
+
+        $log[] = RES_CambiosLog::crear(
+            $idEmpleado ?? 0,
+            'Guías completadas desde la guía de primer tramo de la carga',
+            $cambios
+        );
+
+        DB::table('recepcion_unidad')
+            ->where('id', $idRecepcionUnidad)
+            ->update([
+                'guias' => json_encode(array_values($guias)),
+                'log_cambios' => json_encode($log),
+            ]);
+    }
+
     public static function crear_guia(array $data, array $items, array $archivos, ?Request $request = null): array
     {
         if (empty($items)) {
@@ -385,6 +527,14 @@ class GuiasPrimerTramoService
         }
 
         $guiaCreada = GuiasPrimerTramoData::get_guia_by_id($guiaId);
+
+        self::sincronizar_guia_unidad(
+            (int) ($valoresNuevos['id_recepcion_unidad'] ?? 0),
+            (int) ($valoresNuevos['id_proveedor'] ?? 0),
+            $guiaRemitente !== '' ? $guiaRemitente : null,
+            $guiaTransportista,
+            $idEmpleadoRegistro
+        );
 
         return ApiResponse::success($guiaCreada, 'Guía de primer tramo registrada correctamente.');
     }
@@ -939,7 +1089,6 @@ class GuiasPrimerTramoService
                 }
             }
 
-
             DB::commit();
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -948,6 +1097,14 @@ class GuiasPrimerTramoService
         }
 
         $guiaActualizada = GuiasPrimerTramoData::get_guia_by_id($id);
+
+        self::sincronizar_guia_unidad(
+            (int) ($nuevosValoresCab['id_recepcion_unidad'] ?? 0),
+            (int) ($nuevosValoresCab['id_proveedor'] ?? 0),
+            $guiaRemitente !== '' ? $guiaRemitente : null,
+            $guiaTransportista,
+            $idEmpleado ?? null
+        );
 
         return ApiResponse::success($guiaActualizada, 'Guía de primer tramo actualizada correctamente.');
     }

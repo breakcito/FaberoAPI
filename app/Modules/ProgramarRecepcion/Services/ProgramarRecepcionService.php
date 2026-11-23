@@ -40,27 +40,29 @@ class ProgramarRecepcionService
     /**
      * Crear una programación de recepción de unidad.
      *
-     * @param  array  $data  Datos básicos de la programación.
-     *                       Claves opcionales para archivos de guías:
-     *                       - guia_remitente_file: UploadedFile|null
-     *                       - guia_transportista_file: UploadedFile|null
-     *                       - documentos_programacion_existentes: array (estado) actual para mezclar
+     * La programación es una fila de `recepcion_unidad` con `es_programacion = 1`:
+     * sus proveedores quedan en `proveedor_recepcion` y sus guías (con los
+     * archivos adjuntos) en la columna JSON `guias`.
+     *
+     * @param  array  $data  Datos básicos de la programación. Claves del contrato
+     *                       de carga:
+     *                       - proveedores: int[] (ids de proveedor de la carga)
+     *                       - guias: array (una entrada por proveedor)
+     *                       - guias_archivos: array indexado por posición de la
+     *                       guía, con los archivos nuevos subidos
+     *                       (`guia_remitente` / `guia_transportista`).
      */
     public static function crear_programacion(array $data): array
     {
-        $data = self::resolver_documentos_programacion(
-            $data,
-            $data['guia_remitente_file'] ?? null,
-            $data['guia_transportista_file'] ?? null,
-            is_array($data['documentos_programacion_existentes'] ?? null) ? $data['documentos_programacion_existentes'] : null,
-        );
+        $data = self::resolver_contrato_programacion($data);
 
-        $erroresUnicidad = self::validar_unicidad_guia(
-            $data['id_proveedor_minero'] ?? null,
-            $data['guia_remitente'] ?? null,
-            $data['guia_transportista'] ?? null,
-            null,
-        );
+        try {
+            $data['guias'] = RecepcionUnidadesData::preparar_guias($data['guias']);
+        } catch (\InvalidArgumentException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        }
+
+        $erroresUnicidad = self::validar_unicidad_guias($data['guias'], null);
         if ($erroresUnicidad !== null) {
             return ApiResponse::error($erroresUnicidad, 409);
         }
@@ -79,19 +81,15 @@ class ProgramarRecepcionService
      */
     public static function actualizar_programacion(int $id, array $data, int $idEmpleado): array
     {
-        $data = self::resolver_documentos_programacion(
-            $data,
-            $data['guia_remitente_file'] ?? null,
-            $data['guia_transportista_file'] ?? null,
-            is_array($data['documentos_programacion_existentes'] ?? null) ? $data['documentos_programacion_existentes'] : null,
-        );
+        $data = self::resolver_contrato_programacion($data);
 
-        $erroresUnicidad = self::validar_unicidad_guia(
-            $data['id_proveedor_minero'] ?? null,
-            $data['guia_remitente'] ?? null,
-            $data['guia_transportista'] ?? null,
-            $id,
-        );
+        try {
+            $data['guias'] = RecepcionUnidadesData::preparar_guias($data['guias']);
+        } catch (\InvalidArgumentException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        }
+
+        $erroresUnicidad = self::validar_unicidad_guias($data['guias'], $id);
         if ($erroresUnicidad !== null) {
             return ApiResponse::error($erroresUnicidad, 409);
         }
@@ -115,63 +113,120 @@ class ProgramarRecepcionService
     }
 
     /**
-     * Resolver el estado final de documentos_programacion mezclando:
-     *   - archivos existentes (persistidos)
-     *   - archivos nuevos (UploadedFile) recién subidos
+     * Resolver el contrato de proveedores y guías de la programación.
      *
-     * Devuelve $data con `documentos_programacion` listo para persistir y
-     * quita las claves *_file / *_existentes para no contaminar la fila.
+     * - `proveedores`: ids de proveedor de la carga (sin repetidos).
+     * - `guias`: una entrada por proveedor seleccionado, en el mismo orden.
+     *   Cada entrada mezcla el archivo ya guardado (si lo había) con el
+     *   archivo nuevo recién subido.
+     *
+     * Devuelve `$data` con `guias` y `proveedores` listos para persistir y
+     * quita `guias_archivos` para no contaminar la fila.
      */
-    private static function resolver_documentos_programacion(
-        array $data,
-        ?UploadedFile $guiaRemitente,
-        ?UploadedFile $guiaTransportista,
-        ?array $existentes,
-    ): array {
-        $existentes = $existentes ?? [];
-        $documentos = [
-            'guia_remitente' => $existentes['guia_remitente'] ?? null,
-            'guia_transportista' => $existentes['guia_transportista'] ?? null,
-        ];
+    private static function resolver_contrato_programacion(array $data): array
+    {
+        $guiasCrudas = is_array($data['guias'] ?? null) ? array_values($data['guias']) : [];
+        $archivosPorIndice = is_array($data['guias_archivos'] ?? null) ? $data['guias_archivos'] : [];
 
-        if ($guiaRemitente instanceof UploadedFile && $guiaRemitente->isValid()) {
-            $subidos = ArchivoHelper::guardarArchivos('documentos-programacion', [$guiaRemitente]);
-            $documentos['guia_remitente'] = $subidos[0] ?? null;
+        $guiasPorProveedor = [];
+        foreach ($guiasCrudas as $indice => $entrada) {
+            if (! is_array($entrada)) {
+                continue;
+            }
+
+            $idProveedor = (int) ($entrada['id_proveedor'] ?? 0);
+            if ($idProveedor <= 0) {
+                continue;
+            }
+
+            $guia = [
+                'id_proveedor' => $idProveedor,
+                'guia_remitente' => (string) ($entrada['guia_remitente'] ?? ''),
+                'guia_transportista' => (string) ($entrada['guia_transportista'] ?? ''),
+                'guia_remitente_archivo' => $entrada['guia_remitente_archivo'] ?? null,
+                'guia_transportista_archivo' => $entrada['guia_transportista_archivo'] ?? null,
+            ];
+
+            $archivos = $archivosPorIndice[$indice] ?? null;
+            if (is_array($archivos)) {
+                $guia['guia_remitente_archivo'] = self::resolver_archivo(
+                    $guia['guia_remitente_archivo'],
+                    $archivos['guia_remitente'] ?? null,
+                );
+                $guia['guia_transportista_archivo'] = self::resolver_archivo(
+                    $guia['guia_transportista_archivo'],
+                    $archivos['guia_transportista'] ?? null,
+                );
+            }
+
+            $guiasPorProveedor[$idProveedor] = $guia;
         }
-        if ($guiaTransportista instanceof UploadedFile && $guiaTransportista->isValid()) {
-            $subidos = ArchivoHelper::guardarArchivos('documentos-programacion', [$guiaTransportista]);
-            $documentos['guia_transportista'] = $subidos[0] ?? null;
+
+        $proveedores = [];
+        foreach ((array) ($data['proveedores'] ?? []) as $id) {
+            $id = (int) $id;
+            if ($id > 0 && ! in_array($id, $proveedores, true)) {
+                $proveedores[] = $id;
+            }
         }
 
-        $data['documentos_programacion'] = ($documentos['guia_remitente'] || $documentos['guia_transportista'])
-            ? $documentos
-            : null;
+        // Una entrada de guía por proveedor, en el orden de los proveedores.
+        $guias = [];
+        foreach ($proveedores as $idProveedor) {
+            $guias[] = $guiasPorProveedor[$idProveedor] ?? [
+                'id_proveedor' => $idProveedor,
+                'guia_remitente' => '',
+                'guia_transportista' => '',
+                'guia_remitente_archivo' => null,
+                'guia_transportista_archivo' => null,
+            ];
+        }
 
-        unset(
-            $data['guia_remitente_file'],
-            $data['guia_transportista_file'],
-            $data['documentos_programacion_existentes'],
-        );
+        $data['proveedores'] = $proveedores;
+        $data['guias'] = $guias;
+
+        unset($data['guias_archivos']);
 
         return $data;
     }
 
     /**
-     * Validar que no exista otra recepción con la misma combinación proveedor+guía.
-     * Devuelve mensaje si hay duplicado, null si OK.
+     * Resolver el archivo final de una guía: el ya guardado o el recién
+     * subido (que se persiste en el disco público).
      */
-    private static function validar_unicidad_guia(
-        ?int $idProveedor,
-        ?string $guiaRemitente,
-        ?string $guiaTransportista,
-        ?int $excluirId,
-    ): ?string {
-        return RecepcionUnidadesData::validar_unicidad_guia_proveedor(
-            $idProveedor,
-            $guiaRemitente,
-            $guiaTransportista,
-            $excluirId,
-        );
+    private static function resolver_archivo(mixed $existente, mixed $nuevo): mixed
+    {
+        if ($nuevo instanceof UploadedFile && $nuevo->isValid()) {
+            $subidos = ArchivoHelper::guardarArchivos('documentos-programacion', [$nuevo]);
+
+            return $subidos[0] ?? null;
+        }
+
+        return $existente;
+    }
+
+    /**
+     * Validar que no exista otra recepción con la misma guía para un
+     * proveedor. Devuelve el primer mensaje de error, null si todo OK.
+     *
+     * @param  array<int, array<string, mixed>>  $guias
+     */
+    private static function validar_unicidad_guias(array $guias, ?int $excluirId): ?string
+    {
+        foreach ($guias as $guia) {
+            $errorGuia = RecepcionUnidadesData::validar_unicidad_guia_proveedor(
+                (int) $guia['id_proveedor'],
+                $guia['guia_remitente'] ?? null,
+                $guia['guia_transportista'] ?? null,
+                $excluirId,
+            );
+
+            if ($errorGuia !== null) {
+                return $errorGuia;
+            }
+        }
+
+        return null;
     }
 
     /**

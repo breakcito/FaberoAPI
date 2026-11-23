@@ -12,6 +12,95 @@ use Illuminate\Support\Facades\DB;
 class RecepcionMineralData
 {
     /**
+     * JOIN al PROVEEDOR PRINCIPAL de una recepción.
+     *
+     * `proveedor_recepcion` es 1:N (una fila por proveedor de la carga), así que
+     * un JOIN directo a esa tabla MULTIPLICARÍA las filas de la consulta (y con
+     * ellas los kilos de los dashboards). Esta derived table colapsa a UNA fila
+     * por recepción — el primer proveedor registrado (`pr.id` ASC) — por lo que
+     * el JOIN es 1:1 y NO altera ningún agregado.
+     *
+     * @param  string  $aliasRecepcion  Alias de `recepcion_unidad` en la consulta.
+     * @param  string  $aliasSalida  Alias de la derived table en el SELECT.
+     */
+    private static function join_proveedor_principal(string $aliasRecepcion, string $aliasSalida = 'prp'): string
+    {
+        return '
+        LEFT JOIN (
+            SELECT x.id_recepcion_unidad, x.id_proveedor_minero
+            FROM (
+                SELECT pr1.id_recepcion_unidad,
+                       pr1.id_proveedor_minero,
+                       ROW_NUMBER() OVER (PARTITION BY pr1.id_recepcion_unidad ORDER BY pr1.id ASC) AS rn
+                FROM proveedor_recepcion pr1
+            ) x
+            WHERE x.rn = 1
+        ) '.$aliasSalida.' ON '.$aliasSalida.'.id_recepcion_unidad = '.$aliasRecepcion.'.id
+        ';
+    }
+
+    /**
+     * Guía principal de una recepción aplicando la prioridad de negocio:
+     * proveedor de la CARGA → proveedor principal de la recepción → primera
+     * entrada del array `guias`.
+     *
+     * @param  array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}>  $guias
+     * @return array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}|null
+     */
+    private static function guia_por_prioridad(array $guias, ?int $idProveedorCarga, ?int $idProveedorRecepcion): ?array
+    {
+        if (empty($guias)) {
+            return null;
+        }
+
+        foreach ([$idProveedorCarga, $idProveedorRecepcion] as $idProveedor) {
+            if ($idProveedor === null || $idProveedor <= 0) {
+                continue;
+            }
+            foreach ($guias as $guia) {
+                if ((int) $guia['id_proveedor'] === $idProveedor) {
+                    return $guia;
+                }
+            }
+        }
+
+        return $guias[0];
+    }
+
+    /**
+     * Hidratar el contrato de guías y proveedores de una recepción.
+     *
+     * Expone el modelo nuevo (`guias`, `proveedores`, `proveedor_principal`) y
+     * mantiene los campos legacy (`id_proveedor_minero`, `proveedor_razon_social`,
+     * `guia_remitente`, `guia_transportista`, `documentos_programacion`)
+     * derivados del proveedor principal y de su guía, para no romper a los
+     * consumidores que todavía los usan.
+     *
+     * @param  array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>  $proveedores
+     * @param  int|null  $idProveedorCarga  Proveedor de la carga (lote padre), que tiene prioridad sobre el principal de la recepción.
+     */
+    private static function hidratar_contrato_guias(object $item, array $proveedores, ?int $idProveedorCarga = null): void
+    {
+        $guias = RecepcionUnidadesData::normalizar_guias($item->guias ?? null);
+
+        $item->guias = $guias;
+        $item->proveedores = array_values($proveedores);
+
+        $principal = $item->proveedores[0] ?? null;
+        $item->id_proveedor_minero = $principal !== null ? $principal['id_proveedor'] : null;
+        $item->proveedor_razon_social = $principal !== null ? $principal['razon_social'] : null;
+        $item->proveedor_principal = $principal;
+
+        $guia = self::guia_por_prioridad($guias, $idProveedorCarga, $item->id_proveedor_minero);
+        $item->guia_remitente = ($guia['guia_remitente'] ?? '') !== '' ? $guia['guia_remitente'] : null;
+        $item->guia_transportista = ($guia['guia_transportista'] ?? '') !== '' ? $guia['guia_transportista'] : null;
+        $item->documentos_programacion = [
+            'guia_remitente' => $guia['guia_remitente_archivo'] ?? null,
+            'guia_transportista' => $guia['guia_transportista_archivo'] ?? null,
+        ];
+    }
+
+    /**
      * Obtener el listado de recepciones para el módulo de mineral, filtradas por sucursal
      */
     public static function get_recepciones_mineral(array $filters)
@@ -47,20 +136,21 @@ class RecepcionMineralData
             ru.id_distribucion AS id_distribucion,
             ru.es_recepcion_ficticia,
             ru.es_programacion,
-            ru.documentos_programacion,
-            ru.id_proveedor_minero,
+            ru.guias,
+            prp.id_proveedor_minero AS id_proveedor_minero,
             prr.razon_social AS proveedor_nombre_recepcion_unidad,
             ru.id_ticket_recepcion_unidades,
             tru.correlativo AS ticket_correlativo
         FROM
             recepcion_unidad ru
+        '.self::join_proveedor_principal('ru').'
         LEFT JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_recepcion
         LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
         LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte
         LEFT JOIN tipo_vehiculo tv ON tv.id = ru.id_tipo_vehiculo
         LEFT JOIN conductor c ON c.id = ru.id_conductor
-        LEFT JOIN proveedor prr ON prr.id = ru.id_proveedor_minero
+        LEFT JOIN proveedor prr ON prr.id = prp.id_proveedor_minero
         LEFT JOIN ticket_recepcion_unidades tru ON tru.id = ru.id_ticket_recepcion_unidades
         WHERE ru.id_sucursal = :id_sucursal
           AND ru.estado = "En Planta"
@@ -90,19 +180,23 @@ class RecepcionMineralData
         }
         $distribucionesPorRecepcion = self::get_distribucion_detalles_by_recepciones($despachoIds);
 
+        // Proveedores de la carga de cada unidad (modelo nuevo: tabla puente
+        // `proveedor_recepcion`). Una sola consulta para todas las recepciones.
+        $proveedoresPorRecepcion = RecepcionUnidadesData::get_proveedores_por_recepcion(
+            array_map(static fn ($r) => (int) $r->id, $results)
+        );
+
         foreach ($results as $item) {
             if (isset($item->evidencias)) {
                 $item->evidencias = json_decode($item->evidencias, true) ?? [];
             }
-            $item->documentos_programacion = RecepcionUnidadesData::normalizar_documentos_programacion(
-                $item->documentos_programacion ?? null,
-            );
-            $item->id_proveedor_minero = $item->id_proveedor_minero !== null ? (int) $item->id_proveedor_minero : null;
+            $proveedores = $proveedoresPorRecepcion[(int) $item->id] ?? [];
+            self::hidratar_contrato_guias($item, $proveedores);
             $item->id_distribucion = isset($item->id_distribucion) && $item->id_distribucion !== null
                 ? (int) $item->id_distribucion
                 : null;
             // Obtener los lotes de esta recepción
-            $item->lotes = self::get_lotes_by_recepcion($item->id);
+            $item->lotes = self::get_lotes_by_recepcion((int) $item->id, $proveedores);
             // Adjuntar los detalles de distribución (vacío si no es despacho o no hay detalles)
             $item->distribucion_detalles = $distribucionesPorRecepcion[(int) $item->id] ?? [];
         }
@@ -197,8 +291,11 @@ class RecepcionMineralData
 
     /**
      * Obtener los lotes de mineral asociados a una recepción de unidad
+     *
+     * @param  array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>|null  $proveedores
+     *                                                                                                      Proveedores de la carga de la unidad (para sugerir en el pesaje).
      */
-    public static function get_lotes_by_recepcion(int $recepcionUnidadId): array
+    public static function get_lotes_by_recepcion(int $recepcionUnidadId, ?array $proveedores = null): array
     {
         $sql = '
         SELECT
@@ -209,7 +306,7 @@ class RecepcionMineralData
             lm.id_proveedor_minero,
             p.razon_social AS proveedor_nombre,
             p.telefono AS proveedor_telefono,
-            ru.id_proveedor_minero AS id_proveedor_minero_recepcion,
+            COALESCE(prp.id_proveedor_minero, lm.id_proveedor_minero) AS id_proveedor_minero_recepcion,
             pr.razon_social AS proveedor_nombre_recepcion,
             lm.id_empleado_registro,
             CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre,
@@ -250,10 +347,11 @@ class RecepcionMineralData
         FROM
             lote_mineral lm
         INNER JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
+        '.self::join_proveedor_principal('ru').'
         INNER JOIN empleado emp ON emp.id = lm.id_empleado_registro
         LEFT JOIN empresa emp_tit ON emp_tit.id = lm.id_empresa
         LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero
-        LEFT JOIN proveedor pr ON pr.id = ru.id_proveedor_minero
+        LEFT JOIN proveedor pr ON pr.id = COALESCE(prp.id_proveedor_minero, lm.id_proveedor_minero)
         LEFT JOIN zona_origen zo ON zo.id = lm.id_zona_origen
         LEFT JOIN vehiculo v_lote ON v_lote.id = ru.id_vehiculo
         LEFT JOIN empresa_transporte et_lote ON et_lote.id = ru.id_empresa_transporte
@@ -267,11 +365,17 @@ class RecepcionMineralData
 
         $results = DB::select($sql, ['recepcion_unidad_id' => $recepcionUnidadId]);
 
+        $proveedores = $proveedores ?? RecepcionUnidadesData::get_proveedores_recepcion($recepcionUnidadId);
+
         foreach ($results as $item) {
             if (isset($item->evidencias)) {
                 $item->evidencias = json_decode($item->evidencias, true) ?? [];
             }
             $item->id_empresa = $item->id_empresa !== null ? (int) $item->id_empresa : null;
+            $item->id_proveedor_minero_recepcion = $item->id_proveedor_minero_recepcion !== null
+                ? (int) $item->id_proveedor_minero_recepcion
+                : null;
+            $item->proveedores_recepcion = array_values($proveedores);
             $item->peso_inicial = $item->peso_inicial !== null ? (float) $item->peso_inicial : null;
             $item->peso_final = $item->peso_final !== null ? (float) $item->peso_final : null;
             $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
@@ -305,7 +409,7 @@ class RecepcionMineralData
             lm.id_proveedor_minero,
             p.razon_social AS proveedor_nombre,
             p.telefono AS proveedor_telefono,
-            ru.id_proveedor_minero AS id_proveedor_minero_recepcion,
+            COALESCE(prp.id_proveedor_minero, lm.id_proveedor_minero) AS id_proveedor_minero_recepcion,
             pr.razon_social AS proveedor_nombre_recepcion,
             lm.id_empleado_registro,
             CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre,
@@ -347,10 +451,11 @@ class RecepcionMineralData
         FROM
             lote_mineral lm
         LEFT JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
+        '.self::join_proveedor_principal('ru').'
         INNER JOIN empleado emp ON emp.id = lm.id_empleado_registro
         LEFT JOIN empresa emp_tit ON emp_tit.id = lm.id_empresa
         LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero
-        LEFT JOIN proveedor pr ON pr.id = ru.id_proveedor_minero
+        LEFT JOIN proveedor pr ON pr.id = COALESCE(prp.id_proveedor_minero, lm.id_proveedor_minero)
         LEFT JOIN zona_origen zo ON zo.id = lm.id_zona_origen
         LEFT JOIN vehiculo v_lote ON v_lote.id = ru.id_vehiculo
         LEFT JOIN empresa_transporte et_lote ON et_lote.id = ru.id_empresa_transporte
@@ -368,6 +473,12 @@ class RecepcionMineralData
                 $item->evidencias = json_decode($item->evidencias, true) ?? [];
             }
             $item->id_empresa = $item->id_empresa !== null ? (int) $item->id_empresa : null;
+            $item->id_proveedor_minero_recepcion = $item->id_proveedor_minero_recepcion !== null
+                ? (int) $item->id_proveedor_minero_recepcion
+                : null;
+            $item->proveedores_recepcion = $item->id_recepcion_unidad !== null
+                ? array_values(RecepcionUnidadesData::get_proveedores_recepcion((int) $item->id_recepcion_unidad))
+                : [];
             $item->peso_inicial = $item->peso_inicial !== null ? (float) $item->peso_inicial : null;
             $item->peso_final = $item->peso_final !== null ? (float) $item->peso_final : null;
             $item->peso_neto = $item->peso_neto !== null ? (float) $item->peso_neto : null;
@@ -425,11 +536,13 @@ class RecepcionMineralData
             ru.id_distribucion AS id_distribucion,
             ru.es_recepcion_ficticia,
             ru.es_programacion,
-            ru.documentos_programacion,
+            ru.guias,
+            prp.id_proveedor_minero AS id_proveedor_minero,
             ru.id_ticket_recepcion_unidades,
             tru.correlativo AS ticket_correlativo
         FROM
             recepcion_unidad ru
+        '.self::join_proveedor_principal('ru').'
         LEFT JOIN empleado emp_reg ON emp_reg.id = ru.id_empleado_recepcion
         LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
@@ -447,13 +560,12 @@ class RecepcionMineralData
             if (isset($item->evidencias)) {
                 $item->evidencias = json_decode($item->evidencias, true) ?? [];
             }
-            $item->documentos_programacion = RecepcionUnidadesData::normalizar_documentos_programacion(
-                $item->documentos_programacion ?? null,
-            );
+            $proveedores = RecepcionUnidadesData::get_proveedores_recepcion($id);
+            self::hidratar_contrato_guias($item, $proveedores);
             $item->id_distribucion = isset($item->id_distribucion) && $item->id_distribucion !== null
                 ? (int) $item->id_distribucion
                 : null;
-            $item->lotes = self::get_lotes_by_recepcion($id);
+            $item->lotes = self::get_lotes_by_recepcion($id, $proveedores);
             if (($item->tipo_ingreso ?? null) === 'Despacho de Mineral') {
                 $detalles = self::get_distribucion_detalles_by_recepciones([$id]);
                 $item->distribucion_detalles = $detalles[$id] ?? [];
@@ -545,7 +657,7 @@ class RecepcionMineralData
             p.id                                       AS id_proveedor,
             p.razon_social                             AS proveedor_razon_social,
 
-            ru.id_proveedor_minero                     AS id_proveedor_minero_recepcion,
+            COALESCE(prp.id_proveedor_minero, lm.id_proveedor_minero) AS id_proveedor_minero_recepcion,
             pr.razon_social                            AS proveedor_nombre_recepcion,
 
             zo.id                                      AS id_zona_origen,
@@ -571,12 +683,13 @@ class RecepcionMineralData
         FROM lote_mineral lm
         -- LEFT JOIN porque el lote padre particionado tiene id_recepcion_unidad = NULL.
         LEFT JOIN recepcion_unidad ru ON ru.id = lm.id_recepcion_unidad
+        ".self::join_proveedor_principal('ru')."
         LEFT JOIN vehiculo v          ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc         ON vc.id = ru.id_vehiculo_carreta
         LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte
         LEFT JOIN tipo_vehiculo tv    ON tv.id = ru.id_tipo_vehiculo
         LEFT JOIN proveedor p        ON p.id = lm.id_proveedor_minero
-        LEFT JOIN proveedor pr       ON pr.id = ru.id_proveedor_minero
+        LEFT JOIN proveedor pr       ON pr.id = COALESCE(prp.id_proveedor_minero, lm.id_proveedor_minero)
         LEFT JOIN zona_origen zo     ON zo.id = lm.id_zona_origen
         LEFT JOIN conductor c        ON c.id = ru.id_conductor
         LEFT JOIN empleado emp_reg   ON emp_reg.id = ru.id_empleado_recepcion
@@ -585,6 +698,15 @@ class RecepcionMineralData
           AND ru.estado_pesaje = :estado_pesaje_a
           AND ru.tipo_ingreso = 'Recepción de Mineral'
           AND (lm.estado IS NULL OR lm.estado != 'Eliminado')
+          -- Un lote PADRE no aparece como fila: su mineral se ve en sus
+          -- particiones (bloque C), una fila por partición. Así el peso no
+          -- se cuenta dos veces y el resumen cuadra con las guías.
+          AND NOT EXISTS (
+              SELECT 1
+              FROM particion_lote_mineral pc
+              WHERE pc.id_lote_mineral = lm.id
+                AND pc.estado = 'Activo'
+          )
         ";
 
         $paramsA = [
@@ -682,7 +804,7 @@ class RecepcionMineralData
             p_origen.id                                AS id_proveedor,
             p_origen.razon_social                      AS proveedor_razon_social,
 
-            ru.id_proveedor_minero                     AS id_proveedor_minero_recepcion,
+            COALESCE(prp.id_proveedor_minero, lm_origen.id_proveedor_minero) AS id_proveedor_minero_recepcion,
             pr.razon_social                            AS proveedor_nombre_recepcion,
 
             zo_origen.id                               AS id_zona_origen,
@@ -710,6 +832,7 @@ class RecepcionMineralData
         INNER JOIN despacho ds               ON ds.id = d.id_despacho
         INNER JOIN despacho_detalle dd       ON dd.id = ddt.id_despacho_detalle
         INNER JOIN recepcion_unidad ru       ON ru.id_distribucion = d.id
+        ".self::join_proveedor_principal('ru')."
         LEFT JOIN vehiculo v                 ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc                ON vc.id = ru.id_vehiculo_carreta
         LEFT JOIN empresa_transporte et      ON et.id = ru.id_empresa_transporte
@@ -717,7 +840,7 @@ class RecepcionMineralData
         LEFT JOIN lote_mineral lm_origen     ON lm_origen.id = dd.id_lote_mineral
         LEFT JOIN blending b_origen          ON b_origen.id = dd.id_blending
         LEFT JOIN proveedor p_origen         ON p_origen.id = lm_origen.id_proveedor_minero
-        LEFT JOIN proveedor pr               ON pr.id = ru.id_proveedor_minero
+        LEFT JOIN proveedor pr               ON pr.id = COALESCE(prp.id_proveedor_minero, lm_origen.id_proveedor_minero)
         LEFT JOIN zona_origen zo_origen      ON zo_origen.id = lm_origen.id_zona_origen
         LEFT JOIN conductor c                ON c.id = ru.id_conductor
         LEFT JOIN empleado emp_reg           ON emp_reg.id = ru.id_empleado_recepcion
@@ -825,7 +948,7 @@ class RecepcionMineralData
 
             prov.id                                       AS id_proveedor,
             prov.razon_social                             AS proveedor_razon_social,
-            ru.id_proveedor_minero                        AS id_proveedor_minero_recepcion,
+            COALESCE(prp.id_proveedor_minero, lm.id_proveedor_minero) AS id_proveedor_minero_recepcion,
             pr.razon_social                               AS proveedor_nombre_recepcion,
             zo.id                                         AS id_zona_origen,
             zo.nombre                                     AS zona_origen_nombre,
@@ -850,19 +973,22 @@ class RecepcionMineralData
                 AND pc.estado = 'Activo')                AS particiones_total
         FROM particion_lote_mineral p
         INNER JOIN lote_mineral lm  ON lm.id = p.id_lote_mineral
-        INNER JOIN recepcion_unidad ru ON ru.id = p.id_recepcion_unidad
+        -- La partición se atribuye a la UNIDAD del lote padre (si el padre
+        -- tiene recepción) y, si no, a la suya. Es la misma resolución que
+        -- usa el catálogo de ítems de las guías, de modo que el resumen y las
+        -- guías muestran el mineral en la misma unidad.
+        INNER JOIN recepcion_unidad ru ON ru.id = COALESCE(lm.id_recepcion_unidad, p.id_recepcion_unidad)
+        ".self::join_proveedor_principal('ru')."
         LEFT JOIN vehiculo v          ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc         ON vc.id = ru.id_vehiculo_carreta
         LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte
         LEFT JOIN tipo_vehiculo tv    ON tv.id = ru.id_tipo_vehiculo
         LEFT JOIN proveedor prov      ON prov.id = lm.id_proveedor_minero
-        LEFT JOIN proveedor pr        ON pr.id = ru.id_proveedor_minero
+        LEFT JOIN proveedor pr        ON pr.id = COALESCE(prp.id_proveedor_minero, lm.id_proveedor_minero)
         LEFT JOIN zona_origen zo      ON zo.id = lm.id_zona_origen
         LEFT JOIN conductor c         ON c.id = ru.id_conductor
         LEFT JOIN empleado emp_reg    ON emp_reg.id = ru.id_empleado_recepcion
         WHERE p.estado = 'Activo'
-          AND lm.particionado_desde_balanza = 1
-          AND lm.particion_finalizada = 1
           AND (lm.estado IS NULL OR lm.estado != 'Eliminado')
           AND ru.id_sucursal = :id_sucursal_c
           AND ru.estado_pesaje = :estado_pesaje_c
@@ -1643,10 +1769,10 @@ class RecepcionMineralData
      *  - Datos de la UNIDAD DESTINO de la partición (`rec.id = plm.id_recepcion_unidad`)
      *    para placa, conductor, transportista, sucursal y operador.
      *  - Proveedor con cascada: `lot.id_proveedor_minero` (lote padre, prioridad)
-     *    → `gui.id_proveedor` (guía) → `rec.id_proveedor_minero` (unidad destino,
-     *    fallback). Garantiza que TODAS las particiones del mismo lote padre
-     *    muestren el mismo proveedor en su ticket, sin importar la unidad donde
-     *    viva cada partición.
+     *    → `gui.id_proveedor` (guía) → `prp.id_proveedor_minero` (proveedor
+     *    principal de la unidad destino, fallback). Garantiza que TODAS las
+     *    particiones del mismo lote padre muestren el mismo proveedor en su
+     *    ticket, sin importar la unidad donde viva cada partición.
      *
      * Patrón espejo de `ValidacionDistribucionData::get_ticket_balanza_particion`
      * para que cada módulo imprima correctamente para su tipo de partición.
@@ -1715,8 +1841,9 @@ class RecepcionMineralData
         LEFT JOIN lote_guia ltg ON ltg.id_lote_mineral = lot.id
         LEFT JOIN guia_primer_tramo gui ON gui.id = ltg.id_guia_primer_tramo
         LEFT JOIN recepcion_unidad rec ON rec.id = plm.id_recepcion_unidad
+        ".self::join_proveedor_principal('rec').'
         LEFT JOIN vehiculo vh ON vh.id = COALESCE(rec.id_vehiculo, gui.id_vehiculo)
-        LEFT JOIN proveedor pr ON pr.id = COALESCE(lot.id_proveedor_minero, gui.id_proveedor, rec.id_proveedor_minero)
+        LEFT JOIN proveedor pr ON pr.id = COALESCE(lot.id_proveedor_minero, gui.id_proveedor, prp.id_proveedor_minero)
         LEFT JOIN conductor cnd ON cnd.id = COALESCE(rec.id_conductor, gui.id_conductor)
         LEFT JOIN empresa_transporte emp ON emp.id = COALESCE(rec.id_empresa_transporte, gui.id_empresa_transporte)
         LEFT JOIN sucursal sc ON sc.id = COALESCE(rec.id_sucursal, gui.id_sucursal)
@@ -1732,7 +1859,7 @@ class RecepcionMineralData
         LEFT JOIN cargo cr ON cr.id = eml.id_cargo
         WHERE plm.id = :id_particion
         LIMIT 1
-        ";
+        ';
 
         $item = DB::selectOne($sql, ['id_particion' => $idParticion]);
         if (! $item) {

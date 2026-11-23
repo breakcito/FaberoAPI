@@ -19,8 +19,8 @@ use Illuminate\Support\Facades\DB;
  *         una de sus particiones) mediante `lote_guia`.
  *      2. Al registrar la unidad de recepción → queda en
  *         `guia_primer_tramo.id_recepcion_unidad`.
- *    Antes de que exista la guía, la programación deja los números en
- *    `recepcion_unidad.guia_remitente` / `guia_transportista`.
+ *    Antes de que exista la guía, la programación deja los números en el
+ *    array JSON `recepcion_unidad.guias` (una entrada por proveedor).
  *
  *  - **SEGUNDO TRAMO** (`guia_segundo_tramo`): el del embarque del mineral
  *    procesado hacia la planta destino. Se registra en el módulo de
@@ -37,7 +37,7 @@ class GuiasData
      *   1. Guía de primer tramo enlazada a la partición (`lote_guia`).
      *   2. Guía de primer tramo enlazada al lote padre (`lote_guia`).
      *   3. Guía de primer tramo de la unidad de recepción.
-     *   4. Números capturados en la programación (`recepcion_unidad`).
+     *   4. Números capturados en la programación (`recepcion_unidad.guias`).
      *
      * @param  object  $item  Fila del ticket (se modifica in situ).
      */
@@ -225,8 +225,12 @@ class GuiasData
 
     /**
      * Números de guía capturados en la programación de la recepción
-     * (`recepcion_unidad`), por si todavía no se registró la guía de primer
+     * (columna JSON `guias`), por si todavía no se registró la guía de primer
      * tramo.
+     *
+     * La columna `guias` guarda una entrada por proveedor de la carga. Se
+     * devuelve la primera entrada (orden del array) que tenga algún número de
+     * guía, que es la guía principal de la unidad.
      *
      * @return array{id: int, guia_remitente: string|null, guia_transportista: string|null, sin_guia_transportista: bool}|null
      */
@@ -234,10 +238,20 @@ class GuiasData
     {
         $row = DB::selectOne(
             'SELECT ru.id AS id,
-                    ru.guia_remitente AS guia_remitente,
-                    ru.guia_transportista AS guia_transportista
+                    g.guia_remitente AS guia_remitente,
+                    g.guia_transportista AS guia_transportista
              FROM recepcion_unidad ru
+             INNER JOIN JSON_TABLE(
+                 COALESCE(ru.guias, JSON_ARRAY()),
+                 \'$[*]\' COLUMNS (
+                     idx FOR ORDINALITY,
+                     id_proveedor INT PATH \'$.id_proveedor\' NULL ON EMPTY,
+                     guia_remitente VARCHAR(64) PATH \'$.guia_remitente\' NULL ON EMPTY NULL ON ERROR,
+                     guia_transportista VARCHAR(64) PATH \'$.guia_transportista\' NULL ON EMPTY NULL ON ERROR
+                 )
+             ) g ON 1 = 1
              WHERE ru.id = :id_recepcion
+             ORDER BY g.idx ASC
              LIMIT 1',
             ['id_recepcion' => $idRecepcionUnidad]
         );
@@ -309,7 +323,6 @@ class GuiasData
     }
 
     /**
-     * @param  object  $row
      * @return array{id: int, guia_remitente: string|null, guia_transportista: string|null, sin_guia_transportista: bool}
      */
     private static function map_guia(object $row): array

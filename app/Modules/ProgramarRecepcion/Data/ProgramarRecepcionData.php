@@ -32,12 +32,8 @@ class ProgramarRecepcionData
             ru.id_conductor,
             CONCAT(c.nombre, " ", c.apellido) AS conductor_nombre_completo,
             c.numero_licencia AS conductor_numero_licencia,
-            ru.id_proveedor_minero,
-            pr.razon_social AS proveedor_razon_social,
             ru.tipo_ingreso,
-            ru.guia_remitente,
-            ru.guia_transportista,
-            ru.documentos_programacion,
+            ru.guias,
             ru.fecha_estimada_llegada,
             ru.observacion,
             ru.es_programacion,
@@ -56,7 +52,6 @@ class ProgramarRecepcionData
         LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN tipo_vehiculo tv ON tv.id = ru.id_tipo_vehiculo
         LEFT JOIN conductor c ON c.id = ru.id_conductor
-        LEFT JOIN proveedor pr ON pr.id = ru.id_proveedor_minero
         LEFT JOIN ticket_recepcion_unidades tru ON tru.id = ru.id_ticket_recepcion_unidades
         WHERE ru.es_programacion = 1
         -- Las recepciones ficticias (copias técnicas que alojan particiones)
@@ -97,13 +92,56 @@ class ProgramarRecepcionData
         $sql .= ' ORDER BY COALESCE(ru.fecha_hora_ingreso, ru.fecha_estimada_llegada, ru.created_at) DESC';
 
         $results = DB::select($sql, $params);
-        foreach ($results as $item) {
-            if (isset($item->documentos_programacion)) {
-                $item->documentos_programacion = RecepcionUnidadesData::normalizar_documentos_programacion($item->documentos_programacion);
-            }
-        }
+
+        self::hidratar_contrato_guias($results);
 
         return $results;
+    }
+
+    /**
+     * Hidratar el contrato de guías y proveedores de un listado de programaciones.
+     *
+     * Los proveedores de la carga viven en `proveedor_recepcion` y las guías
+     * (con sus archivos) en la columna JSON `guias` de `recepcion_unidad`.
+     *
+     * @param  array<int, object>  $rows
+     */
+    private static function hidratar_contrato_guias(array $rows): void
+    {
+        if (empty($rows)) {
+            return;
+        }
+
+        $ids = [];
+        foreach ($rows as $row) {
+            $ids[] = (int) $row->id;
+        }
+
+        $proveedoresPorRecepcion = RecepcionUnidadesData::get_proveedores_por_recepcion($ids);
+
+        foreach ($rows as $row) {
+            $idRecepcion = (int) $row->id;
+            $guias = RecepcionUnidadesData::normalizar_guias($row->guias ?? null);
+            $proveedores = array_values($proveedoresPorRecepcion[$idRecepcion] ?? []);
+
+            $row->guias = $guias;
+            $row->proveedores = $proveedores;
+
+            // Campos legacy derivados del proveedor y de la guía principal:
+            // los consumen módulos que todavía no migraron al contrato nuevo.
+            $principal = $proveedores[0] ?? null;
+            $row->id_proveedor_minero = $principal !== null ? $principal['id_proveedor'] : null;
+            $row->proveedor_razon_social = $principal !== null ? $principal['razon_social'] : null;
+            $row->proveedor_ruc = $principal !== null ? $principal['ruc'] : null;
+
+            $guia = RecepcionUnidadesData::guia_principal($guias, $row->id_proveedor_minero);
+            $row->guia_remitente = ($guia['guia_remitente'] ?? '') !== '' ? $guia['guia_remitente'] : null;
+            $row->guia_transportista = ($guia['guia_transportista'] ?? '') !== '' ? $guia['guia_transportista'] : null;
+            $row->documentos_programacion = [
+                'guia_remitente' => $guia['guia_remitente_archivo'] ?? null,
+                'guia_transportista' => $guia['guia_transportista_archivo'] ?? null,
+            ];
+        }
     }
 
     /**
@@ -116,15 +154,8 @@ class ProgramarRecepcionData
             return null;
         }
 
-        // `get_recepcion_by_id` no proyecta `documentos_programacion`: se lee de
-        // la fila cruda para que el modal de edición muestre los archivos ya
-        // adjuntos a la programación y no se pierdan al guardar.
-        $documentosProgramacion = DB::table('recepcion_unidad')
-            ->where('id', $id)
-            ->value('documentos_programacion');
-        $programacion['documentos_programacion'] = RecepcionUnidadesData::normalizar_documentos_programacion(
-            $documentosProgramacion
-        );
+        // `get_recepcion_by_id` ya devuelve el contrato de guías y proveedores
+        // hidratado (`guias`, `proveedores` y los campos legacy derivados).
 
         // Buscar visita asociada (si fue confirmada)
         $visita = DB::selectOne('
@@ -196,43 +227,59 @@ class ProgramarRecepcionData
     /**
      * Crear una programación (recepcion_unidad con es_programacion = 1).
      *
-     * @param  array  $data  Datos básicos de la programación. Incluye opcionalmente
-     *                       `documentos_programacion` (array con claves guia_remitente
-     *                       y guia_transportista, cada una con estructura IArchivo o null).
+     * La programación es una fila de `recepcion_unidad`: sus proveedores
+     * quedan en `proveedor_recepcion` y sus guías (con archivos) en la
+     * columna JSON `guias`. Al confirmar la llegada esa misma fila pasa a
+     * ser la recepción, sin copiar nada.
+     *
+     * @param  array  $data  Datos básicos de la programación. Incluye
+     *                       `proveedores` (ids de proveedor de la carga) y
+     *                       `guias` (una entrada por proveedor, con sus
+     *                       archivos ya subidos).
      */
     public static function crear_programacion(array $data): int
     {
+        $proveedores = self::normalizar_ids($data['proveedores'] ?? []);
+        $guias = RecepcionUnidadesData::normalizar_guias($data['guias'] ?? []);
+
         $insert = [
             'id_empleado_autoriza' => $data['id_empleado_autoriza'],
             'id_empresa_transporte' => $data['id_empresa_transporte'],
             'id_vehiculo' => $data['id_vehiculo'] ?? null,
             'id_tipo_vehiculo' => $data['id_tipo_vehiculo'] ?? null,
             'id_conductor' => $data['id_conductor'] ?? null,
-            'id_proveedor_minero' => $data['id_proveedor_minero'] ?? null,
             'id_sucursal' => $data['id_sucursal'] ?? null,
             'tipo_ingreso' => $data['tipo_ingreso'] ?? 'Recepción de Mineral',
-            'guia_remitente' => $data['guia_remitente'] ?? null,
-            'guia_transportista' => $data['guia_transportista'] ?? null,
             'fecha_estimada_llegada' => $data['fecha_estimada_llegada'] ?? null,
             'observacion' => $data['observacion'] ?? null,
             'es_programacion' => 1,
             'created_at' => now()->toDateTimeString(),
         ];
 
-        $documentos = self::normalizar_documentos_input($data['documentos_programacion'] ?? null);
-        if ($documentos !== null) {
-            $insert['documentos_programacion'] = json_encode($documentos);
+        if (! empty($guias)) {
+            $insert['guias'] = json_encode($guias);
         }
 
         // Los campos que se registran en la programación quedan bloqueados
         // para edición posterior (esos datos los registró y autorizó otra
-        // persona).
+        // persona). Las guías de la programación también quedan bloqueadas
+        // en la recepción que se genere al confirmar la llegada.
         $bloqueados = CamposBloqueadosHelper::calcular($insert);
+        $bloqueados = array_merge($bloqueados, self::guias_bloqueadas($guias));
+        $bloqueados = array_values(array_unique($bloqueados));
         if (! empty($bloqueados)) {
             $insert['campos_bloqueados'] = json_encode($bloqueados);
         }
 
-        return DB::table('recepcion_unidad')->insertGetId($insert);
+        return DB::transaction(function () use ($insert, $proveedores) {
+            $id = (int) DB::table('recepcion_unidad')->insertGetId($insert);
+
+            if (! empty($proveedores)) {
+                RecepcionUnidadesData::sync_proveedores_recepcion($id, $proveedores);
+            }
+
+            return $id;
+        });
     }
 
     /**
@@ -242,6 +289,12 @@ class ProgramarRecepcionData
      * unidad, no la agenda. Tampoco se tocan los campos del proceso
      * (autorización, estado, ticket de ingreso, confirmación).
      *
+     * El proveedor de la carga y las guías ya NO son columnas de
+     * `recepcion_unidad`: viven en `proveedor_recepcion` y en la columna
+     * JSON `guias`, y se editan con los mismos endpoints que usa la
+     * recepción (`/recepcion-unidades/{id}/proveedores` y
+     * `/recepcion-unidades/{id}/guias-recepcion`).
+     *
      * @var array<int, string>
      */
     public const COLUMNAS_EDITABLES = [
@@ -249,11 +302,8 @@ class ProgramarRecepcionData
         'id_vehiculo',
         'id_tipo_vehiculo',
         'id_conductor',
-        'id_proveedor_minero',
         'id_sucursal',
         'fecha_estimada_llegada',
-        'guia_remitente',
-        'guia_transportista',
         'observacion',
     ];
 
@@ -267,18 +317,16 @@ class ProgramarRecepcionData
         'id_vehiculo' => 'Vehículo',
         'id_tipo_vehiculo' => 'Tipo de vehículo',
         'id_conductor' => 'Conductor',
-        'id_proveedor_minero' => 'Proveedor minero',
         'id_sucursal' => 'Sucursal',
         'fecha_estimada_llegada' => 'Fecha estimada de llegada',
-        'guia_remitente' => 'Guía remitente',
-        'guia_transportista' => 'Guía transportista',
         'observacion' => 'Observación',
     ];
 
     /**
      * Actualizar programación (solo permitido mientras NO esté confirmada).
      *
-     * Acepta `documentos_programacion` (array normalizado) y persiste como JSON.
+     * Acepta `guias` (array normalizado) y `proveedores` (ids), que se
+     * guardan en la columna JSON `guias` y en `proveedor_recepcion`.
      * Los cambios se registran en `log_cambios` con motivo "Edición de programación".
      */
     public static function actualizar_programacion(int $id, array $data, int $idEmpleado): bool
@@ -304,28 +352,34 @@ class ProgramarRecepcionData
 
         $cambios = [];
 
-        if (array_key_exists('documentos_programacion', $data)) {
-            $documentos = self::normalizar_documentos_input($data['documentos_programacion']);
-            $documentosAnteriores = RecepcionUnidadesData::normalizar_documentos_programacion(
-                $fila->documentos_programacion ?? null
-            );
-            $resumenAnterior = self::resumen_documentos($documentosAnteriores);
-            $resumenNuevo = self::resumen_documentos($documentos);
+        if (array_key_exists('guias', $data)) {
+            $guias = RecepcionUnidadesData::normalizar_guias($data['guias']);
+            $guiasAnteriores = RecepcionUnidadesData::normalizar_guias($fila->guias ?? null);
+            $resumenAnterior = self::resumen_guias($guiasAnteriores);
+            $resumenNuevo = self::resumen_guias($guias);
             if ($resumenAnterior !== $resumenNuevo) {
                 $cambios[] = [
-                    'campo_bd' => 'documentos_programacion',
-                    'campo' => 'Documentos de programación',
+                    'campo_bd' => 'guias',
+                    'campo' => 'Guías',
                     'valor_anterior' => $resumenAnterior,
                     'valor_nuevo' => $resumenNuevo,
                 ];
             }
-            $update['documentos_programacion'] = $documentos !== null
-                ? json_encode($documentos)
-                : null;
+            $update['guias'] = ! empty($guias) ? json_encode($guias) : null;
+
+            // Los bloqueos de las guías se recalculan: si la programación deja
+            // de registrar una guía, esta vuelve a ser editable en la
+            // recepción que se genere al confirmar.
+            $bloqueados = CamposBloqueadosHelper::normalizar($fila->campos_bloqueados ?? null);
+            $bloqueados = array_values(array_diff($bloqueados, ['guia_remitente', 'guia_transportista']));
+            $bloqueados = array_values(array_unique(array_merge($bloqueados, self::guias_bloqueadas($guias))));
+            $update['campos_bloqueados'] = json_encode($bloqueados);
         }
 
         foreach ($update as $columna => $valorNuevo) {
-            if ($columna === 'documentos_programacion') {
+            // `guias` y `campos_bloqueados` se registran con su propio
+            // resumen: no son cambios de columna independientes.
+            if ($columna === 'guias' || $columna === 'campos_bloqueados') {
                 continue;
             }
             $valorAnterior = $fila->{$columna} ?? null;
@@ -340,6 +394,15 @@ class ProgramarRecepcionData
             ];
         }
 
+        $proveedoresNuevos = null;
+        if (array_key_exists('proveedores', $data)) {
+            $proveedoresNuevos = self::normalizar_ids($data['proveedores']);
+            $proveedoresAnteriores = RecepcionUnidadesData::get_proveedores_recepcion($id);
+            foreach (self::diff_proveedores($proveedoresAnteriores, $proveedoresNuevos) as $cambio) {
+                $cambios[] = $cambio;
+            }
+        }
+
         if (! empty($cambios)) {
             $logActual = $fila->log_cambios ?? null;
             if (is_string($logActual)) {
@@ -352,15 +415,25 @@ class ProgramarRecepcionData
             $update['log_cambios'] = json_encode($logActual);
         }
 
-        if (empty($update)) {
+        if (empty($update) && $proveedoresNuevos === null) {
             return true;
         }
 
-        $afectadas = DB::table('recepcion_unidad')
-            ->where('id', $id)
-            ->where('es_programacion', 1)
-            ->whereNull('id_empleado_recepcion')
-            ->update($update);
+        $afectadas = 0;
+
+        DB::transaction(function () use ($id, $update, $proveedoresNuevos, &$afectadas) {
+            if (! empty($update)) {
+                $afectadas = DB::table('recepcion_unidad')
+                    ->where('id', $id)
+                    ->where('es_programacion', 1)
+                    ->whereNull('id_empleado_recepcion')
+                    ->update($update);
+            }
+
+            if ($proveedoresNuevos !== null) {
+                RecepcionUnidadesData::sync_proveedores_recepcion($id, $proveedoresNuevos);
+            }
+        });
 
         // `update()` devuelve 0 cuando los valores ya eran idénticos: eso NO es
         // un fallo. Solo se considera fallo si había cambios reales y la fila
@@ -409,55 +482,144 @@ class ProgramarRecepcionData
     }
 
     /**
-     * Resumen comparable de `documentos_programacion` (nombres de archivo).
+     * Normalizar una lista de ids (proveedores) sin repetidos.
+     *
+     * @param  array<int, mixed>  $ids
+     * @return array<int, int>
      */
-    private static function resumen_documentos(?array $documentos): string
+    private static function normalizar_ids(array $ids): array
     {
-        $documentos = $documentos ?? ['guia_remitente' => null, 'guia_transportista' => null];
-
-        $partes = [];
-        foreach (['guia_remitente', 'guia_transportista'] as $clave) {
-            $nombre = $documentos[$clave]['nombre_original'] ?? null;
-            $etiqueta = $clave === 'guia_remitente' ? 'Remitente' : 'Transportista';
-            $partes[] = $etiqueta.': '.(! empty($nombre) ? $nombre : '—');
+        $normalizados = [];
+        foreach ($ids as $id) {
+            $id = (int) $id;
+            if ($id > 0 && ! in_array($id, $normalizados, true)) {
+                $normalizados[] = $id;
+            }
         }
 
-        return implode(' | ', $partes);
+        return $normalizados;
     }
 
     /**
-     * Normalizar la entrada de documentos_programacion antes de persistir.
-     * Acepta array con claves guia_remitente / guia_transportista (IArchivo|null)
-     * y devuelve la misma forma o null si ambas están vacías.
+     * Campos de guía que quedan bloqueados por venir de una programación.
+     *
+     * @param  array<int, array<string, mixed>>  $guias
+     * @return array<int, string>
      */
-    private static function normalizar_documentos_input(mixed $input): ?array
+    private static function guias_bloqueadas(array $guias): array
     {
-        if (! is_array($input)) {
-            return null;
+        $bloqueadas = [];
+
+        foreach ($guias as $guia) {
+            if (($guia['guia_remitente'] ?? '') !== '' && ! in_array('guia_remitente', $bloqueadas, true)) {
+                $bloqueadas[] = 'guia_remitente';
+            }
+            if (($guia['guia_transportista'] ?? '') !== '' && ! in_array('guia_transportista', $bloqueadas, true)) {
+                $bloqueadas[] = 'guia_transportista';
+            }
         }
 
-        $result = ['guia_remitente' => null, 'guia_transportista' => null];
-        foreach (['guia_remitente', 'guia_transportista'] as $key) {
-            $item = $input[$key] ?? null;
-            if (is_array($item) && ! empty($item['url'])) {
-                $result[$key] = [
-                    'url' => $item['url'],
-                    'path_relativo' => $item['path_relativo'] ?? '',
-                    'nombre_original' => $item['nombre_original'] ?? null,
-                    'extension' => $item['extension'] ?? null,
+        return $bloqueadas;
+    }
+
+    /**
+     * Resumen comparable de las guías (para el `log_cambios`).
+     *
+     * @param  array<int, array<string, mixed>>  $guias
+     */
+    private static function resumen_guias(array $guias): string
+    {
+        if (empty($guias)) {
+            return '— (sin guías)';
+        }
+
+        $partes = [];
+        foreach ($guias as $guia) {
+            $remitente = trim((string) ($guia['guia_remitente'] ?? ''));
+            $transportista = trim((string) ($guia['guia_transportista'] ?? ''));
+            $archRemitente = $guia['guia_remitente_archivo']['nombre_original'] ?? null;
+            $archTransportista = $guia['guia_transportista_archivo']['nombre_original'] ?? null;
+
+            $partes[] = sprintf(
+                'P%s | Remitente: %s (%s) | Transportista: %s (%s)',
+                (string) ($guia['id_proveedor'] ?? '—'),
+                $remitente !== '' ? $remitente : '—',
+                ! empty($archRemitente) ? (string) $archRemitente : 'sin archivo',
+                $transportista !== '' ? $transportista : '—',
+                ! empty($archTransportista) ? (string) $archTransportista : 'sin archivo',
+            );
+        }
+
+        return implode(' || ', $partes);
+    }
+
+    /**
+     * Diferencias entre la lista de proveedores anterior y la nueva.
+     *
+     * @param  array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>  $anteriores
+     * @param  array<int, int>  $nuevos
+     * @return array<int, array{campo_bd: string, campo: string, valor_anterior: ?string, valor_nuevo: ?string}>
+     */
+    private static function diff_proveedores(array $anteriores, array $nuevos): array
+    {
+        $mapaAnterior = [];
+        foreach ($anteriores as $proveedor) {
+            $mapaAnterior[(int) $proveedor['id_proveedor']] = (string) $proveedor['razon_social'];
+        }
+
+        $razones = self::razones_sociales($nuevos);
+
+        $cambios = [];
+        foreach ($nuevos as $idProveedor) {
+            if (! isset($mapaAnterior[$idProveedor])) {
+                $cambios[] = [
+                    'campo_bd' => 'proveedor_recepcion',
+                    'campo' => 'Proveedor agregado',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => $razones[$idProveedor] ?? null,
+                ];
+            }
+        }
+        foreach ($mapaAnterior as $idProveedor => $razonSocial) {
+            if (! in_array($idProveedor, $nuevos, true)) {
+                $cambios[] = [
+                    'campo_bd' => 'proveedor_recepcion',
+                    'campo' => 'Proveedor eliminado',
+                    'valor_anterior' => $razonSocial,
+                    'valor_nuevo' => null,
                 ];
             }
         }
 
-        if ($result['guia_remitente'] === null && $result['guia_transportista'] === null) {
-            return null;
+        return $cambios;
+    }
+
+    /**
+     * Razón social de cada proveedor (para el historial de cambios).
+     *
+     * @param  array<int, int>  $ids
+     * @return array<int, string>
+     */
+    private static function razones_sociales(array $ids): array
+    {
+        if (empty($ids)) {
+            return [];
         }
 
-        return $result;
+        $razones = [];
+        foreach (DB::table('proveedor')->whereIn('id', $ids)->pluck('razon_social', 'id') as $id => $razon) {
+            $razones[(int) $id] = (string) $razon;
+        }
+
+        return $razones;
     }
 
     /**
      * Confirmar una programación.
+     *
+     * La programación ES una fila de `recepcion_unidad`: al confirmar, esa
+     * misma fila pasa a ser la recepción, conservando sus proveedores
+     * (`proveedor_recepcion`) y sus guías (`guias`).
      *
      * Acepta opcionalmente `observacion` y archivos de `evidencias` que se persisten en
      * `recepcion_unidad` con su entrada en `log_cambios` (motivo: "Confirmación inicial").
@@ -637,20 +799,13 @@ class ProgramarRecepcionData
             }
 
             $update = [];
-            if (array_key_exists('observacion', array_column($cambios, 'campo_bd') ? array_flip(array_column($cambios, 'campo_bd')) : [])) {
+            if (in_array('observacion', array_column($cambios, 'campo_bd'), true)) {
                 $update['observacion'] = $observacion;
             }
             if (in_array('observacion_salida', array_column($cambios, 'campo_bd'), true)) {
                 $update['observacion_salida'] = $observacionSalida;
             }
-            $cambioEvidencias = false;
-            foreach ($cambios as $c) {
-                if (($c['campo_bd'] ?? null) === 'evidencias') {
-                    $cambioEvidencias = true;
-                    break;
-                }
-            }
-            if ($cambioEvidencias) {
+            if (in_array('evidencias', array_column($cambios, 'campo_bd'), true)) {
                 $update['evidencias'] = json_encode($evidenciasActuales);
             }
 

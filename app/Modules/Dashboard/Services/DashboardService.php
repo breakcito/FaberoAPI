@@ -23,9 +23,19 @@ class DashboardService
 {
     /**
      * Paquete completo del dashboard: evolución mensual + fotografía actual.
+     *
+     * FILTROS (independientes entre sí):
+     *  - `idProveedorMinero` acota las TN recepcionadas.
+     *  - `idPlantaDestino` acota las TN despachadas.
+     *
+     * El snapshot (cuentas por pagar/cobrar, stock, sin comprobante) NO se
+     * filtra: son saldos acumulados a la fecha de consulta.
      */
-    public static function get_resumen(?int $idSucursal = null): array
-    {
+    public static function get_resumen(
+        ?int $idSucursal = null,
+        ?int $idProveedorMinero = null,
+        ?int $idPlantaDestino = null
+    ): array {
         // La ventana termina en el mes EN CURSO: el filtro arranca en el mes
         // actual y permite consultar hacia atrás los 11 meses anteriores.
         $mesFin = CarbonImmutable::now()->startOfMonth();
@@ -42,7 +52,13 @@ class DashboardService
         $fechaInicio = $meses[0]->subYear()->startOfMonth()->format('Y-m-d H:i:s');
         $fechaFin = CarbonImmutable::now()->endOfDay()->format('Y-m-d H:i:s');
 
-        $serie = DashboardData::get_serie_mensual($fechaInicio, $fechaFin, $idSucursal);
+        $serie = DashboardData::get_serie_mensual(
+            $fechaInicio,
+            $fechaFin,
+            $idSucursal,
+            $idProveedorMinero,
+            $idPlantaDestino
+        );
         $snapshot = DashboardData::get_snapshot();
 
         $mesesActual = [];
@@ -143,14 +159,58 @@ class DashboardService
                 'detraccion_usd' => $detraccionUsd,
                 'total_usd' => $netoPagar + $detraccionUsd,
                 'mayor_deudor' => $porPagar['mayor_deudor'] ?? null,
+                'detalle' => self::detalle_cuenta($porPagar['detalle'] ?? [], $tcCompra),
             ],
             'por_cobrar' => [
                 'neto_usd' => $netoCobrar,
                 'detraccion_usd' => $detraccionCobrarUsd,
                 'total_usd' => $netoCobrar + $detraccionCobrarUsd,
                 'mayor_acreedor' => $porCobrar['mayor_acreedor'] ?? null,
+                'detalle' => self::detalle_cuenta($porCobrar['detalle'] ?? [], $tcCompra),
             ],
             'tipo_cambio' => $tipoCambio !== [] ? $tipoCambio : null,
         ];
+    }
+
+    /**
+     * Normalizar el detalle de comprobantes pendientes de una cuenta.
+     *
+     * La detracción llega en soles (así se registra en la BD) y se convierte a
+     * USD con el tipo de cambio vigente, igual que el total de la cuenta.
+     *
+     * @param  mixed  $detalle  Filas crudas del `JSON_ARRAYAGG` (puede ser null).
+     * @return array<int,array<string,mixed>>
+     */
+    private static function detalle_cuenta(mixed $detalle, float $tcCompra): array
+    {
+        if (! is_array($detalle)) {
+            return [];
+        }
+
+        $filas = [];
+
+        foreach ($detalle as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $netoUsd = (float) ($item['neto_usd'] ?? 0);
+            $detraccionPen = (float) ($item['detraccion_pen'] ?? 0);
+            $detraccionUsd = $tcCompra > 0 ? $detraccionPen / $tcCompra : 0.0;
+            $valorizacion = $item['valorizacion'] ?? null;
+
+            $filas[] = [
+                'documento' => (string) ($item['documento'] ?? ''),
+                'contraparte' => (string) ($item['contraparte'] ?? ''),
+                'valorizacion' => $valorizacion !== null ? (string) $valorizacion : null,
+                'fecha' => $item['fecha'] !== null ? (string) $item['fecha'] : null,
+                'neto_usd' => $netoUsd,
+                'detraccion_usd' => $detraccionUsd,
+                'total_usd' => $netoUsd + $detraccionUsd,
+                'estado' => (string) ($item['estado'] ?? ''),
+            ];
+        }
+
+        return $filas;
     }
 }

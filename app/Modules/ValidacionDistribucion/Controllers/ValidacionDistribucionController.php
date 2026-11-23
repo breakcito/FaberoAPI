@@ -50,7 +50,6 @@ class ValidacionDistribucionController
             'recepcion.id_vehiculo_carreta' => 'nullable|integer|exists:vehiculo,id',
             'recepcion.id_empresa_transporte' => 'nullable|integer|exists:empresa_transporte,id',
             'recepcion.id_tipo_vehiculo' => 'nullable|integer|exists:tipo_vehiculo,id',
-            'recepcion.id_proveedor_minero' => 'nullable|integer|exists:proveedor,id',
         ]);
 
         $authUser = $request->attributes->get('auth_user');
@@ -95,7 +94,6 @@ class ValidacionDistribucionController
             'recepcion.id_sucursal' => 'nullable|integer',
             'recepcion.id_empresa_transporte' => 'nullable|integer',
             'recepcion.id_tipo_vehiculo' => 'nullable|integer',
-            'recepcion.id_proveedor_minero' => 'nullable|integer',
             'recepcion.fecha_hora_ingreso' => 'nullable|date',
             'recepcion.fecha_hora_salida' => 'nullable|date',
         ]);

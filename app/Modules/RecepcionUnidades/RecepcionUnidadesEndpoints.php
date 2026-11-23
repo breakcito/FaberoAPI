@@ -8,9 +8,18 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/', 'get_recepciones');
         Route::get('/{id}', 'get_recepcion');
         Route::get('/{id}/ticket-ingreso', 'get_ticket_ingreso');
+        Route::get('/{id}/tickets-ingreso', 'get_tickets_ingreso');
         Route::get('/{id}/guias', 'get_guias');
         Route::post('/', 'crear_recepcion');
         Route::put('/{id}/salida', 'registrar_salida');
+
+        // Guías por proveedor (modelo nuevo: array JSON `guias`).
+        Route::get('/{id}/guias-recepcion', 'get_guias_recepcion');
+        Route::put('/{id}/guias-recepcion', 'set_guias_recepcion');
+
+        // Proveedores de la carga (tabla puente `proveedor_recepcion`).
+        Route::get('/{id}/proveedores', 'get_proveedores');
+        Route::put('/{id}/proveedores', 'set_proveedores');
 
         // Edición de campos puntuales (bloqueados si vinieron de una programación)
         Route::put('/{id}/campos', 'actualizar_campos');

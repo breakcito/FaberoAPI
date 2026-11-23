@@ -2,6 +2,7 @@
 
 namespace App\Modules\GuiasPrimerTramo\Data;
 
+use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Support\Facades\DB;
 
 class GuiasPrimerTramoData
@@ -200,6 +201,175 @@ class GuiasPrimerTramoData
         }
 
         return $rows;
+    }
+
+    /**
+     * Unidades (recepciones de unidad) que todavía tienen items de mineral
+     * pendientes de asociar a una guía de primer tramo.
+     *
+     * Se consideran pendientes los lotes sin particionar y las particiones que
+     * todavía no están en `lote_guia`.
+     *
+     * Cada unidad se devuelve UNA sola vez. Para resolver a qué unidad
+     * pertenece cada item se usa la misma regla que aplica el frontend
+     * (`id_recepcion_unidad_padre ?? id_recepcion_unidad`):
+     *  - Lote normal: la unidad del propio lote.
+     *  - Partición: la unidad del LOTE PADRE (`COALESCE(lm.id_recepcion_unidad,
+     *    plm.id_recepcion_unidad)`); si el padre se particionó desde balanza su
+     *    `id_recepcion_unidad` es NULL y se cae a la unidad de la partición.
+     *
+     * Las recepciones ficticias (las que se crean al particionar un lote) nunca
+     * se listan: comparten vehículo con la recepción real y generaban unidades
+     * duplicadas en el selector.
+     *
+     * @return array<int, array{id: int, placa: ?string, fecha_hora_ingreso: ?string}>
+     */
+    public static function get_unidades_disponibles(?int $idSucursal = null): array
+    {
+        // Rama 1: lotes NORMALES (sin partición) pendientes de guía.
+        $sqlLotes = '
+        SELECT DISTINCT
+            r.id,
+            v.placa,
+            r.fecha_hora_ingreso
+        FROM lote_mineral l
+        INNER JOIN recepcion_unidad r ON r.id = l.id_recepcion_unidad
+        INNER JOIN vehiculo v ON v.id = r.id_vehiculo
+        LEFT JOIN lote_guia g ON g.id_lote_mineral = l.id
+        WHERE l.tiene_particion = 0
+          AND g.id IS NULL
+          AND r.es_recepcion_ficticia = 0
+        ';
+
+        // Rama 2: particiones pendientes de guía.
+        // La unidad es la del LOTE PADRE (COALESCE) y no la de la partición:
+        // al partir un lote se crean recepciones ficticias con el mismo
+        // vehículo, que es lo que hacía ver la misma placa dos veces.
+        $sqlParticiones = '
+        SELECT DISTINCT
+            ru.id,
+            v.placa,
+            ru.fecha_hora_ingreso
+        FROM particion_lote_mineral p
+        INNER JOIN lote_mineral lm ON lm.id = p.id_lote_mineral
+        INNER JOIN recepcion_unidad ru ON ru.id = COALESCE(lm.id_recepcion_unidad, p.id_recepcion_unidad)
+        INNER JOIN vehiculo v ON v.id = ru.id_vehiculo
+        LEFT JOIN lote_guia g ON g.id_particion_lote_mineral = p.id
+        WHERE g.id IS NULL
+          AND ru.es_recepcion_ficticia = 0
+        ';
+
+        $params = [];
+        if ($idSucursal !== null) {
+            // Placeholders con nombres distintos en cada rama: PDO no admite
+            // repetir el mismo placeholder nombrado dentro de la misma consulta.
+            $sqlLotes .= ' AND r.id_sucursal = :id_sucursal_lotes';
+            $sqlParticiones .= ' AND ru.id_sucursal = :id_sucursal_particiones';
+            $params['id_sucursal_lotes'] = $idSucursal;
+            $params['id_sucursal_particiones'] = $idSucursal;
+        }
+
+        $sql = 'SELECT * FROM ('.$sqlLotes.' UNION '.$sqlParticiones.') AS u
+                ORDER BY u.fecha_hora_ingreso DESC, u.id DESC';
+
+        $rows = DB::select($sql, $params);
+
+        $unidades = [];
+        $vistos = [];
+        foreach ($rows as $row) {
+            $id = (int) $row->id;
+
+            // Salvaguarda: una unidad se lista una sola vez aunque llegue por
+            // varias ramas (lote normal + particiones del mismo viaje).
+            if (isset($vistos[$id])) {
+                continue;
+            }
+            $vistos[$id] = true;
+
+            $unidades[] = [
+                'id' => $id,
+                'placa' => $row->placa !== null ? (string) $row->placa : null,
+                'fecha_hora_ingreso' => $row->fecha_hora_ingreso !== null ? (string) $row->fecha_hora_ingreso : null,
+            ];
+        }
+
+        return $unidades;
+    }
+
+    /**
+     * Proveedores de la carga de una unidad (recepción de unidad) que aún
+     * tienen mineral PENDIENTE de guía.
+     *
+     * Un proveedor al que ya se le hizo la guía de todo su mineral de la
+     * unidad no debe volver a ofrecerse: no hay nada que guiar.
+     *
+     * Fuentes (solo mineral sin guía activa):
+     *  - `lote_mineral`: los lotes de la unidad sin partida en `lote_guia`.
+     *  - `particion_lote_mineral`: las particiones de la unidad (resueltas
+     *    igual que el catálogo de ítems: la unidad del lote padre y, si el
+     *    padre se particionó desde balanza, la de la partición).
+     *
+     * @return array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>
+     */
+    public static function get_proveedores_unidad(int $idUnidad): array
+    {
+        $estadoGuiaActivo = EstadoBase::Activo->value;
+
+        $sql = '
+        SELECT DISTINCT
+            p.id AS id_proveedor,
+            p.razon_social AS razon_social,
+            p.ruc AS ruc
+        FROM proveedor p
+        WHERE p.id IN (
+            SELECT lm.id_proveedor_minero
+            FROM lote_mineral lm
+            WHERE lm.id_recepcion_unidad = :id_unidad_lotes
+              AND lm.id_proveedor_minero IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM lote_guia lg
+                  INNER JOIN guia_primer_tramo gpt ON gpt.id = lg.id_guia_primer_tramo
+                  WHERE lg.id_lote_mineral = lm.id
+                    AND lg.id_particion_lote_mineral IS NULL
+                    AND gpt.estado = :estado_guia_activo_lotes
+              )
+
+            UNION
+
+            SELECT lm.id_proveedor_minero
+            FROM particion_lote_mineral plm
+            INNER JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
+            WHERE COALESCE(lm.id_recepcion_unidad, plm.id_recepcion_unidad) = :id_unidad_particiones
+              AND lm.id_proveedor_minero IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM lote_guia lg
+                  INNER JOIN guia_primer_tramo gpt ON gpt.id = lg.id_guia_primer_tramo
+                  WHERE lg.id_particion_lote_mineral = plm.id
+                    AND gpt.estado = :estado_guia_activo_particiones
+              )
+        )
+        ORDER BY razon_social ASC
+        ';
+
+        $rows = DB::select($sql, [
+            'id_unidad_lotes' => $idUnidad,
+            'id_unidad_particiones' => $idUnidad,
+            'estado_guia_activo_lotes' => $estadoGuiaActivo,
+            'estado_guia_activo_particiones' => $estadoGuiaActivo,
+        ]);
+
+        $proveedores = [];
+        foreach ($rows as $row) {
+            $proveedores[] = [
+                'id_proveedor' => (int) $row->id_proveedor,
+                'razon_social' => $row->razon_social !== null ? (string) $row->razon_social : '',
+                'ruc' => $row->ruc !== null ? (string) $row->ruc : null,
+            ];
+        }
+
+        return $proveedores;
     }
 
     /**

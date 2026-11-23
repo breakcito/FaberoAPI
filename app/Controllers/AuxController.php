@@ -432,7 +432,7 @@ class AuxController extends Controller
     }
 
     /**
-     * Obtener archivos de guías de una recepcion (documentos_programacion.normalizado).
+     * Obtener archivos de guías de una recepcion (array JSON `guias`).
      * Usado por gui-primer-tramo para autocompletar inputs de archivo al
      * registrar una guia cuando los items seleccionados pertenecen a una sola
      * recepcion.
@@ -445,10 +445,6 @@ class AuxController extends Controller
             return response()->json(ApiResponse::error('No se encontró la recepción.', 404));
         }
 
-        $docs = RecepcionUnidadesData::normalizar_documentos_programacion(
-            $row->documentos_programacion ?? null,
-        );
-
         return response()->json(ApiResponse::success([
             'id_recepcion_unidad' => (int) $row->id,
             'id_vehiculo' => $row->id_vehiculo !== null ? (int) $row->id_vehiculo : null,
@@ -457,7 +453,9 @@ class AuxController extends Controller
             'id_empresa_transporte' => $row->id_empresa_transporte !== null ? (int) $row->id_empresa_transporte : null,
             'guia_remitente' => $row->guia_remitente !== null ? (string) $row->guia_remitente : null,
             'guia_transportista' => $row->guia_transportista !== null ? (string) $row->guia_transportista : null,
-            'documentos' => $docs,
+            'documentos' => $row->documentos,
+            'guias' => $row->guias,
+            'proveedores' => $row->proveedores,
         ], 'Archivos y textos de guías de la recepción obtenidos correctamente.'));
     }
 

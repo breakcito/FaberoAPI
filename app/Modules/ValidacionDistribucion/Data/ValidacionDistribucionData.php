@@ -9,6 +9,34 @@ use Illuminate\Support\Facades\DB;
 class ValidacionDistribucionData
 {
     /**
+     * JOIN al PROVEEDOR PRINCIPAL de una recepción.
+     *
+     * `proveedor_recepcion` es 1:N (una fila por proveedor de la carga), así que
+     * un JOIN directo a esa tabla MULTIPLICARÍA las filas de la consulta (y con
+     * ellas los kilos de las particiones). Esta derived table colapsa a UNA fila
+     * por recepción — el primer proveedor registrado (`pr.id` ASC) — por lo que
+     * el JOIN es 1:1 y NO altera ningún agregado.
+     *
+     * @param  string  $aliasRecepcion  Alias de `recepcion_unidad` en la consulta.
+     * @param  string  $aliasSalida  Alias de la derived table en el SELECT.
+     */
+    private static function join_proveedor_principal(string $aliasRecepcion, string $aliasSalida = 'prp'): string
+    {
+        return '
+        LEFT JOIN (
+            SELECT x.id_recepcion_unidad, x.id_proveedor_minero
+            FROM (
+                SELECT pr1.id_recepcion_unidad,
+                       pr1.id_proveedor_minero,
+                       ROW_NUMBER() OVER (PARTITION BY pr1.id_recepcion_unidad ORDER BY pr1.id ASC) AS rn
+                FROM proveedor_recepcion pr1
+            ) x
+            WHERE x.rn = 1
+        ) '.$aliasSalida.' ON '.$aliasSalida.'.id_recepcion_unidad = '.$aliasRecepcion.'.id
+        ';
+    }
+
+    /**
      * Listar todos los lotes pendientes de partición.
      * El campo "excedente" (peso_neto - capacidad) es informativo: no bloquea el flujo.
      *
@@ -189,7 +217,7 @@ class ValidacionDistribucionData
                 ru.id_sucursal,
                 ru.id_empresa_transporte,
                 ru.id_tipo_vehiculo,
-                ru.id_proveedor_minero,
+                COALESCE(lm.id_proveedor_minero, prp.id_proveedor_minero) AS id_proveedor_minero,
                 ru.fecha_hora_ingreso,
                 ru.fecha_hora_salida,
                 v.placa AS vehiculo_placa,
@@ -199,11 +227,13 @@ class ValidacionDistribucionData
             FROM particion_lote_mineral plm
             LEFT JOIN ticket_balanza tb ON tb.id = plm.id_ticket_balanza
             LEFT JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
+            ".self::join_proveedor_principal('ru').'
+            LEFT JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
             LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
             LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
             WHERE plm.id = :id
             LIMIT 1
-        ";
+        ';
 
         $row = DB::selectOne($sql, ['id' => $idParticion]);
 
@@ -288,7 +318,7 @@ class ValidacionDistribucionData
                 ru.id_sucursal,
                 ru.id_empresa_transporte,
                 ru.id_tipo_vehiculo,
-                COALESCE(ru.id_proveedor_minero, lm.id_proveedor_minero, ru_padre.id_proveedor_minero) AS id_proveedor_minero,
+                COALESCE(lm.id_proveedor_minero, prp.id_proveedor_minero, prp_padre.id_proveedor_minero) AS id_proveedor_minero,
                 ru.fecha_hora_ingreso,
                 ru.fecha_hora_salida,
                 v.placa AS vehiculo_placa,
@@ -301,15 +331,17 @@ class ValidacionDistribucionData
             FROM particion_lote_mineral plm
             LEFT JOIN ticket_balanza tb ON tb.id = plm.id_ticket_balanza
             LEFT JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
+            ".self::join_proveedor_principal('ru').'
             LEFT JOIN vehiculo v ON v.id = ru.id_vehiculo
             LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
             LEFT JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
             LEFT JOIN recepcion_unidad ru_padre ON ru_padre.id = lm.id_recepcion_unidad
-            LEFT JOIN proveedor prov ON prov.id = COALESCE(ru.id_proveedor_minero, lm.id_proveedor_minero, ru_padre.id_proveedor_minero)
+            '.self::join_proveedor_principal('ru_padre', 'prp_padre').'
+            LEFT JOIN proveedor prov ON prov.id = COALESCE(lm.id_proveedor_minero, prp.id_proveedor_minero, prp_padre.id_proveedor_minero)
             WHERE plm.id_lote_mineral = :id_lote
               AND plm.estado = :estado_particion_activo
             ORDER BY plm.id ASC
-        ";
+        ';
 
         $rows = DB::select($sql, [
             'id_lote' => $idLote,
@@ -451,8 +483,9 @@ class ValidacionDistribucionData
         LEFT JOIN lote_guia ltg ON ltg.id_lote_mineral = lot.id
         LEFT JOIN guia_primer_tramo gui ON gui.id = ltg.id_guia_primer_tramo
         LEFT JOIN recepcion_unidad rec ON rec.id = plm.id_recepcion_unidad
+        ".self::join_proveedor_principal('rec').'
         LEFT JOIN vehiculo vh ON vh.id = COALESCE(rec.id_vehiculo, gui.id_vehiculo)
-        LEFT JOIN proveedor pr ON pr.id = COALESCE(rec.id_proveedor_minero, gui.id_proveedor, lot.id_proveedor_minero)
+        LEFT JOIN proveedor pr ON pr.id = COALESCE(lot.id_proveedor_minero, gui.id_proveedor, prp.id_proveedor_minero)
         LEFT JOIN conductor cnd ON cnd.id = COALESCE(rec.id_conductor, gui.id_conductor)
         LEFT JOIN empresa_transporte emp ON emp.id = COALESCE(rec.id_empresa_transporte, gui.id_empresa_transporte)
         LEFT JOIN sucursal sc ON sc.id = COALESCE(rec.id_sucursal, gui.id_sucursal)
@@ -468,7 +501,7 @@ class ValidacionDistribucionData
         LEFT JOIN cargo cr ON cr.id = eml.id_cargo
         WHERE plm.id = :id_particion
         LIMIT 1
-        ";
+        ';
 
         $item = DB::selectOne($sql, ['id_particion' => $idParticion]);
         if ($item) {
@@ -527,9 +560,9 @@ class ValidacionDistribucionData
      * - cumple: cumple_pesos AND cumple_fechas AND cumple_recepcion.
      *
      * El proveedor se evalua con la MISMA resolucion que el listado de
-     * particiones: COALESCE(recepcion, lote padre, recepcion padre). Una
-     * particion hereda el proveedor del lote, asi que su propia recepcion
-     * ficticia puede tenerlo en NULL sin que eso impida validar.
+     * particiones: COALESCE(lote padre, recepcion de la particion, recepcion
+     * padre). Una particion hereda el proveedor del lote, asi que su propia
+     * recepcion ficticia puede tenerlo en NULL sin que eso impida validar.
      *
      * Reglas a nivel lote:
      * - cumple_suma: ABS(SUM(participaciones.peso_neto) - lote.peso_neto) <= 0.01.
@@ -546,7 +579,7 @@ class ValidacionDistribucionData
         }
 
         $placeholders = implode(',', array_fill(0, count($idLotes), '?'));
-        $sql = "
+        $sql = '
             SELECT
                 plm.id AS id_particion,
                 plm.id_lote_mineral,
@@ -563,13 +596,15 @@ class ValidacionDistribucionData
                 ru.id_conductor,
                 ru.id_empresa_transporte,
                 ru.id_tipo_vehiculo,
-                COALESCE(ru.id_proveedor_minero, lm.id_proveedor_minero, ru_padre.id_proveedor_minero) AS id_proveedor_minero,
+                COALESCE(lm.id_proveedor_minero, prp.id_proveedor_minero, prp_padre.id_proveedor_minero) AS id_proveedor_minero,
                 ru.fecha_hora_ingreso,
                 ru.fecha_hora_salida
             FROM particion_lote_mineral plm
             INNER JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
             LEFT JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
+            '.self::join_proveedor_principal('ru').'
             LEFT JOIN recepcion_unidad ru_padre ON ru_padre.id = lm.id_recepcion_unidad
+            '.self::join_proveedor_principal('ru_padre', 'prp_padre')."
             WHERE plm.id_lote_mineral IN ({$placeholders})
               AND plm.estado = 'Activo'
             ORDER BY plm.id_lote_mineral ASC, plm.id ASC
@@ -778,8 +813,9 @@ class ValidacionDistribucionData
         LEFT JOIN lote_guia ltg ON ltg.id_lote_mineral = lot.id
         LEFT JOIN guia_primer_tramo gui ON gui.id = ltg.id_guia_primer_tramo
         LEFT JOIN recepcion_unidad rec ON rec.id = lot.id_recepcion_unidad
+        ".self::join_proveedor_principal('rec').'
         LEFT JOIN vehiculo vh ON vh.id = COALESCE(rec.id_vehiculo, gui.id_vehiculo)
-        LEFT JOIN proveedor pr ON pr.id = COALESCE(rec.id_proveedor_minero, gui.id_proveedor, lot.id_proveedor_minero)
+        LEFT JOIN proveedor pr ON pr.id = COALESCE(lot.id_proveedor_minero, gui.id_proveedor, prp.id_proveedor_minero)
         LEFT JOIN conductor cnd ON cnd.id = COALESCE(rec.id_conductor, gui.id_conductor)
         LEFT JOIN empresa_transporte emp ON emp.id = COALESCE(rec.id_empresa_transporte, gui.id_empresa_transporte)
         LEFT JOIN sucursal sc ON sc.id = COALESCE(rec.id_sucursal, gui.id_sucursal)
@@ -831,7 +867,7 @@ class ValidacionDistribucionData
         LEFT JOIN conductor cnd_unidad ON cnd_unidad.id = du.unidad_conductor_id
         WHERE lot.id = :id_lote
         LIMIT 1
-        ";
+        ';
 
         $item = DB::selectOne($sql, [
             'id_lote' => $idLote,

@@ -16,6 +16,9 @@ class ValidacionDistribucionService
     /**
      * Campos enteros de la recepcion que el operador puede enviar al crear
      * una particion. Si vienen informados, GANAN sobre lo heredado del padre.
+     *
+     * `id_proveedor_minero` NO está: el proveedor de una partición se hereda
+     * del LOTE PADRE (regla de negocio), no lo elige el operador.
      */
     private const CAMPOS_RECEPCION_ENTEROS = [
         'id_vehiculo',
@@ -23,7 +26,6 @@ class ValidacionDistribucionService
         'id_conductor',
         'id_empresa_transporte',
         'id_tipo_vehiculo',
-        'id_proveedor_minero',
         'id_sucursal',
     ];
 
@@ -100,7 +102,7 @@ class ValidacionDistribucionService
      *   peso_inicial?: float|null, fecha_hora_peso_inicial?: string|null,
      *   peso_final?: float|null, fecha_hora_peso_final?: string|null,
      *   peso_neto?: float|null,
-     *   recepcion?: array{id_vehiculo?: int|null, id_conductor?: int|null, id_sucursal?: int|null, fecha_hora_ingreso?: string|null, id_vehiculo_carreta?: int|null, id_empresa_transporte?: int|null, id_tipo_vehiculo?: int|null, id_proveedor_minero?: int|null},
+     *   recepcion?: array{id_vehiculo?: int|null, id_conductor?: int|null, id_sucursal?: int|null, fecha_hora_ingreso?: string|null, id_vehiculo_carreta?: int|null, id_empresa_transporte?: int|null, id_tipo_vehiculo?: int|null},
      *   id_empleado_registro?: int|null
      * }  $data
      */
@@ -165,12 +167,11 @@ class ValidacionDistribucionService
                             $copiaArr[$campo] = (int) $recepcionInput[$campo];
                         }
                     }
-                    // La copia hereda el proveedor de la recepcion padre; si esta
-                    // no lo tiene, se usa el del lote padre (misma regla que la
-                    // recepcion ficticia de las particiones B+).
-                    if (empty($copiaArr['id_proveedor_minero']) && ! empty($lote->id_proveedor_minero)) {
-                        $copiaArr['id_proveedor_minero'] = (int) $lote->id_proveedor_minero;
-                    }
+                    // El proveedor de la particion se hereda del LOTE PADRE (no
+                    // del operador). Como `recepcion_unidad` ya no tiene la
+                    // columna `id_proveedor_minero`, se registra en la tabla
+                    // puente `proveedor_recepcion` de la recepcion ficticia.
+                    $proveedorHeredado = self::proveedorHeredado($lote, $lote->id_recepcion_unidad !== null ? (int) $lote->id_recepcion_unidad : null);
                     if (! empty($recepcionInput['fecha_hora_ingreso'])) {
                         $copiaArr['fecha_hora_ingreso'] = date('Y-m-d H:i:s', strtotime($recepcionInput['fecha_hora_ingreso']));
                     }
@@ -179,6 +180,7 @@ class ValidacionDistribucionService
                     }
 
                     $idRecepA = DB::table('recepcion_unidad')->insertGetId($copiaArr);
+                    self::registrarProveedorRecepcion($idRecepA, $proveedorHeredado);
                 } else {
                     // Sin recepcion padre: caer al patron de la rama else.
                     $idRecepA = self::crearRecepcionFicticia($lote, $data, $recepcionInput)->id;
@@ -290,13 +292,13 @@ class ValidacionDistribucionService
      *
      * Una particion es el mismo viaje que su lote padre, solo cambia el
      * pesaje: por eso la recepcion ficticia hereda vehiculo, carreta,
-     * conductor, empresa de transporte, tipo de vehiculo y proveedor.
+     * conductor, empresa de transporte, tipo de vehiculo, proveedor y guias.
      *
-     * El proveedor se resuelve con esta prioridad:
-     *   1. el de la recepcion original del lote
-     *   2. el del lote padre (`lote_mineral.id_proveedor_minero`)
+     * El proveedor se resuelve con esta prioridad (regla de negocio):
+     *   1. el del LOTE PADRE (`lote_mineral.id_proveedor_minero`)
+     *   2. el proveedor principal de la recepcion padre
      *
-     * @return array{id_vehiculo: int|null, id_vehiculo_carreta: int|null, id_conductor: int|null, id_empresa_transporte: int|null, id_tipo_vehiculo: int|null, id_proveedor_minero: int|null, id_sucursal: int|null}
+     * @return array{id_vehiculo: int|null, id_vehiculo_carreta: int|null, id_conductor: int|null, id_empresa_transporte: int|null, id_tipo_vehiculo: int|null, id_proveedor_minero: int|null, id_sucursal: int|null, guias: ?array}
      */
     private static function datosRecepcionHeredados(object $lote): array
     {
@@ -308,6 +310,7 @@ class ValidacionDistribucionService
             'id_tipo_vehiculo' => null,
             'id_proveedor_minero' => null,
             'id_sucursal' => null,
+            'guias' => null,
         ];
 
         $idProveedorLote = $lote->id_proveedor_minero !== null
@@ -336,11 +339,78 @@ class ValidacionDistribucionService
         $heredado['id_empresa_transporte'] = $padre->id_empresa_transporte !== null ? (int) $padre->id_empresa_transporte : null;
         $heredado['id_tipo_vehiculo'] = $padre->id_tipo_vehiculo !== null ? (int) $padre->id_tipo_vehiculo : null;
         $heredado['id_sucursal'] = $padre->id_sucursal !== null ? (int) $padre->id_sucursal : null;
-        $heredado['id_proveedor_minero'] = $padre->id_proveedor_minero !== null
-            ? (int) $padre->id_proveedor_minero
-            : $idProveedorLote;
+        $heredado['guias'] = self::decodificarGuias($padre->guias ?? null);
+        $heredado['id_proveedor_minero'] = $idProveedorLote
+            ?? self::proveedorPrincipalRecepcion((int) $padre->id);
 
         return $heredado;
+    }
+
+    /**
+     * Proveedor principal de una recepción (el primero de `proveedor_recepcion`).
+     */
+    private static function proveedorPrincipalRecepcion(?int $idRecepcion): ?int
+    {
+        if ($idRecepcion === null || $idRecepcion <= 0) {
+            return null;
+        }
+
+        $id = DB::table('proveedor_recepcion')
+            ->where('id_recepcion_unidad', $idRecepcion)
+            ->orderBy('id')
+            ->value('id_proveedor_minero');
+
+        return $id !== null ? (int) $id : null;
+    }
+
+    /**
+     * Proveedor que hereda una partición: el del LOTE PADRE (regla de negocio).
+     * Si el lote todavía no tiene proveedor, se usa el proveedor principal de
+     * la recepción padre como fallback.
+     */
+    private static function proveedorHeredado(object $lote, ?int $idRecepcionPadre): ?int
+    {
+        if ($lote->id_proveedor_minero !== null) {
+            return (int) $lote->id_proveedor_minero;
+        }
+
+        return self::proveedorPrincipalRecepcion($idRecepcionPadre);
+    }
+
+    /**
+     * Registrar el proveedor heredado en la tabla puente `proveedor_recepcion`
+     * de una recepción (el proveedor ya no vive en `recepcion_unidad`).
+     */
+    private static function registrarProveedorRecepcion(int $idRecepcion, ?int $idProveedor): void
+    {
+        DB::table('proveedor_recepcion')
+            ->where('id_recepcion_unidad', $idRecepcion)
+            ->delete();
+
+        if ($idProveedor === null || $idProveedor <= 0) {
+            return;
+        }
+
+        DB::table('proveedor_recepcion')->insert([
+            'id_recepcion_unidad' => $idRecepcion,
+            'id_proveedor_minero' => $idProveedor,
+        ]);
+    }
+
+    /**
+     * Decodificar el array JSON `guias` de una recepción.
+     *
+     * @return array<int, array<string, mixed>>|null
+     */
+    private static function decodificarGuias(mixed $valor): ?array
+    {
+        if (empty($valor)) {
+            return null;
+        }
+
+        $arr = is_string($valor) ? (json_decode($valor, true) ?? null) : $valor;
+
+        return is_array($arr) ? $arr : null;
     }
 
     /**
@@ -404,19 +474,18 @@ class ValidacionDistribucionService
                 ? (int) $recepcionInput['id_sucursal']
                 : $idSucursalPadre;
             // Estos tres si se descarten: el DTO los declara y el operador puede
-            // querer una partición con su propio proveedor/empresa/tipo.
+            // querer una partición con su propio empresa/tipo.
             $idEmpresaTransporte = ! empty($recepcionInput['id_empresa_transporte'])
                 ? (int) $recepcionInput['id_empresa_transporte']
                 : $heredado['id_empresa_transporte'];
             $idTipoVehiculo = ! empty($recepcionInput['id_tipo_vehiculo'])
                 ? (int) $recepcionInput['id_tipo_vehiculo']
                 : $heredado['id_tipo_vehiculo'];
-            $idProveedorMinero = ! empty($recepcionInput['id_proveedor_minero'])
-                ? (int) $recepcionInput['id_proveedor_minero']
-                : $heredado['id_proveedor_minero'];
+            // El proveedor NO lo elige el operador: se hereda del LOTE PADRE.
+            $idProveedorMinero = $heredado['id_proveedor_minero'];
         }
 
-        return RecepcionUnidad::create([
+        $recepcion = RecepcionUnidad::create([
             'id_empleado_recepcion' => $idEmpleadoRegistro,
             'id_vehiculo' => $idVehiculo,
             'id_vehiculo_carreta' => $idVehiculoCarreta,
@@ -435,14 +504,18 @@ class ValidacionDistribucionService
             'estado_salida' => 'Vacío',
             'estado_pesaje' => 'Pesado',
             'id_sucursal' => $idSucursal,
-            'id_proveedor_minero' => $idProveedorMinero,
             'id_empleado_autoriza' => null,
             'es_programacion' => 0,
             'fecha_estimada_llegada' => null,
-            'guia_remitente' => null,
-            'guia_transportista' => null,
+            // Las guías viajan con la unidad: se heredan del array JSON del padre.
+            'guias' => $heredado['guias'],
             'es_recepcion_ficticia' => true,
         ]);
+
+        // El proveedor heredado vive en la tabla puente `proveedor_recepcion`.
+        self::registrarProveedorRecepcion((int) $recepcion->id, $idProveedorMinero);
+
+        return $recepcion;
     }
 
     /**
@@ -556,7 +629,7 @@ class ValidacionDistribucionService
      *   peso_inicial?: float, peso_final?: float, peso_neto?: float,
      *   fecha_hora_peso_inicial?: string, fecha_hora_peso_final?: string,
      *   es_bloqueado?: bool, estado?: string,
-     *   recepcion?: array{id_vehiculo?: int|null, id_conductor?: int|null, id_sucursal?: int|null, id_empresa_transporte?: int|null, id_tipo_vehiculo?: int|null, id_proveedor_minero?: int|null, fecha_hora_ingreso?: string|null}
+     *   recepcion?: array{id_vehiculo?: int|null, id_conductor?: int|null, id_sucursal?: int|null, id_empresa_transporte?: int|null, id_tipo_vehiculo?: int|null, fecha_hora_ingreso?: string|null}
      * }  $data
      */
     public static function update_particion(int $idParticion, array $data): array
@@ -632,9 +705,8 @@ class ValidacionDistribucionService
                 if (array_key_exists('id_tipo_vehiculo', $recep)) {
                     $recepUpdate['id_tipo_vehiculo'] = ! empty($recep['id_tipo_vehiculo']) ? (int) $recep['id_tipo_vehiculo'] : null;
                 }
-                if (array_key_exists('id_proveedor_minero', $recep)) {
-                    $recepUpdate['id_proveedor_minero'] = ! empty($recep['id_proveedor_minero']) ? (int) $recep['id_proveedor_minero'] : null;
-                }
+                // `id_proveedor_minero` NO se actualiza: el proveedor de una
+                // partición se hereda del LOTE PADRE y no es editable.
                 if (array_key_exists('fecha_hora_ingreso', $recep) && $recep['fecha_hora_ingreso'] !== null) {
                     $recepUpdate['fecha_hora_ingreso'] = date('Y-m-d H:i:s', strtotime($recep['fecha_hora_ingreso']));
                 }

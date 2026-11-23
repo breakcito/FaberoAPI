@@ -58,10 +58,8 @@ class LotesMineralDisponiblesData
             vc.placa AS vehiculo_carreta_placa,
             ru.id_conductor,
             ru.id_empresa_transporte,
-            ru.guia_remitente AS guia_remitente_recepcion,
+            ru.guias AS guias_recepcion,
             ru.fecha_hora_ingreso as fecha_hora_ingreso_vehiculo,
-            ru.guia_transportista AS guia_transportista_recepcion,
-            ru.documentos_programacion AS documentos_programacion_recepcion,
             (
                 SELECT COUNT(*)
                 FROM lote_guia lg
@@ -122,11 +120,7 @@ class LotesMineralDisponiblesData
                 : null;
             $row->en_guia = (int) $row->en_guia > 0;
             $row->id = (int) $row->id_lote_mineral;
-            $row->documentos_programacion_recepcion = RecepcionUnidadesData::normalizar_documentos_programacion(
-                $row->documentos_programacion_recepcion ?? null,
-            );
-            $row->guia_remitente_recepcion = $row->guia_remitente_recepcion !== null ? (string) $row->guia_remitente_recepcion : null;
-            $row->guia_transportista_recepcion = $row->guia_transportista_recepcion !== null ? (string) $row->guia_transportista_recepcion : null;
+            self::hidratar_guias_recepcion($row);
             $results[] = $row;
         }
 
@@ -142,7 +136,7 @@ class LotesMineralDisponiblesData
             -- creada al particionar, que no tiene guías).
             plm.id_recepcion_unidad,
             -- Unidad del LOTE PADRE: es donde se capturaron las guías del viaje
-            -- (guia_remitente, guia_transportista y documentos_programacion).
+            -- (array JSON `guias` de la recepción).
             -- Un padre particionado desde balanza tiene id_recepcion_unidad NULL
             -- (la unidad original quedó en su partición A), por eso se cae a la
             -- de la partición.
@@ -163,9 +157,7 @@ class LotesMineralDisponiblesData
             vc.placa AS vehiculo_carreta_placa,
             ru.id_conductor,
             ru.id_empresa_transporte,
-            ru.guia_remitente AS guia_remitente_recepcion,
-            ru.guia_transportista AS guia_transportista_recepcion,
-            ru.documentos_programacion AS documentos_programacion_recepcion,
+            ru.guias AS guias_recepcion,
             ru.fecha_hora_ingreso as fecha_hora_ingreso_vehiculo,
             (
                 SELECT COUNT(*)
@@ -237,14 +229,35 @@ class LotesMineralDisponiblesData
                 : null;
             $row->en_guia = (int) $row->en_guia > 0;
             $row->id = (int) $row->id_particion_lote_mineral;
-            $row->documentos_programacion_recepcion = RecepcionUnidadesData::normalizar_documentos_programacion(
-                $row->documentos_programacion_recepcion ?? null,
-            );
-            $row->guia_remitente_recepcion = $row->guia_remitente_recepcion !== null ? (string) $row->guia_remitente_recepcion : null;
-            $row->guia_transportista_recepcion = $row->guia_transportista_recepcion !== null ? (string) $row->guia_transportista_recepcion : null;
+            self::hidratar_guias_recepcion($row);
             $results[] = $row;
         }
 
         return $results;
+    }
+
+    /**
+     * Derivar los datos de guías de la recepción (texto + archivos) desde el
+     * array JSON `guias`.
+     *
+     * La guía que corresponde al item es la del proveedor de la carga
+     * (`lote_mineral.id_proveedor_minero`); si no hay entrada para ese
+     * proveedor se usa la primera del array.
+     */
+    private static function hidratar_guias_recepcion(object $row): void
+    {
+        $guias = RecepcionUnidadesData::normalizar_guias($row->guias_recepcion ?? null);
+        $guia = RecepcionUnidadesData::guia_principal_de_json(
+            $row->guias_recepcion ?? null,
+            $row->id_proveedor_minero !== null ? (int) $row->id_proveedor_minero : null,
+        );
+
+        $row->guias_recepcion = $guias;
+        $row->guia_remitente_recepcion = ($guia['guia_remitente'] ?? '') !== '' ? $guia['guia_remitente'] : null;
+        $row->guia_transportista_recepcion = ($guia['guia_transportista'] ?? '') !== '' ? $guia['guia_transportista'] : null;
+        $row->documentos_programacion_recepcion = [
+            'guia_remitente' => $guia['guia_remitente_archivo'] ?? null,
+            'guia_transportista' => $guia['guia_transportista_archivo'] ?? null,
+        ];
     }
 }
