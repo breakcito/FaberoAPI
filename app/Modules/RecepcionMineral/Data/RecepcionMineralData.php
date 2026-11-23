@@ -3,6 +3,7 @@
 namespace App\Modules\RecepcionMineral\Data;
 
 use App\Data\GuiasData;
+use App\Data\LotesMineralDisponiblesData;
 use App\Modules\RecepcionUnidades\Data\RecepcionUnidadesData;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoPesaje;
@@ -973,12 +974,15 @@ class RecepcionMineralData
                 AND pc.estado = 'Activo')                AS particiones_total
         FROM particion_lote_mineral p
         INNER JOIN lote_mineral lm  ON lm.id = p.id_lote_mineral
-        -- La partición se atribuye a la UNIDAD del lote padre (si el padre
-        -- tiene recepción) y, si no, a la suya. Es la misma resolución que
-        -- usa el catálogo de ítems de las guías, de modo que el resumen y las
-        -- guías muestran el mineral en la misma unidad.
-        INNER JOIN recepcion_unidad ru ON ru.id = COALESCE(lm.id_recepcion_unidad, p.id_recepcion_unidad)
-        ".self::join_proveedor_principal('ru')."
+        ".LotesMineralDisponiblesData::join_unidad_particion_resuelta('p', 'unp').'
+        -- La partición se atribuye a su UNIDAD RESUELTA: su propia recepción,
+        -- salvo que sea una copia exacta de la unidad del lote padre (mismo
+        -- vehículo y misma fecha de ingreso), en cuyo caso es el viaje del
+        -- padre. Es la misma regla que usa el catálogo de ítems de las guías,
+        -- de modo que el resumen y las guías muestran el mineral en la misma
+        -- unidad.
+        INNER JOIN recepcion_unidad ru ON ru.id = unp.id_unidad_resuelta
+        '.self::join_proveedor_principal('ru')."
         LEFT JOIN vehiculo v          ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc         ON vc.id = ru.id_vehiculo_carreta
         LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte

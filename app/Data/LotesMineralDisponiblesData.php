@@ -17,7 +17,62 @@ use Illuminate\Support\Facades\DB;
 class LotesMineralDisponiblesData
 {
     /**
+     * JOIN de la tabla derivada que RESUELVE la unidad (recepción) de cada
+     * partición.
+     *
+     * REGLA DE ATRIBUCIÓN DE UNIDAD (fuente única de verdad):
+     *   La unidad de una partición es su PROPIA recepción
+     *   (`particion_lote_mineral.id_recepcion_unidad`).
+     *   PERO si esa recepción es una COPIA EXACTA de la unidad del lote padre
+     *   (mismo `id_vehiculo` y misma `fecha_hora_ingreso`), la partición
+     *   pertenece al viaje del padre → se atribuye a
+     *   `lote_mineral.id_recepcion_unidad`.
+     *
+     * Contexto: al partir un lote en "Validación y Distribución" se crea una
+     * recepción FICTICIA por partición (`es_recepcion_ficticia = 1`):
+     *   - si la partición se pesó en el MISMO vehículo del padre, la ficticia
+     *     es una copia exacta (mismo vehículo + misma fecha de ingreso) → es
+     *     el mismo viaje → se usa la unidad REAL del padre;
+     *   - si el operador la envió a OTRO vehículo, es un viaje distinto → se
+     *     mantiene su propia unidad (la ficticia).
+     *
+     * La derivada expone:
+     *   - `id_particion_lote_mineral`: clave de cruce con la partición.
+     *   - `id_unidad_resuelta`: `recepcion_unidad.id` ya resuelto.
+     *
+     * @param  string  $aliasParticion  Alias de `particion_lote_mineral` en la consulta exterior.
+     * @param  string  $aliasResultado  Alias de la tabla derivada en la consulta exterior.
+     */
+    public static function join_unidad_particion_resuelta(string $aliasParticion, string $aliasResultado = 'unp'): string
+    {
+        return '
+        INNER JOIN (
+            SELECT
+                plmr.id AS id_particion_lote_mineral,
+                CASE
+                    WHEN rupr.id IS NOT NULL
+                         AND rupr.id_vehiculo = rfur.id_vehiculo
+                         AND rupr.fecha_hora_ingreso = rfur.fecha_hora_ingreso
+                    THEN rupr.id
+                    WHEN rfur.id IS NULL THEN rupr.id
+                    ELSE rfur.id
+                END AS id_unidad_resuelta
+            FROM particion_lote_mineral plmr
+            INNER JOIN lote_mineral lmr ON lmr.id = plmr.id_lote_mineral
+            LEFT JOIN recepcion_unidad rupr ON rupr.id = lmr.id_recepcion_unidad
+            LEFT JOIN recepcion_unidad rfur ON rfur.id = plmr.id_recepcion_unidad
+        ) '.$aliasResultado.' ON '.$aliasResultado.'.id_particion_lote_mineral = '.$aliasParticion.'.id
+        ';
+    }
+
+    /**
      * Obtener items de mineral disponibles según los filtros indicados
+     *
+     * En la rama de PARTICIONES, la unidad del item es la UNIDAD RESUELTA
+     * (`join_unidad_particion_resuelta()`): la propia recepción de la
+     * partición, salvo que sea una copia exacta de la unidad del lote padre,
+     * en cuyo caso es el viaje del padre. El campo `id_recepcion_unidad`
+     * conserva siempre la recepción propia de la partición.
      *
      * @param  string  $fechaInicio  YYYY-MM-DD
      * @param  string  $fechaFin  YYYY-MM-DD
@@ -135,12 +190,14 @@ class LotesMineralDisponiblesData
             -- Unidad donde vive la partición (puede ser una "recepción ficticia"
             -- creada al particionar, que no tiene guías).
             plm.id_recepcion_unidad,
-            -- Unidad del LOTE PADRE: es donde se capturaron las guías del viaje
-            -- (array JSON `guias` de la recepción).
-            -- Un padre particionado desde balanza tiene id_recepcion_unidad NULL
-            -- (la unidad original quedó en su partición A), por eso se cae a la
-            -- de la partición.
-            COALESCE(lm.id_recepcion_unidad, plm.id_recepcion_unidad) AS id_recepcion_unidad_padre,
+            -- Unidad RESUELTA de la partición: el viaje al que realmente
+            -- pertenece el mineral. Es su propia recepción, salvo que ésta sea
+            -- una copia exacta de la unidad del LOTE PADRE (mismo vehículo y
+            -- misma fecha de ingreso), en cuyo caso es el viaje del padre.
+            -- Un padre particionado desde balanza tiene id_recepcion_unidad
+            -- NULL (la unidad original quedó en su partición A), por eso se
+            -- resuelve con la misma regla que el resto del backend.
+            unp.id_unidad_resuelta AS id_recepcion_unidad_padre,
             lm.id_proveedor_minero,
             plm.correlativo,
             lm.numero_correlativo,
@@ -168,7 +225,11 @@ class LotesMineralDisponiblesData
             ) AS en_guia
         FROM particion_lote_mineral plm
         INNER JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
-        INNER JOIN recepcion_unidad ru ON ru.id = plm.id_recepcion_unidad
+        '.self::join_unidad_particion_resuelta('plm', 'unp').'
+        -- `ru` es la UNIDAD RESUELTA de la partición: de ella salen el
+        -- vehículo, el conductor, la empresa de transporte y las guías del
+        -- viaje al que pertenece el mineral.
+        INNER JOIN recepcion_unidad ru ON ru.id = unp.id_unidad_resuelta
         INNER JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN vehiculo vc ON vc.id = ru.id_vehiculo_carreta
         LEFT JOIN proveedor p ON p.id = lm.id_proveedor_minero

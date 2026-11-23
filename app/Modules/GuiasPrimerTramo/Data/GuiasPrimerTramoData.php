@@ -2,6 +2,7 @@
 
 namespace App\Modules\GuiasPrimerTramo\Data;
 
+use App\Data\LotesMineralDisponiblesData;
 use App\Shared\Enums\_Generic\EstadoBase;
 use Illuminate\Support\Facades\DB;
 
@@ -211,16 +212,14 @@ class GuiasPrimerTramoData
      * todavía no están en `lote_guia`.
      *
      * Cada unidad se devuelve UNA sola vez. Para resolver a qué unidad
-     * pertenece cada item se usa la misma regla que aplica el frontend
-     * (`id_recepcion_unidad_padre ?? id_recepcion_unidad`):
+     * pertenece cada item se usa la UNIDAD RESUELTA
+     * (`LotesMineralDisponiblesData::join_unidad_particion_resuelta()`):
      *  - Lote normal: la unidad del propio lote.
-     *  - Partición: la unidad del LOTE PADRE (`COALESCE(lm.id_recepcion_unidad,
-     *    plm.id_recepcion_unidad)`); si el padre se particionó desde balanza su
-     *    `id_recepcion_unidad` es NULL y se cae a la unidad de la partición.
-     *
-     * Las recepciones ficticias (las que se crean al particionar un lote) nunca
-     * se listan: comparten vehículo con la recepción real y generaban unidades
-     * duplicadas en el selector.
+     *  - Partición: su propia recepción; si esa recepción es una copia exacta
+     *    de la unidad del LOTE PADRE (mismo vehículo y misma fecha de
+     *    ingreso), la partición pertenece al viaje del padre y se atribuye a
+     *    la unidad real del padre. Si el operador la envió a otro vehículo,
+     *    es un viaje propio y se mantiene su unidad.
      *
      * @return array<int, array{id: int, placa: ?string, fecha_hora_ingreso: ?string}>
      */
@@ -242,9 +241,14 @@ class GuiasPrimerTramoData
         ';
 
         // Rama 2: particiones pendientes de guía.
-        // La unidad es la del LOTE PADRE (COALESCE) y no la de la partición:
-        // al partir un lote se crean recepciones ficticias con el mismo
-        // vehículo, que es lo que hacía ver la misma placa dos veces.
+        // La unidad es la UNIDAD RESUELTA de la partición: su propia
+        // recepción, salvo que sea una copia exacta de la unidad del lote
+        // padre (mismo vehículo y misma fecha de ingreso), en cuyo caso
+        // pertenece al viaje del padre.
+        // No se filtra `es_recepcion_ficticia = 0`: una partición pesada en
+        // OTRO vehículo es un viaje propio y su unidad (ficticia) debe
+        // listarse. Las ficticias que son copia exacta del padre se
+        // resuelven a la unidad real del padre, así que no duplican placa.
         $sqlParticiones = '
         SELECT DISTINCT
             ru.id,
@@ -252,11 +256,11 @@ class GuiasPrimerTramoData
             ru.fecha_hora_ingreso
         FROM particion_lote_mineral p
         INNER JOIN lote_mineral lm ON lm.id = p.id_lote_mineral
-        INNER JOIN recepcion_unidad ru ON ru.id = COALESCE(lm.id_recepcion_unidad, p.id_recepcion_unidad)
+        '.LotesMineralDisponiblesData::join_unidad_particion_resuelta('p', 'unp').'
+        INNER JOIN recepcion_unidad ru ON ru.id = unp.id_unidad_resuelta
         INNER JOIN vehiculo v ON v.id = ru.id_vehiculo
         LEFT JOIN lote_guia g ON g.id_particion_lote_mineral = p.id
         WHERE g.id IS NULL
-          AND ru.es_recepcion_ficticia = 0
         ';
 
         $params = [];
@@ -305,9 +309,9 @@ class GuiasPrimerTramoData
      *
      * Fuentes (solo mineral sin guía activa):
      *  - `lote_mineral`: los lotes de la unidad sin partida en `lote_guia`.
-     *  - `particion_lote_mineral`: las particiones de la unidad (resueltas
-     *    igual que el catálogo de ítems: la unidad del lote padre y, si el
-     *    padre se particionó desde balanza, la de la partición).
+     *  - `particion_lote_mineral`: las particiones cuya UNIDAD RESUELTA es la
+     *    unidad consultada (misma regla que el catálogo de ítems: su propia
+     *    recepción, salvo copia exacta de la del padre → viaje del padre).
      *
      * @return array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>
      */
@@ -340,7 +344,8 @@ class GuiasPrimerTramoData
             SELECT lm.id_proveedor_minero
             FROM particion_lote_mineral plm
             INNER JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
-            WHERE COALESCE(lm.id_recepcion_unidad, plm.id_recepcion_unidad) = :id_unidad_particiones
+            '.LotesMineralDisponiblesData::join_unidad_particion_resuelta('plm', 'unp').'
+            WHERE unp.id_unidad_resuelta = :id_unidad_particiones
               AND lm.id_proveedor_minero IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1
