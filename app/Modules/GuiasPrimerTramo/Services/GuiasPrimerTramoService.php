@@ -2,10 +2,12 @@
 
 namespace App\Modules\GuiasPrimerTramo\Services;
 
+use App\Data\LotesMineralDisponiblesData;
 use App\Modules\GuiasPrimerTramo\Data\GuiasPrimerTramoData;
 use App\Shared\Enums\_Generic\EstadoBase;
 use App\Shared\Enums\_Generic\EstadoGuiaPrimerTramo;
 use App\Shared\Helpers\ArchivoHelper;
+use App\Shared\Helpers\CamposBloqueadosHelper;
 use App\Shared\Responses\_Generic\RES_CambiosLog;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\Request;
@@ -298,22 +300,35 @@ class GuiasPrimerTramoService
      * para el mineral: es la fuente más exacta de la guía de remisión. Cuando
      * la unidad ingresó a planta sin guía (el operador la dejó vacía al
      * confirmar la llegada) y después se registra la guía de su carga, la de
-     * la unidad se completa.
+     * la unidad se completa. Si la unidad NO tiene entrada para ese proveedor,
+     * la entrada se CREA con los datos (textos y archivos) de la guía de
+     * primer tramo.
      *
      * Reglas conservadoras:
      * - Solo completa campos VACÍOS: nunca pisa una guía ya registrada.
-     * - Solo si el proveedor trae una sola carga en la unidad: con varias
-     *   cargas no se sabe cuál guía corresponde a cuál.
+     * - El proveedor tiene que ser de la CARGA de la unidad (o la guía que se
+     *   está guardando tiene que ser de esa unidad y ese proveedor). NO se
+     *   exige que esté en `proveedor_recepcion`: esa tabla la captura el
+     *   operador al ingresar la unidad y puede quedar vacía aunque la unidad
+     *   sí traiga mineral.
+     * - Con MÁS de una guía activa del mismo proveedor en la unidad no se sabe
+     *   a cuál corresponde la entrada: no se sincroniza y lo resuelve el
+     *   operador.
      * - Solo si el campo no está bloqueado por la programación.
      * - Solo si la llegada ya está registrada: una programación pendiente
      *   conserva sus guías tal como las capturó la agenda.
+     *
+     * @param  array  $documentos  Documentos de la guía de primer tramo
+     *                             {guia_remitente, guia_transportista}.
      */
     private static function sincronizar_guia_unidad(
         int $idRecepcionUnidad,
         int $idProveedor,
         ?string $guiaRemitente,
         ?string $guiaTransportista,
-        ?int $idEmpleado
+        ?int $idEmpleado,
+        ?int $idGuia = null,
+        array $documentos = []
     ): void {
         if ($idRecepcionUnidad <= 0 || $idProveedor <= 0) {
             return;
@@ -324,65 +339,168 @@ class GuiasPrimerTramoService
             return;
         }
 
-        $esProveedorDeLaCarga = DB::table('proveedor_recepcion')
-            ->where('id_recepcion_unidad', $idRecepcionUnidad)
-            ->where('id_proveedor_minero', $idProveedor)
-            ->exists();
-        if (! $esProveedorDeLaCarga) {
+        // El proveedor tiene que ser de la carga de la unidad. La carga se
+        // resuelve por mineral (lotes + particiones con su UNIDAD RESUELTA):
+        // el puente `proveedor_recepcion` lo captura el operador al ingresar
+        // la unidad y puede quedar vacía aunque la unidad sí traiga mineral.
+        $esProveedorDeLaCarga = false;
+        foreach (LotesMineralDisponiblesData::get_proveedores_carga_unidad($idRecepcionUnidad) as $proveedor) {
+            if ((int) $proveedor['id_proveedor'] === $idProveedor) {
+                $esProveedorDeLaCarga = true;
+                break;
+            }
+        }
+
+        if (! $esProveedorDeLaCarga && ! self::guia_pertenece_a_la_unidad($idGuia, $idRecepcionUnidad, $idProveedor)) {
             return;
         }
 
-        $cargas = DB::table('lote_mineral')
-            ->where('id_recepcion_unidad', $idRecepcionUnidad)
-            ->where('id_proveedor_minero', $idProveedor)
-            ->count();
-        if ($cargas > 1) {
-            return;
-        }
+        $bloqueados = CamposBloqueadosHelper::normalizar($recepcion->campos_bloqueados ?? null);
 
-        $bloqueados = is_string($recepcion->campos_bloqueados ?? null)
-            ? (json_decode((string) $recepcion->campos_bloqueados, true) ?: [])
-            : (array) ($recepcion->campos_bloqueados ?? []);
-
+        // Se conserva el array tal como está guardado (con sus claves) para no
+        // perder datos de las entradas de otros proveedores.
         $guias = is_string($recepcion->guias ?? null)
             ? (json_decode((string) $recepcion->guias, true) ?: [])
             : (array) ($recepcion->guias ?? []);
 
-        $cambios = [];
+        $indiceProveedor = null;
         foreach ($guias as $indice => $guia) {
-            if (! is_array($guia) || (int) ($guia['id_proveedor'] ?? 0) !== $idProveedor) {
+            if (! is_array($guia)) {
                 continue;
             }
+            if ((int) ($guia['id_proveedor'] ?? 0) === $idProveedor) {
+                $indiceProveedor = $indice;
+                break;
+            }
+        }
 
-            $remitenteActual = trim((string) ($guia['guia_remitente'] ?? ''));
-            if (
-                $remitenteActual === ''
-                && $guiaRemitente !== null
-                && trim($guiaRemitente) !== ''
-                && ! in_array('guia_remitente', $bloqueados, true)
-            ) {
-                $guias[$indice]['guia_remitente'] = trim($guiaRemitente);
+        // Si la entrada ya existe y hay OTRA guía activa del mismo proveedor en
+        // la unidad, no se sabe a cuál corresponde la entrada: no se sincroniza.
+        if ($indiceProveedor !== null && self::tiene_otras_guias_del_proveedor($idRecepcionUnidad, $idProveedor, $idGuia)) {
+            return;
+        }
+
+        $remitente = $guiaRemitente !== null ? trim($guiaRemitente) : '';
+        $transportista = $guiaTransportista !== null ? trim($guiaTransportista) : '';
+        $archivoRemitente = self::archivo_de_documento($documentos, 'guia_remitente');
+        $archivoTransportista = self::archivo_de_documento($documentos, 'guia_transportista');
+
+        $cambios = [];
+
+        if ($indiceProveedor === null) {
+            // --- La unidad NO tiene entrada para este proveedor: se CREA ---
+            if (in_array('guia_remitente', $bloqueados, true)) {
+                $remitente = '';
+                $archivoRemitente = null;
+            }
+            if (in_array('guia_transportista', $bloqueados, true)) {
+                $transportista = '';
+                $archivoTransportista = null;
+            }
+
+            if ($remitente === '' && $transportista === '' && $archivoRemitente === null && $archivoTransportista === null) {
+                return;
+            }
+
+            $guias[] = [
+                'id_proveedor' => $idProveedor,
+                'guia_remitente' => $remitente,
+                'guia_transportista' => $transportista,
+                'guia_remitente_archivo' => $archivoRemitente,
+                'guia_transportista_archivo' => $archivoTransportista,
+            ];
+
+            if ($remitente !== '') {
                 $cambios[] = [
                     'campo_bd' => 'guias',
                     'campo' => 'Guía de remisión de la unidad',
                     'valor_anterior' => null,
-                    'valor_nuevo' => trim($guiaRemitente),
+                    'valor_nuevo' => $remitente,
                 ];
             }
-
-            $transportistaActual = trim((string) ($guia['guia_transportista'] ?? ''));
-            if (
-                $transportistaActual === ''
-                && $guiaTransportista !== null
-                && trim($guiaTransportista) !== ''
-                && ! in_array('guia_transportista', $bloqueados, true)
-            ) {
-                $guias[$indice]['guia_transportista'] = trim($guiaTransportista);
+            if ($transportista !== '') {
                 $cambios[] = [
                     'campo_bd' => 'guias',
                     'campo' => 'Guía de transporte de la unidad',
                     'valor_anterior' => null,
-                    'valor_nuevo' => trim($guiaTransportista),
+                    'valor_nuevo' => $transportista,
+                ];
+            }
+            if ($archivoRemitente !== null) {
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Archivo de la guía de remisión de la unidad',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => self::nombre_archivo($archivoRemitente),
+                ];
+            }
+            if ($archivoTransportista !== null) {
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Archivo de la guía de transporte de la unidad',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => self::nombre_archivo($archivoTransportista),
+                ];
+            }
+        } else {
+            // --- La entrada existe: solo se completan los campos VACÍOS ---
+            $guiaActual = $guias[$indiceProveedor];
+
+            $remitenteActual = trim((string) ($guiaActual['guia_remitente'] ?? ''));
+            if (
+                $remitenteActual === ''
+                && $remitente !== ''
+                && ! in_array('guia_remitente', $bloqueados, true)
+            ) {
+                $guias[$indiceProveedor]['guia_remitente'] = $remitente;
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Guía de remisión de la unidad',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => $remitente,
+                ];
+            }
+
+            $transportistaActual = trim((string) ($guiaActual['guia_transportista'] ?? ''));
+            if (
+                $transportistaActual === ''
+                && $transportista !== ''
+                && ! in_array('guia_transportista', $bloqueados, true)
+            ) {
+                $guias[$indiceProveedor]['guia_transportista'] = $transportista;
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Guía de transporte de la unidad',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => $transportista,
+                ];
+            }
+
+            if (
+                empty($guiaActual['guia_remitente_archivo'])
+                && $archivoRemitente !== null
+                && ! in_array('guia_remitente', $bloqueados, true)
+            ) {
+                $guias[$indiceProveedor]['guia_remitente_archivo'] = $archivoRemitente;
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Archivo de la guía de remisión de la unidad',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => self::nombre_archivo($archivoRemitente),
+                ];
+            }
+
+            if (
+                empty($guiaActual['guia_transportista_archivo'])
+                && $archivoTransportista !== null
+                && ! in_array('guia_transportista', $bloqueados, true)
+            ) {
+                $guias[$indiceProveedor]['guia_transportista_archivo'] = $archivoTransportista;
+                $cambios[] = [
+                    'campo_bd' => 'guias',
+                    'campo' => 'Archivo de la guía de transporte de la unidad',
+                    'valor_anterior' => null,
+                    'valor_nuevo' => self::nombre_archivo($archivoTransportista),
                 ];
             }
         }
@@ -397,7 +515,7 @@ class GuiasPrimerTramoService
 
         $log[] = RES_CambiosLog::crear(
             $idEmpleado ?? 0,
-            'Guías completadas desde la guía de primer tramo de la carga',
+            'Guías de la unidad sincronizadas desde la guía de primer tramo de la carga',
             $cambios
         );
 
@@ -407,6 +525,78 @@ class GuiasPrimerTramoService
                 'guias' => json_encode(array_values($guias)),
                 'log_cambios' => json_encode($log),
             ]);
+    }
+
+    /**
+     * ¿La guía de primer tramo pertenece a esa unidad y a ese proveedor?
+     */
+    private static function guia_pertenece_a_la_unidad(?int $idGuia, int $idRecepcionUnidad, int $idProveedor): bool
+    {
+        if ($idGuia === null || $idGuia <= 0) {
+            return false;
+        }
+
+        return DB::table('guia_primer_tramo')
+            ->where('id', $idGuia)
+            ->where('id_recepcion_unidad', $idRecepcionUnidad)
+            ->where('id_proveedor', $idProveedor)
+            ->where('estado', EstadoBase::Activo->value)
+            ->exists();
+    }
+
+    /**
+     * ¿Hay otra guía activa (distinta a la que se está sincronizando) del
+     * mismo proveedor dentro de la unidad?
+     */
+    private static function tiene_otras_guias_del_proveedor(int $idRecepcionUnidad, int $idProveedor, ?int $idGuia): bool
+    {
+        $guias = GuiasPrimerTramoData::get_guias_activas_unidad_proveedor($idRecepcionUnidad, $idProveedor, $idGuia);
+
+        return ! empty($guias);
+    }
+
+    /**
+     * Archivo de la guía de primer tramo en la forma `IArchivo`
+     * ({url, path_relativo, nombre_original, extension}).
+     *
+     * @param  array  $documentos  Documentos de la guía de primer tramo.
+     */
+    private static function archivo_de_documento(array $documentos, string $clave): ?array
+    {
+        $archivo = $documentos[$clave] ?? null;
+        if (! is_array($archivo)) {
+            return null;
+        }
+
+        $url = isset($archivo['url']) ? (string) $archivo['url'] : '';
+        if ($url === '') {
+            return null;
+        }
+
+        return [
+            'url' => $url,
+            'path_relativo' => isset($archivo['path_relativo']) ? (string) $archivo['path_relativo'] : '',
+            'nombre_original' => isset($archivo['nombre_original']) ? (string) $archivo['nombre_original'] : null,
+            'extension' => isset($archivo['extension']) ? (string) $archivo['extension'] : null,
+        ];
+    }
+
+    /**
+     * Nombre legible de un archivo `IArchivo` (para el log de cambios).
+     *
+     * @param  array{url: string, path_relativo: string, nombre_original: ?string, extension: ?string}  $archivo
+     */
+    private static function nombre_archivo(array $archivo): string
+    {
+        if (! empty($archivo['nombre_original'])) {
+            return (string) $archivo['nombre_original'];
+        }
+
+        if (! empty($archivo['path_relativo'])) {
+            return (string) $archivo['path_relativo'];
+        }
+
+        return (string) $archivo['url'];
     }
 
     public static function crear_guia(array $data, array $items, array $archivos, ?Request $request = null): array
@@ -533,7 +723,9 @@ class GuiasPrimerTramoService
             (int) ($valoresNuevos['id_proveedor'] ?? 0),
             $guiaRemitente !== '' ? $guiaRemitente : null,
             $guiaTransportista,
-            $idEmpleadoRegistro
+            $idEmpleadoRegistro,
+            $guiaId,
+            $documentos
         );
 
         return ApiResponse::success($guiaCreada, 'Guía de primer tramo registrada correctamente.');
@@ -1103,7 +1295,9 @@ class GuiasPrimerTramoService
             (int) ($nuevosValoresCab['id_proveedor'] ?? 0),
             $guiaRemitente !== '' ? $guiaRemitente : null,
             $guiaTransportista,
-            $idEmpleado ?? null
+            $idEmpleado ?? null,
+            $id,
+            $documentos
         );
 
         return ApiResponse::success($guiaActualizada, 'Guía de primer tramo actualizada correctamente.');

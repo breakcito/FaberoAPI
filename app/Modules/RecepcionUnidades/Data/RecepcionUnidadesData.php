@@ -2,6 +2,7 @@
 
 namespace App\Modules\RecepcionUnidades\Data;
 
+use App\Data\LotesMineralDisponiblesData;
 use App\Models\LoteMineral;
 use App\Models\RecepcionUnidad;
 use App\Shared\Enums\_Generic\EstadoBase;
@@ -1064,8 +1065,15 @@ class RecepcionUnidadesData
      * `id_proveedor` manda sobre el `$idProveedor` indicado. Si la guía no
      * existe o no está `Activo`, se ignora y se sigue con `$idProveedor`.
      *
+     * La pertenencia del proveedor a la unidad se valida contra la CARGA de
+     * la unidad (lotes + particiones con su unidad resuelta), NO contra la
+     * tabla puente `proveedor_recepcion`: esa tabla la captura el operador
+     * al ingresar la unidad y puede quedar vacía aunque la unidad sí traiga
+     * mineral.
+     *
      * Sin `$idProveedor` el comportamiento es el de siempre: el proveedor
-     * principal de la unidad y la primera guía de primer tramo.
+     * principal de la unidad (el del puente; si la unidad no tiene puente,
+     * el primero de su carga) y la primera guía de primer tramo.
      */
     public static function get_ticket_ingreso_info(int $idRecepcionUnidad, ?int $idGuia = null, ?int $idProveedor = null): ?array
     {
@@ -1094,27 +1102,39 @@ class RecepcionUnidadesData
             }
         }
 
-        $params = ['id' => $idRecepcionUnidad];
+        // --- Proveedor del ticket ---
+        // La CARGA de la unidad es la fuente de verdad de a qué proveedor
+        // pertenece el mineral que trajo el vehículo.
+        $proveedoresCarga = LotesMineralDisponiblesData::get_proveedores_carga_unidad($idRecepcionUnidad);
 
-        // `proveedor_recepcion` es 1:N: el proveedor NUNCA se resuelve con un
-        // JOIN directo (multiplicaría las filas de la query). Se usa la
-        // derived table con ROW_NUMBER: la principal (rn = 1) o la del
-        // proveedor pedido. El lote se toma con MIN(id) sobre los lotes de
-        // ESE proveedor.
+        $proveedorTicket = null;
         if ($idProveedorTicket !== null) {
-            $params['id_proveedor_ps'] = $idProveedorTicket;
-            $params['id_proveedor_lm'] = $idProveedorTicket;
+            // El proveedor pedido tiene que ser de la carga de esta unidad.
+            foreach ($proveedoresCarga as $proveedor) {
+                if ((int) $proveedor['id_proveedor'] === $idProveedorTicket) {
+                    $proveedorTicket = $proveedor;
+                    break;
+                }
+            }
 
-            $sqlProveedor = <<<'SQL'
-                SELECT x.id_recepcion_unidad, x.id_proveedor_minero
-                FROM (
-                    SELECT pr1.id_recepcion_unidad, pr1.id_proveedor_minero,
-                           ROW_NUMBER() OVER (PARTITION BY pr1.id_recepcion_unidad, pr1.id_proveedor_minero ORDER BY pr1.id ASC) AS rn
-                    FROM proveedor_recepcion pr1
-                    WHERE pr1.id_proveedor_minero = :id_proveedor_ps
-                ) x
-                WHERE x.rn = 1
-            SQL;
+            if ($proveedorTicket === null) {
+                return null;
+            }
+        } else {
+            // Proveedor principal: el que registró el operador en el puente de
+            // la unidad y, si la unidad no tiene puente, el primero de su carga.
+            $proveedoresPuente = self::get_proveedores_recepcion($idRecepcionUnidad);
+            $proveedorTicket = $proveedoresPuente[0] ?? ($proveedoresCarga[0] ?? null);
+        }
+
+        $params = [
+            'id' => $idRecepcionUnidad,
+            'id_proveedor_ps' => $proveedorTicket !== null ? (int) $proveedorTicket['id_proveedor'] : null,
+        ];
+
+        // El lote se toma con MIN(id) sobre los lotes de ESE proveedor.
+        if ($idProveedorTicket !== null) {
+            $params['id_proveedor_lm'] = $idProveedorTicket;
 
             $sqlLote = <<<'SQL'
                 SELECT id_recepcion_unidad, MIN(id) AS id_primer_lote
@@ -1123,16 +1143,6 @@ class RecepcionUnidadesData
                 GROUP BY id_recepcion_unidad
             SQL;
         } else {
-            $sqlProveedor = <<<'SQL'
-                SELECT x.id_recepcion_unidad, x.id_proveedor_minero
-                FROM (
-                    SELECT pr1.id_recepcion_unidad, pr1.id_proveedor_minero,
-                           ROW_NUMBER() OVER (PARTITION BY pr1.id_recepcion_unidad ORDER BY pr1.id ASC) AS rn
-                    FROM proveedor_recepcion pr1
-                ) x
-                WHERE x.rn = 1
-            SQL;
-
             $sqlLote = <<<'SQL'
                 SELECT id_recepcion_unidad, MIN(id) AS id_primer_lote
                 FROM lote_mineral
@@ -1201,10 +1211,9 @@ class RecepcionUnidadesData
             LEFT JOIN marca mc ON mc.id = vc.id_marca
             LEFT JOIN empresa_transporte et ON et.id = ru.id_empresa_transporte
             LEFT JOIN conductor c ON c.id = ru.id_conductor
-            LEFT JOIN (
-                {$sqlProveedor}
-            ) pp ON pp.id_recepcion_unidad = ru.id
-            LEFT JOIN proveedor pr ON pr.id = pp.id_proveedor_minero
+            -- El proveedor del ticket ya está resuelto (uno solo): se une
+            -- directamente para NO multiplicar las filas de la consulta.
+            LEFT JOIN proveedor pr ON pr.id = :id_proveedor_ps
             LEFT JOIN distribucion dist ON dist.id = ru.id_distribucion
             LEFT JOIN despacho desp ON desp.id = dist.id_despacho
             LEFT JOIN planta_destino pd ON pd.id = desp.id_planta_destino
@@ -1240,11 +1249,6 @@ class RecepcionUnidadesData
             return null;
         }
 
-        // El proveedor pedido no forma parte de la carga de esta unidad.
-        if ($idProveedorTicket !== null && $row->id_proveedor === null) {
-            return null;
-        }
-
         // Guías del array JSON: las del proveedor del ticket (el principal si
         // el ticket no está acotado a un proveedor).
         $guias = self::normalizar_guias($row->guias ?? null);
@@ -1276,11 +1280,16 @@ class RecepcionUnidadesData
      * una sola fila con `id_guia_primer_tramo` en null y los números de guía
      * capturados en el array JSON `guias` de ese proveedor.
      *
+     * Los proveedores son los de la CARGA de la unidad (lotes + particiones
+     * con su unidad resuelta), NO los de la tabla puente
+     * `proveedor_recepcion`: el puente lo captura el operador al ingresar la
+     * unidad y puede quedar vacía aunque la unidad sí traiga mineral.
+     *
      * @return array<int, array{id_proveedor: int, razon_social: string, ruc: ?string, id_guia_primer_tramo: ?int, guia_remitente: ?string, guia_transportista: ?string, peso_guia_remision: float, peso_vehicular_total: float, con_no_conformidad: bool}>
      */
     public static function get_tickets_ingreso(int $idRecepcionUnidad): array
     {
-        $proveedores = self::get_proveedores_recepcion($idRecepcionUnidad);
+        $proveedores = LotesMineralDisponiblesData::get_proveedores_carga_unidad($idRecepcionUnidad);
         if (empty($proveedores)) {
             return [];
         }
@@ -1388,10 +1397,19 @@ class RecepcionUnidadesData
 
     /**
      * Obtener listado de guías de primer tramo asociadas a la recepción.
+     *
+     * Una guía pertenece a la unidad si su `id_recepcion_unidad` es esa unidad
+     * o si sus ítems (lote o partición) pertenecen a esa unidad. Para las
+     * PARTICIONES se usa la UNIDAD RESUELTA (la del LOTE PADRE si la recepción
+     * propia de la partición es una copia exacta de la del padre): así una
+     * partición pesada en el mismo viaje que su padre NO aparece en la
+     * recepción ficticia de la partición.
      */
     public static function get_guias_recepcion(int $idRecepcionUnidad): array
     {
-        $sql = <<<'SQL'
+        $joinUnidadParticion = LotesMineralDisponiblesData::join_unidad_particion_resuelta('plm', 'unp', true);
+
+        $sql = '
             SELECT DISTINCT
                 gpt.id,
                 gpt.id_proveedor,
@@ -1407,10 +1425,11 @@ class RecepcionUnidadesData
             LEFT JOIN lote_guia lg ON lg.id_guia_primer_tramo = gpt.id
             LEFT JOIN lote_mineral lm ON lm.id = lg.id_lote_mineral
             LEFT JOIN particion_lote_mineral plm ON plm.id = lg.id_particion_lote_mineral
-            WHERE (gpt.id_recepcion_unidad = :id_rec1 OR lm.id_recepcion_unidad = :id_rec2 OR plm.id_recepcion_unidad = :id_rec3)
-              AND gpt.estado = 'Activo'
+            '.$joinUnidadParticion.'
+            WHERE (gpt.id_recepcion_unidad = :id_rec1 OR lm.id_recepcion_unidad = :id_rec2 OR unp.id_unidad_resuelta = :id_rec3)
+              AND gpt.estado = \'Activo\'
             ORDER BY gpt.id ASC
-        SQL;
+        ';
 
         $rows = DB::select($sql, [
             'id_rec1' => $idRecepcionUnidad,

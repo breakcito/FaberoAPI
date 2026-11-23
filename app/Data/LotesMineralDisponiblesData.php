@@ -42,11 +42,19 @@ class LotesMineralDisponiblesData
      *
      * @param  string  $aliasParticion  Alias de `particion_lote_mineral` en la consulta exterior.
      * @param  string  $aliasResultado  Alias de la tabla derivada en la consulta exterior.
+     * @param  bool  $leftJoin  `true` para LEFT JOIN (la consulta exterior puede
+     *                          traer filas SIN partición: la unidad resuelta
+     *                          queda en NULL y no las descarta).
      */
-    public static function join_unidad_particion_resuelta(string $aliasParticion, string $aliasResultado = 'unp'): string
-    {
+    public static function join_unidad_particion_resuelta(
+        string $aliasParticion,
+        string $aliasResultado = 'unp',
+        bool $leftJoin = false
+    ): string {
+        $join = $leftJoin ? 'LEFT JOIN' : 'INNER JOIN';
+
         return '
-        INNER JOIN (
+        '.$join.' (
             SELECT
                 plmr.id AS id_particion_lote_mineral,
                 CASE
@@ -63,6 +71,122 @@ class LotesMineralDisponiblesData
             LEFT JOIN recepcion_unidad rfur ON rfur.id = plmr.id_recepcion_unidad
         ) '.$aliasResultado.' ON '.$aliasResultado.'.id_particion_lote_mineral = '.$aliasParticion.'.id
         ';
+    }
+
+    /**
+     * Proveedores de la CARGA de una unidad (recepción de unidad).
+     *
+     * La carga de una unidad es el mineral que le pertenece:
+     *  - `lote_mineral`: los lotes con `id_recepcion_unidad` = la unidad.
+     *  - `particion_lote_mineral`: las particiones cuya UNIDAD RESUELTA es la
+     *    unidad consultada (misma regla que el catálogo de ítems: su propia
+     *    recepción, salvo que sea una copia exacta de la del LOTE PADRE → el
+     *    viaje del padre).
+     *
+     * NO se exige que el proveedor esté en la tabla puente
+     * `proveedor_recepcion`: esa tabla la captura el operador al ingresar la
+     * unidad y puede quedar vacía aunque la unidad sí traiga mineral (p.ej.
+     * cuando el mineral se pesó o se partió después del ingreso).
+     *
+     * @return array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>
+     */
+    public static function get_proveedores_carga_unidad(int $idUnidad): array
+    {
+        return self::consultar_proveedores_carga_unidad($idUnidad, false);
+    }
+
+    /**
+     * Igual que `get_proveedores_carga_unidad()`, pero sólo devuelve los
+     * proveedores que AÚN tienen mineral pendiente de guía de primer tramo.
+     *
+     * @return array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>
+     */
+    public static function get_proveedores_carga_unidad_pendientes(int $idUnidad): array
+    {
+        return self::consultar_proveedores_carga_unidad($idUnidad, true);
+    }
+
+    /**
+     * Consulta base de los proveedores de la carga de una unidad.
+     *
+     * @param  bool  $soloMineralPendiente  `true` excluye a los proveedores
+     *                                      cuyo mineral ya tiene guía activa.
+     * @return array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>
+     */
+    private static function consultar_proveedores_carga_unidad(int $idUnidad, bool $soloMineralPendiente): array
+    {
+        $params = [
+            'id_unidad_lotes' => $idUnidad,
+            'id_unidad_particiones' => $idUnidad,
+        ];
+
+        $filtroPendienteLotes = '';
+        $filtroPendienteParticiones = '';
+
+        if ($soloMineralPendiente) {
+            $estadoGuiaActivo = EstadoBase::Activo->value;
+
+            $filtroPendienteLotes = '
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM lote_guia lg
+                  INNER JOIN guia_primer_tramo gpt ON gpt.id = lg.id_guia_primer_tramo
+                  WHERE lg.id_lote_mineral = lm.id
+                    AND lg.id_particion_lote_mineral IS NULL
+                    AND gpt.estado = :estado_guia_activo_lotes
+              )';
+
+            $filtroPendienteParticiones = '
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM lote_guia lg
+                  INNER JOIN guia_primer_tramo gpt ON gpt.id = lg.id_guia_primer_tramo
+                  WHERE lg.id_particion_lote_mineral = plm.id
+                    AND gpt.estado = :estado_guia_activo_particiones
+              )';
+
+            $params['estado_guia_activo_lotes'] = $estadoGuiaActivo;
+            $params['estado_guia_activo_particiones'] = $estadoGuiaActivo;
+        }
+
+        $sql = '
+        SELECT DISTINCT
+            p.id AS id_proveedor,
+            p.razon_social AS razon_social,
+            p.ruc AS ruc
+        FROM proveedor p
+        WHERE p.id IN (
+            SELECT lm.id_proveedor_minero
+            FROM lote_mineral lm
+            WHERE lm.id_recepcion_unidad = :id_unidad_lotes
+              AND lm.id_proveedor_minero IS NOT NULL
+              '.$filtroPendienteLotes.'
+
+            UNION
+
+            SELECT lm.id_proveedor_minero
+            FROM particion_lote_mineral plm
+            INNER JOIN lote_mineral lm ON lm.id = plm.id_lote_mineral
+            '.self::join_unidad_particion_resuelta('plm', 'unp').'
+            WHERE unp.id_unidad_resuelta = :id_unidad_particiones
+              AND lm.id_proveedor_minero IS NOT NULL
+              '.$filtroPendienteParticiones.'
+        )
+        ORDER BY razon_social ASC
+        ';
+
+        $rows = DB::select($sql, $params);
+
+        $proveedores = [];
+        foreach ($rows as $row) {
+            $proveedores[] = [
+                'id_proveedor' => (int) $row->id_proveedor,
+                'razon_social' => $row->razon_social !== null ? (string) $row->razon_social : '',
+                'ruc' => $row->ruc !== null ? (string) $row->ruc : null,
+            ];
+        }
+
+        return $proveedores;
     }
 
     /**
