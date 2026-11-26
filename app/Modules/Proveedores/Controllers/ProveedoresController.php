@@ -107,4 +107,69 @@ class ProveedoresController
             $id_concesion
         ));
     }
+
+    /**
+     * Contactos registrados de un proveedor.
+     */
+    public function get_contactos(Request $request, int $id)
+    {
+        return response()->json(ProveedoresService::get_contactos($id));
+    }
+
+    /**
+     * Contacto que debe figurar en los documentos del proveedor.
+     *
+     * Si el proveedor no tiene contactos, se replica la información del propio
+     * proveedor (razón social, teléfono y correo).
+     */
+    public function get_contacto_documento(Request $request, int $id)
+    {
+        return response()->json(ProveedoresService::get_contacto_documento($id));
+    }
+
+    public function crear_contacto(Request $request)
+    {
+        $request->validate([
+            'id_proveedor' => 'required|integer|exists:proveedor,id',
+            'nombre_completo' => 'required|string|max:150',
+            'dni' => 'nullable|string|max:20',
+            'telefono' => 'nullable|string|max:30',
+            'correo' => 'nullable|email|max:150',
+        ]);
+
+        $authUser = $request->attributes->get('auth_user');
+        $idEmpleado = $authUser ? (int) ($authUser->id_empleado ?? $authUser->id_usuario) : 1;
+
+        return response()->json(ProveedoresService::crear_contacto(
+            (int) $request->id_proveedor,
+            $idEmpleado,
+            $request->nombre_completo,
+            $request->dni,
+            $request->telefono,
+            $request->correo
+        ));
+    }
+
+    public function editar_contacto(Request $request, int $id)
+    {
+        $request->validate([
+            'nombre_completo' => 'required|string|max:150',
+            'dni' => 'nullable|string|max:20',
+            'telefono' => 'nullable|string|max:30',
+            'correo' => 'nullable|email|max:150',
+        ]);
+
+        return response()->json(ProveedoresService::editar_contacto(
+            $id,
+            $request->nombre_completo,
+            $request->dni,
+            $request->telefono,
+            $request->correo
+        ));
+    }
+
+    public function eliminar_contacto(Request $request, int $id)
+    {
+        return response()->json(ProveedoresService::eliminar_contacto($id));
+    }
 }

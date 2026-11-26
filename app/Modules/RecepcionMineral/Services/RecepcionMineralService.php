@@ -7,6 +7,7 @@ use App\Models\LoteMineral;
 use App\Models\ParticionLoteMineral;
 use App\Models\RecepcionUnidad;
 use App\Models\Vehiculo;
+use App\Modules\InterfacesPesosBalanzas\Data\InterfacesPesosBalanzasData;
 use App\Modules\RecepcionMineral\Data\RecepcionMineralData;
 use App\Shared\Enums\_Generic\CondicionIngreso;
 use App\Shared\Enums\_Generic\EstadoBase;
@@ -419,6 +420,9 @@ class RecepcionMineralService
 
         $lote->save();
 
+        // La balanza queda libre para publicar la siguiente lectura (peso final).
+        self::liberar_balanza();
+
         $updatedLote = RecepcionMineralData::get_lote_by_id($loteId);
 
         return ApiResponse::success($updatedLote, 'Peso inicial registrado correctamente.');
@@ -522,6 +526,9 @@ class RecepcionMineralService
         $lote->peso_actual = $lote->peso_neto; // Mantener peso_actual sincronizado con peso_neto
         $lote->evidencias = $evidenciasGuardadas;
         $lote->save();
+
+        // La balanza queda libre para publicar la siguiente lectura.
+        self::liberar_balanza();
 
         $updatedLote = RecepcionMineralData::get_lote_by_id($loteId);
 
@@ -1628,6 +1635,9 @@ class RecepcionMineralService
             // Cascada de campos no-peso al lote padre (si vienen en la request).
             self::persistir_campos_no_peso_en_padre((int) $particion->id_lote_mineral, $data);
 
+            // La balanza queda libre para publicar la siguiente lectura.
+            self::liberar_balanza();
+
             DB::commit();
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -1691,9 +1701,24 @@ class RecepcionMineralService
         // Cascada de campos no-peso al lote padre (si vienen en la request).
         self::persistir_campos_no_peso_en_padre((int) $particion->id_lote_mineral, $data);
 
+        // La balanza queda libre para publicar la siguiente lectura.
+        self::liberar_balanza();
+
         $actualizada = RecepcionMineralData::get_particion_by_id($idParticion);
 
         return ApiResponse::success($actualizada, 'Peso final registrado correctamente.');
+    }
+
+    /**
+     * Devuelve la balanza a su estado de espera (`peso = '-1'`).
+     *
+     * Se invoca después de registrar el peso de un lote o una partición: la
+     * lectura publicada por la balanza ya fue consumida y la balanza puede
+     * publicar la siguiente.
+     */
+    private static function liberar_balanza(): void
+    {
+        InterfacesPesosBalanzasData::liberar((int) config('balanza.cod_balanza', 1));
     }
 
     /**

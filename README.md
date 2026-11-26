@@ -10,6 +10,7 @@ API del ERP para una planta de beneficio de mineral de oro y plata. Digitaliza e
 - **Análisis y procesamiento**: Gestión de Leyes, Cierre de Leyes, Blending, Validación Distribución
 - **Compra, venta y contabilidad**: Anticipos Proveedor, Anticipos Planta, Programación Despachos, Valorización Compra, Valorización Venta, Valor Elemento Químico, Contabilidad Compra (Comprobantes + Pagos), Contabilidad Venta (Comprobantes + Pagos)
 - **Catálogos globales**: Tipo de Cambio, Ubigeo (departamentos / provincias / distritos)
+- **Interfaz con hardware**: Interfaces Pesos Balanzas (balanza física de planta)
 - **Dashboard**: Dashboard de indicadores
 - **IA**: Chat con IA y análisis de archivos (endpoint global `/api/ia/...`)
 
@@ -87,7 +88,7 @@ Aplican a **toda tabla nueva o modificada**. Si el código existente las viola, 
 
 ## Flujo de negocio
 
-1. **Setup del proveedor**: `Proveedores` + `Concesiones` (concesiones mineras del proveedor) + `CondicionesComercialesProveedor` + `CuentasBancariasProveedor`.
+1. **Setup del proveedor**: `Proveedores` + `Concesiones` (concesiones mineras del proveedor) + `CondicionesComercialesProveedor` + `CuentasBancariasProveedor` + **contactos** (`contacto_proveedor`, ver [Contactos del proveedor](#contactos-del-proveedor-contacto_proveedor)).
 2. **Anticipo**: `AnticiposProveedor` — adelantos con su `TransaccionAnticipoProveedor`.
 3. **Recepción de mineral** (en orden):
    - `RecepcionVisitas` — visita del proveedor a la planta.
@@ -180,6 +181,61 @@ Aplican al módulo `RecepcionMineral` (edición desde el Resumen de Balanza) y a
 4. **El transporte es de la unidad**. Vehículo, empresa de transporte y conductor viven en `recepcion_unidad` (una por lote o por partición), no en `lote_mineral`. La edición de un lote los persiste sobre su unidad.
 5. **Correlativo de partición**. `particion_lote_mineral.correlativo` es `{correlativo_lote}-{letra}`. Si cambia la condición de ingreso del padre y se regenera su correlativo, hay que realinear el de sus particiones.
 6. **El resumen devuelve tres tipos de fila**: `LOTE_RECEPCION` (lote), `PARTICION` (una fila por partición de un lote particionado) y `DISTRIBUCION_DETALLE` (despacho). `get_resumen_balanza()` los arma con un `UNION ALL` de tres bloques con idéntica lista de columnas; cada fila trae `valorizacion` (valorización viva que bloquea la edición) cuando aplica.
+
+## Interfaz con la balanza física (`InterfacesPesosBalanzas`)
+
+La computadora de la balanza de planta publica el peso pesado en la tabla `interfaces_pesosbalanzas`:
+
+| Columna | Contenido |
+|---|---|
+| `Id` | PK |
+| `cod_balanza` | Código de balanza (configurado en `config/balanza.php`) |
+| `peso` | Peso publicado **en Kg**. El centinela `-1` significa "sin lectura pendiente" |
+| `descripcion` | Texto descriptivo de la balanza |
+
+**Protocolo**:
+
+1. La balanza escribe el peso en `peso` con un valor distinto de `-1`.
+2. El frontend lo lee (`GET /api/interfaces-pesosbalanzas/peso`) y lo coloca en el input del peso.
+3. Al registrar el peso del lote o de la partición, **el backend devuelve la balanza a `-1`** (`RecepcionMineralService::liberar_balanza()`), para que pueda publicar la siguiente lectura.
+
+Endpoints del módulo `InterfacesPesosBalanzas`:
+
+| Método | Ruta | Respuesta |
+|---|---|---|
+| `GET` | `/api/interfaces-pesosbalanzas/peso` | `{ cod_balanza, peso: number\|null, descripcion }` |
+| `POST` | `/api/interfaces-pesosbalanzas/liberar` | `{ cod_balanza, peso: null }` |
+
+`peso` llega como `null` cuando la balanza no tiene lectura pendiente (`-1`), cuando el valor no es numérico o cuando es `<= 0`. El código de balanza es opcional: si no se envía, se usa el de `config/balanza.php` (`BALANZA_COD`, por defecto `1`).
+
+## Contactos del proveedor (`contacto_proveedor`)
+
+Un proveedor puede tener varios **contactos** (personas con nombre, DNI, teléfono y correo). Viven en `contacto_proveedor`:
+
+| Columna | Contenido |
+|---|---|
+| `id` | PK |
+| `id_proveedor` | Proveedor al que pertenece |
+| `id_empleado_registro` | Empleado que lo registró (se toma del usuario autenticado) |
+| `nombre_completo` | Nombre del contacto |
+| `dni` | Documento de identidad (opcional) |
+| `telefono` | Teléfono (opcional) |
+| `correo` | Correo (opcional) |
+| `created_at` | Fecha de registro |
+
+Endpoints (módulo `Proveedores`):
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| `GET` | `/api/proveedores/{id}/contactos` | Lista los contactos del proveedor |
+| `POST` | `/api/proveedores/contactos` | Registra un contacto |
+| `PUT` | `/api/proveedores/contactos/{id}` | Edita un contacto |
+| `DELETE` | `/api/proveedores/contactos/{id}` | Elimina un contacto |
+| `GET` | `/api/proveedores/{id}/contacto-documento` | **Resuelve el contacto que va en los documentos** |
+
+**Regla del documento**: `get_contacto_documento()` devuelve el **primer contacto** del proveedor. Si el proveedor **no tiene contactos registrados**, es natural que el propio proveedor sea el contacto, así que se **replica su información** (`razon_social`, `telefono`, `correo`) y `origen` vale `proveedor` (si hay contacto, `origen` vale `contacto`). Cuando el contacto existe pero le falta el teléfono o el correo, esos campos se completan con los del proveedor.
+
+La orden de compra (`OrdenCompraPdf`) usa este endpoint para rellenar "NOMBRE DEL CONTACTO", "TELÉFONO DEL CONTACTO" y "CORREO DEL CONTACTO".
 
 ## Comportamiento HTTP
 

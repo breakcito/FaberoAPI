@@ -14,6 +14,11 @@ Route::middleware('auth.jwt.custom')->group(function () {
             Route::get('/{id}/concesiones', 'get_concesiones');
             Route::post('/concesiones', 'asociar_concesion');
             Route::delete('/{id_proveedor}/concesiones/{id_concesion}', 'desasociar_concesion');
+            Route::get('/{id}/contactos', 'get_contactos');
+            Route::get('/{id}/contacto-documento', 'get_contacto_documento');
+            Route::post('/contactos', 'crear_contacto');
+            Route::put('/contactos/{id}', 'editar_contacto');
+            Route::delete('/contactos/{id}', 'eliminar_contacto');
         });
     });
 });

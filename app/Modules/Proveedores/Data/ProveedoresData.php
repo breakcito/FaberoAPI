@@ -30,7 +30,15 @@ class ProveedoresData
                 WHERE
                     cn.id_proveedor = pr.id AND 
                     cn.estado = "Activo"
-            ) as cantidad_cuentas_bancarias
+            ) as cantidad_cuentas_bancarias,
+            (
+                SELECT
+                    COUNT(*)
+                FROM
+                    contacto_proveedor ct
+                WHERE
+                    ct.id_proveedor = pr.id
+            ) as cantidad_contactos
         FROM
             proveedor pr
         WHERE 1 = 1
@@ -162,5 +170,131 @@ class ProveedoresData
             ->where('id_proveedor', $id_proveedor)
             ->where('id_concesion', $id_concesion)
             ->delete() > 0;
+    }
+
+    /**
+     * Contactos registrados de un proveedor.
+     */
+    public static function get_contactos(int $id_proveedor): array
+    {
+        return DB::select('
+            SELECT
+                ct.id,
+                ct.id_proveedor,
+                ct.id_empleado_registro,
+                ct.nombre_completo,
+                ct.dni,
+                ct.telefono,
+                ct.correo,
+                ct.created_at,
+                CONCAT(emp.nombre, " ", emp.apellido) AS empleado_registro_nombre
+            FROM
+                contacto_proveedor ct
+            LEFT JOIN empleado emp ON emp.id = ct.id_empleado_registro
+            WHERE
+                ct.id_proveedor = :id_proveedor
+            ORDER BY ct.id ASC
+        ', ['id_proveedor' => $id_proveedor]);
+    }
+
+    public static function get_contacto_por_id(int $id_contacto)
+    {
+        return DB::table('contacto_proveedor')
+            ->where('id', $id_contacto)
+            ->first();
+    }
+
+    public static function crear_contacto(
+        int $idProveedor,
+        int $idEmpleadoRegistro,
+        string $nombreCompleto,
+        ?string $dni,
+        ?string $telefono,
+        ?string $correo
+    ): int {
+        return DB::table('contacto_proveedor')->insertGetId([
+            'id_proveedor' => $idProveedor,
+            'id_empleado_registro' => $idEmpleadoRegistro,
+            'nombre_completo' => $nombreCompleto,
+            'dni' => $dni,
+            'telefono' => $telefono,
+            'correo' => $correo,
+        ]);
+    }
+
+    public static function editar_contacto(
+        int $id_contacto,
+        string $nombreCompleto,
+        ?string $dni,
+        ?string $telefono,
+        ?string $correo
+    ): bool {
+        return DB::table('contacto_proveedor')
+            ->where('id', $id_contacto)
+            ->update([
+                'nombre_completo' => $nombreCompleto,
+                'dni' => $dni,
+                'telefono' => $telefono,
+                'correo' => $correo,
+            ]) >= 0;
+    }
+
+    public static function eliminar_contacto(int $id_contacto): bool
+    {
+        return DB::table('contacto_proveedor')
+            ->where('id', $id_contacto)
+            ->delete() > 0;
+    }
+
+    /**
+     * Contacto que debe figurar en los documentos del proveedor.
+     *
+     * Si el proveedor tiene contactos registrados se usa el primero. Si no
+     * tiene ninguno, es natural que el propio proveedor sea el contacto, así
+     * que se replican sus datos (razón social, teléfono y correo).
+     *
+     * Cuando el contacto existe pero le falta el teléfono o el correo, se
+     * completa con los del proveedor.
+     */
+    public static function get_contacto_documento(int $id_proveedor): array
+    {
+        $proveedor = DB::table('proveedor')
+            ->where('id', $id_proveedor)
+            ->first();
+
+        $contacto = DB::table('contacto_proveedor')
+            ->where('id_proveedor', $id_proveedor)
+            ->orderBy('id')
+            ->first();
+
+        $nombreProveedor = $proveedor->razon_social ?? null;
+        $telefonoProveedor = $proveedor->telefono ?? null;
+        $correoProveedor = $proveedor->correo ?? null;
+
+        if (! $contacto) {
+            return [
+                'id_contacto' => null,
+                'nombre' => $nombreProveedor !== null ? (string) $nombreProveedor : null,
+                'telefono' => $telefonoProveedor !== null ? (string) $telefonoProveedor : null,
+                'correo' => $correoProveedor !== null ? (string) $correoProveedor : null,
+                'origen' => 'proveedor',
+            ];
+        }
+
+        $telefono = $contacto->telefono !== null && $contacto->telefono !== ''
+            ? (string) $contacto->telefono
+            : ($telefonoProveedor !== null ? (string) $telefonoProveedor : null);
+
+        $correo = $contacto->correo !== null && $contacto->correo !== ''
+            ? (string) $contacto->correo
+            : ($correoProveedor !== null ? (string) $correoProveedor : null);
+
+        return [
+            'id_contacto' => (int) $contacto->id,
+            'nombre' => (string) $contacto->nombre_completo,
+            'telefono' => $telefono,
+            'correo' => $correo,
+            'origen' => 'contacto',
+        ];
     }
 }

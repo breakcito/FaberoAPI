@@ -122,4 +122,79 @@ class ProveedoresService
 
         return ApiResponse::success(null, 'Concesión desasociada correctamente');
     }
+
+    public static function get_contactos(int $id_proveedor): array
+    {
+        $data = ProveedoresData::get_contactos($id_proveedor);
+
+        return ApiResponse::success($data, 'Contactos del proveedor obtenidos correctamente');
+    }
+
+    public static function crear_contacto(
+        int $id_proveedor,
+        int $id_empleado_registro,
+        string $nombre_completo,
+        ?string $dni,
+        ?string $telefono,
+        ?string $correo
+    ): array {
+        if (! ProveedoresData::get_proveedor_by_id($id_proveedor)) {
+            return ApiResponse::error('No se encontró el proveedor.', 404);
+        }
+
+        $id = ProveedoresData::crear_contacto(
+            $id_proveedor,
+            $id_empleado_registro,
+            $nombre_completo,
+            $dni,
+            $telefono,
+            $correo
+        );
+
+        $contacto = ProveedoresData::get_contacto_por_id($id);
+
+        return ApiResponse::success($contacto, 'Contacto registrado correctamente');
+    }
+
+    public static function editar_contacto(
+        int $id_contacto,
+        string $nombre_completo,
+        ?string $dni,
+        ?string $telefono,
+        ?string $correo
+    ): array {
+        if (! ProveedoresData::get_contacto_por_id($id_contacto)) {
+            return ApiResponse::error('No se encontró el contacto.', 404);
+        }
+
+        ProveedoresData::editar_contacto($id_contacto, $nombre_completo, $dni, $telefono, $correo);
+
+        $contacto = ProveedoresData::get_contacto_por_id($id_contacto);
+
+        return ApiResponse::success($contacto, 'Contacto actualizado correctamente');
+    }
+
+    public static function eliminar_contacto(int $id_contacto): array
+    {
+        if (! ProveedoresData::get_contacto_por_id($id_contacto)) {
+            return ApiResponse::error('No se encontró el contacto.', 404);
+        }
+
+        ProveedoresData::eliminar_contacto($id_contacto);
+
+        return ApiResponse::success(null, 'Contacto eliminado correctamente');
+    }
+
+    /**
+     * Contacto que debe figurar en los documentos del proveedor.
+     *
+     * Si el proveedor no tiene contactos registrados, se replica la
+     * información del propio proveedor (razón social, teléfono y correo).
+     */
+    public static function get_contacto_documento(int $id_proveedor): array
+    {
+        $data = ProveedoresData::get_contacto_documento($id_proveedor);
+
+        return ApiResponse::success($data, 'Contacto del proveedor obtenido correctamente');
+    }
 }
