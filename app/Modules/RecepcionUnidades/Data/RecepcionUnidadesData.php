@@ -55,6 +55,8 @@ class RecepcionUnidadesData
             ru.id_distribucion,
             ru.fecha_estimada_llegada,
             ru.guias,
+            ru.estado_ingreso,
+            ru.guias_salida,
             ru.es_recepcion_ficticia,
             ru.id_ticket_recepcion_unidades,
             ru.campos_bloqueados,
@@ -108,7 +110,18 @@ class RecepcionUnidadesData
             $params['tipo_ingreso'] = $filters['tipo_ingreso'];
         }
 
-        $sql .= ' ORDER BY COALESCE(ru.fecha_hora_ingreso, ru.fecha_estimada_llegada, ru.created_at) DESC;';
+        // Orden del listado:
+        //  1. Las unidades que SIGUEN en planta (estado "En Planta").
+        //  2. Las que todavía no llegaron (programaciones pendientes).
+        //  3. Las que ya salieron ("Fuera de Planta"), al final.
+        // Dentro de cada grupo, de la más reciente a la más antigua.
+        $sql .= ' ORDER BY
+            CASE ru.estado
+                WHEN \'En Planta\' THEN 0
+                WHEN \'Fuera de Planta\' THEN 2
+                ELSE 1
+            END ASC,
+            COALESCE(ru.fecha_hora_ingreso, ru.fecha_estimada_llegada, ru.created_at) DESC;';
 
         $results = DB::select($sql, $params);
 
@@ -126,6 +139,7 @@ class RecepcionUnidadesData
                 $item->log_cambios = isset($item->log_cambios) ? (is_array($item->log_cambios) ? $item->log_cambios : (json_decode($item->log_cambios, true) ?? [])) : [];
             }
             self::hidratar_contrato_guias($item, $proveedoresPorRecepcion[(int) $item->id] ?? []);
+            $item->guias_salida = self::normalizar_guias($item->guias_salida ?? null);
             $item->campos_bloqueados = CamposBloqueadosHelper::normalizar($item->campos_bloqueados ?? null);
         }
 
@@ -175,6 +189,8 @@ class RecepcionUnidadesData
             ru.id_distribucion,
             ru.fecha_estimada_llegada,
             ru.guias,
+            ru.estado_ingreso,
+            ru.guias_salida,
             ru.es_recepcion_ficticia,
             ru.id_ticket_recepcion_unidades,
             ru.campos_bloqueados,
@@ -206,6 +222,7 @@ class RecepcionUnidadesData
                 $item->log_cambios = isset($item->log_cambios) ? (is_array($item->log_cambios) ? $item->log_cambios : (json_decode($item->log_cambios, true) ?? [])) : [];
             }
             self::hidratar_contrato_guias($item, self::get_proveedores_por_recepcion([(int) $item->id])[(int) $item->id] ?? []);
+            $item->guias_salida = self::normalizar_guias($item->guias_salida ?? null);
             $item->campos_bloqueados = CamposBloqueadosHelper::normalizar($item->campos_bloqueados ?? null);
         }
 
@@ -306,7 +323,7 @@ class RecepcionUnidadesData
      * asignado": se usa cuando la recepción se crea directamente en planta
      * (el proveedor se conoce después, con el registro de las cargas).
      *
-     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}>
+     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}>
      */
     public static function normalizar_guias(mixed $valor): array
     {
@@ -340,6 +357,7 @@ class RecepcionUnidadesData
                     : '',
                 'guia_remitente_archivo' => self::normalizar_archivo_guia($entrada['guia_remitente_archivo'] ?? null),
                 'guia_transportista_archivo' => self::normalizar_archivo_guia($entrada['guia_transportista_archivo'] ?? null),
+                'es_interno' => (bool) ($entrada['es_interno'] ?? false),
             ];
         }
 
@@ -555,7 +573,7 @@ class RecepcionUnidadesData
     /**
      * Guías normalizadas de una recepción.
      *
-     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}>
+     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}>
      */
     public static function get_guias(int $idRecepcion): array
     {
@@ -574,7 +592,7 @@ class RecepcionUnidadesData
      * como "guía de la unidad sin proveedor asignado".
      *
      * @param  array<int, mixed>  $guias
-     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}>
+     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}>
      *
      * @throws \InvalidArgumentException si el contrato de las guías no es válido.
      */
@@ -588,15 +606,21 @@ class RecepcionUnidadesData
                 throw new \InvalidArgumentException('Cada guía debe ser un objeto con los datos de su proveedor.');
             }
 
+            // Una guía interna la emite la propia empresa: no lleva proveedor,
+            // así que varias pueden convivir (no colisionan entre sí).
+            $esInterno = (bool) ($entrada['es_interno'] ?? false);
+
             $idProveedor = isset($entrada['id_proveedor']) ? (int) $entrada['id_proveedor'] : 0;
             if ($idProveedor < 0) {
                 throw new \InvalidArgumentException('Cada guía debe indicar el proveedor al que corresponde (id_proveedor).');
             }
 
-            if (isset($vistos[$idProveedor])) {
+            if (! $esInterno && isset($vistos[$idProveedor])) {
                 throw new \InvalidArgumentException('Hay más de una entrada de guía para el mismo proveedor (id_proveedor '.$idProveedor.').');
             }
-            $vistos[$idProveedor] = true;
+            if (! $esInterno) {
+                $vistos[$idProveedor] = true;
+            }
 
             $normalizadas[] = [
                 'id_proveedor' => $idProveedor,
@@ -608,6 +632,8 @@ class RecepcionUnidadesData
                     : '',
                 'guia_remitente_archivo' => self::normalizar_archivo_guia($entrada['guia_remitente_archivo'] ?? null),
                 'guia_transportista_archivo' => self::normalizar_archivo_guia($entrada['guia_transportista_archivo'] ?? null),
+                // Guía interna: la emite la propia empresa, sin proveedor.
+                'es_interno' => (bool) ($entrada['es_interno'] ?? false),
             ];
         }
 
@@ -639,7 +665,7 @@ class RecepcionUnidadesData
      * dos entradas para el mismo proveedor.
      *
      * @param  array<int, mixed>  $guias
-     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}>
+     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}>
      *
      * @throws \InvalidArgumentException si el contrato de las guías no es válido.
      */
@@ -650,6 +676,46 @@ class RecepcionUnidadesData
         DB::table('recepcion_unidad')
             ->where('id', $idRecepcion)
             ->update(['guias' => json_encode($normalizadas)]);
+
+        return $normalizadas;
+    }
+
+    /**
+     * Guías de SALIDA normalizadas de una recepción.
+     *
+     * Mismo contrato que las guías de ingreso (`guias`), pero en la columna
+     * `guias_salida`: se registran al sacar la unidad de planta.
+     *
+     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}>
+     */
+    public static function get_guias_salida(int $idRecepcion): array
+    {
+        $valor = DB::table('recepcion_unidad')
+            ->where('id', $idRecepcion)
+            ->value('guias_salida');
+
+        return self::normalizar_guias($valor);
+    }
+
+    /**
+     * Reemplazar por completo el array `guias_salida` de una recepción.
+     *
+     * Valida con el mismo contrato que las guías de ingreso: cada entrada
+     * apunta a un proveedor existente y no hay dos entradas para el mismo
+     * proveedor.
+     *
+     * @param  array<int, mixed>  $guias
+     * @return array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}>
+     *
+     * @throws \InvalidArgumentException si el contrato de las guías no es válido.
+     */
+    public static function reemplazar_guias_salida(int $idRecepcion, array $guias): array
+    {
+        $normalizadas = self::preparar_guias($guias);
+
+        DB::table('recepcion_unidad')
+            ->where('id', $idRecepcion)
+            ->update(['guias_salida' => json_encode($normalizadas)]);
 
         return $normalizadas;
     }
@@ -690,8 +756,8 @@ class RecepcionUnidadesData
      * Guía principal de una recepción: la del proveedor principal si existe,
      * o la primera entrada del array.
      *
-     * @param  array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}>  $guias
-     * @return array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}|null
+     * @param  array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}>  $guias
+     * @return array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}|null
      */
     public static function guia_principal(array $guias, ?int $idProveedor): ?array
     {
@@ -716,7 +782,7 @@ class RecepcionUnidadesData
      * Si se indica el proveedor se busca su entrada; si no hay, se devuelve la
      * primera del array.
      *
-     * @return array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}|null
+     * @return array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}|null
      */
     public static function guia_principal_de_json(mixed $valorGuias, ?int $idProveedor = null): ?array
     {
@@ -938,6 +1004,7 @@ class RecepcionUnidadesData
             'id_sucursal' => $data['id_sucursal'],
             'estado_pesaje' => EstadoPesaje::SinPesar->value,
             'guias' => empty($guias) ? null : $guias,
+            'estado_ingreso' => $data['estado_ingreso'] ?? null,
             'id_ticket_recepcion_unidades' => $ticket['id'],
         ]);
 
@@ -1367,8 +1434,8 @@ class RecepcionUnidadesData
      * A diferencia de `guia_principal()`, no cae a la primera entrada del
      * array cuando el proveedor no tiene guías: aquí se exige la coincidencia.
      *
-     * @param  array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}>  $guias
-     * @return array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array}|null
+     * @param  array<int, array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}>  $guias
+     * @return array{id_proveedor: int, guia_remitente: string, guia_transportista: string, guia_remitente_archivo: ?array, guia_transportista_archivo: ?array, es_interno: bool}|null
      */
     private static function guia_json_de_proveedor(array $guias, int $idProveedor): ?array
     {

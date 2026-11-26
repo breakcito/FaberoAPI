@@ -30,17 +30,17 @@ class InterfacesPesosBalanzasData
             ->value('peso');
 
         if ($valor === null) {
-            return null;
+            return 0;
         }
 
         $texto = trim((string) $valor);
         if ($texto === '' || ! is_numeric($texto)) {
-            return null;
+            return 0;
         }
 
         $peso = (float) $texto;
-        if ($peso <= 0) {
-            return null;
+        if ($peso < 0) {
+            return $peso;
         }
 
         return $peso;

@@ -37,6 +37,8 @@ class CamposBloqueadosHelper
         'id_proveedor_minero',
         'guia_remitente',
         'guia_transportista',
+        'fecha_hora_ingreso',
+        'fecha_hora_salida',
     ];
 
     /**
@@ -48,6 +50,19 @@ class CamposBloqueadosHelper
     public const CAMPOS_TEXTO = [
         'guia_remitente',
         'guia_transportista',
+    ];
+
+    /**
+     * Campos de FECHA/HORA dentro de `CAMPOS`: se guardan como DATETIME.
+     *
+     * No se bloquean nunca: la llegada y la salida las registra el
+     * operador en planta, no la programación.
+     *
+     * @var array<int, string>
+     */
+    public const CAMPOS_FECHA = [
+        'fecha_hora_ingreso',
+        'fecha_hora_salida',
     ];
 
     /**
@@ -83,6 +98,8 @@ class CamposBloqueadosHelper
         'id_proveedor_minero' => 'Proveedor minero',
         'guia_remitente' => 'Guía remitente',
         'guia_transportista' => 'Guía transportista',
+        'fecha_hora_ingreso' => 'Fecha y hora de ingreso',
+        'fecha_hora_salida' => 'Fecha y hora de salida',
     ];
 
     /**

@@ -17,6 +17,9 @@ Route::middleware('auth.jwt.custom')->group(function () {
         Route::get('/{id}/guias-recepcion', 'get_guias_recepcion');
         Route::put('/{id}/guias-recepcion', 'set_guias_recepcion');
 
+        // Guías de SALIDA por proveedor (array JSON `guias_salida`).
+        Route::put('/{id}/guias-salida', 'set_guias_salida');
+
         // Proveedores de la carga (tabla puente `proveedor_recepcion`).
         Route::get('/{id}/proveedores', 'get_proveedores');
         Route::put('/{id}/proveedores', 'set_proveedores');

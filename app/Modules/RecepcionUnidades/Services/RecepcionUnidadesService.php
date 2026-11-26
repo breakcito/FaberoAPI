@@ -198,6 +198,13 @@ class RecepcionUnidadesService
             }
         }
 
+        // Archivos nuevos por posición de la guía: cada proveedor aporta el
+        // suyo (`guias_archivos[<índice>][guia_remitente|guia_transportista]`).
+        $archivosPorIndice = is_array($data['guias_archivos'] ?? null)
+            ? $data['guias_archivos']
+            : [];
+        $guias = self::resolver_archivos_guias($guias, $archivosPorIndice);
+
         $proveedores = [];
         foreach (($data['proveedores'] ?? []) as $idProveedor) {
             $idProveedor = (int) $idProveedor;
@@ -250,12 +257,97 @@ class RecepcionUnidadesService
             $data['guia_remitente_file'],
             $data['guia_transportista_file'],
             $data['documentos_programacion_existentes'],
+            $data['guias_archivos'],
         );
 
         $data['proveedores'] = $proveedores;
         $data['guias'] = $guias;
 
         return $data;
+    }
+
+    /**
+     * Proveedores de la carga segun el contrato de guias.
+     *
+     * La guia de la unidad (`id_proveedor = 0`) no aporta proveedor.
+     *
+     * @param  array<int, array<string, mixed>>  $guias
+     * @return array<int, int>
+     */
+    private static function proveedores_de_guias(array $guias): array
+    {
+        $ids = [];
+        foreach ($guias as $guia) {
+            if (! is_array($guia)) {
+                continue;
+            }
+
+            $idProveedor = (int) ($guia['id_proveedor'] ?? 0);
+            if ($idProveedor > 0 && ! in_array($idProveedor, $ids, true)) {
+                $ids[] = $idProveedor;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Alinear el contrato de guias con la lista de proveedores de la carga.
+     *
+     * - Cada proveedor de la carga tiene su entrada de guia (aunque vacia).
+     * - Las guias de proveedores que ya no estan en la carga se descartan.
+     * - La guia de la unidad (`id_proveedor = 0`) se conserva siempre.
+     *
+     * @param  array<int, array<string, mixed>>  $guias
+     * @param  array<int, int>  $idsProveedor
+     * @return array<int, array<string, mixed>>
+     */
+    private static function alinear_guias(array $guias, array $idsProveedor): array
+    {
+        $alineadas = [];
+        $vistos = [];
+
+        foreach ($guias as $guia) {
+            if (! is_array($guia)) {
+                continue;
+            }
+
+            $idProveedor = (int) ($guia['id_proveedor'] ?? 0);
+
+            if ($idProveedor === 0) {
+                $alineadas[] = $guia;
+
+                continue;
+            }
+
+            if (! in_array($idProveedor, $idsProveedor, true)) {
+                continue;
+            }
+
+            if (isset($vistos[$idProveedor])) {
+                continue;
+            }
+            $vistos[$idProveedor] = true;
+
+            $alineadas[] = $guia;
+        }
+
+        foreach ($idsProveedor as $idProveedor) {
+            if (isset($vistos[$idProveedor])) {
+                continue;
+            }
+
+            $alineadas[] = [
+                'id_proveedor' => $idProveedor,
+                'guia_remitente' => '',
+                'guia_transportista' => '',
+                'guia_remitente_archivo' => null,
+                'guia_transportista_archivo' => null,
+                'es_interno' => false,
+            ];
+        }
+
+        return $alineadas;
     }
 
     /**
@@ -458,13 +550,21 @@ class RecepcionUnidadesService
      * Reemplazar el array de guías de una recepción de unidad.
      *
      * @param  array<int, mixed>  $guias
+     * @param  array<int, mixed>  $archivosPorIndice  Archivos nuevos por
+     *                                              posición de la guía
+     *                                              (`guia_remitente`,
+     *                                              `guia_transportista`).
      */
-    public static function set_guias(int $id, array $guias, int $idEmpleado): array
+    public static function set_guias(int $id, array $guias, int $idEmpleado, array $archivosPorIndice = []): array
     {
         $recepcion = RecepcionUnidad::find($id);
         if (! $recepcion) {
             return ApiResponse::error('No se encontró el registro de recepción.', 404);
         }
+
+        // Los archivos nuevos se adjuntan a su guía antes de validar: el
+        // contrato guardado es el mismo que se envía.
+        $guias = self::resolver_archivos_guias($guias, $archivosPorIndice);
 
         $anteriores = RecepcionUnidadesData::get_guias($id);
 
@@ -523,6 +623,63 @@ class RecepcionUnidadesService
         }
 
         return ApiResponse::success($normalizadas, 'Guías de la recepción actualizadas correctamente');
+    }
+
+    /**
+     * Adjuntar a cada guía los archivos recién subidos.
+     *
+     * Los archivos llegan indexados por la posición de la guía dentro del
+     * array (`guias_archivos[0][guia_remitente]`). Si no hay archivo nuevo
+     * se conserva el que ya tenía guardado.
+     *
+     * @param  array<int, mixed>  $guias
+     * @param  array<int, mixed>  $archivosPorIndice
+     * @return array<int, mixed>
+     */
+    private static function resolver_archivos_guias(array $guias, array $archivosPorIndice): array
+    {
+        if (empty($archivosPorIndice)) {
+            return $guias;
+        }
+
+        foreach ($guias as $indice => $guia) {
+            if (! is_array($guia)) {
+                continue;
+            }
+
+            $archivos = $archivosPorIndice[$indice] ?? null;
+            if (! is_array($archivos)) {
+                continue;
+            }
+
+            $guia['guia_remitente_archivo'] = self::resolver_archivo_guia(
+                $guia['guia_remitente_archivo'] ?? null,
+                $archivos['guia_remitente'] ?? null,
+            );
+            $guia['guia_transportista_archivo'] = self::resolver_archivo_guia(
+                $guia['guia_transportista_archivo'] ?? null,
+                $archivos['guia_transportista'] ?? null,
+            );
+
+            $guias[$indice] = $guia;
+        }
+
+        return $guias;
+    }
+
+    /**
+     * Resolver el archivo final de una guía: el ya guardado o el recién
+     * subido (que se persiste en el disco público).
+     */
+    private static function resolver_archivo_guia(mixed $existente, mixed $nuevo): mixed
+    {
+        if ($nuevo instanceof UploadedFile && $nuevo->isValid()) {
+            $subidos = ArchivoHelper::guardarArchivos('guias-recepcion', [$nuevo]);
+
+            return $subidos[0] ?? null;
+        }
+
+        return $existente;
     }
 
     /**
@@ -615,9 +772,12 @@ class RecepcionUnidadesService
      *
      * @param  array<int, array<string, mixed>>  $anteriores
      * @param  array<int, array<string, mixed>>  $nuevas
+     * @param  string  $campoBd  Columna affected en el log de cambios
+     *                          (`guias` para el ingreso, `guias_salida` para
+     *                          la salida).
      * @return array<int, array{campo_bd: ?string, campo: ?string, valor_anterior: mixed, valor_nuevo: mixed}>
      */
-    private static function diff_guias(array $anteriores, array $nuevas): array
+    private static function diff_guias(array $anteriores, array $nuevas, string $campoBd = 'guias'): array
     {
         $mapaAnterior = [];
         foreach ($anteriores as $guia) {
@@ -634,7 +794,7 @@ class RecepcionUnidadesService
             $anterior = $mapaAnterior[$idProveedor] ?? null;
             if ($anterior === null) {
                 $cambios[] = [
-                    'campo_bd' => 'guias',
+                    'campo_bd' => $campoBd,
                     'campo' => 'Guía agregada',
                     'valor_anterior' => null,
                     'valor_nuevo' => self::resumen_guia($guia),
@@ -645,7 +805,7 @@ class RecepcionUnidadesService
 
             if ($anterior['guia_remitente'] !== $guia['guia_remitente']) {
                 $cambios[] = [
-                    'campo_bd' => 'guias.guia_remitente',
+                    'campo_bd' => $campoBd.'.guia_remitente',
                     'campo' => 'Guía remitente',
                     'valor_anterior' => $anterior['guia_remitente'],
                     'valor_nuevo' => $guia['guia_remitente'],
@@ -653,7 +813,7 @@ class RecepcionUnidadesService
             }
             if ($anterior['guia_transportista'] !== $guia['guia_transportista']) {
                 $cambios[] = [
-                    'campo_bd' => 'guias.guia_transportista',
+                    'campo_bd' => $campoBd.'.guia_transportista',
                     'campo' => 'Guía transportista',
                     'valor_anterior' => $anterior['guia_transportista'],
                     'valor_nuevo' => $guia['guia_transportista'],
@@ -664,7 +824,7 @@ class RecepcionUnidadesService
         foreach ($mapaAnterior as $idProveedor => $guia) {
             if (! isset($mapaNuevo[$idProveedor])) {
                 $cambios[] = [
-                    'campo_bd' => 'guias',
+                    'campo_bd' => $campoBd,
                     'campo' => 'Guía eliminada',
                     'valor_anterior' => self::resumen_guia($guia),
                     'valor_nuevo' => null,
@@ -713,6 +873,51 @@ class RecepcionUnidadesService
         DB::table('recepcion_unidad')
             ->where('id', $recepcion->id)
             ->update(['log_cambios' => json_encode($log)]);
+    }
+
+    /**
+     * Reemplazar el array de guías de SALIDA de una recepción de unidad.
+     *
+     * Las guías de salida son un contrato aparte del de ingreso: se registran
+     * cuando la unidad sale de planta.
+     *
+     * @param  array<int, mixed>  $guias
+     * @param  array<int, mixed>  $archivosPorIndice  Archivos nuevos por
+     *                                              posición de la guía.
+     */
+    public static function set_guias_salida(int $id, array $guias, int $idEmpleado, array $archivosPorIndice = []): array
+    {
+        $recepcion = RecepcionUnidad::find($id);
+        if (! $recepcion) {
+            return ApiResponse::error('No se encontró el registro de recepción.', 404);
+        }
+
+        $anteriores = RecepcionUnidadesData::get_guias_salida($id);
+
+        try {
+            $guias = self::resolver_archivos_guias($guias, $archivosPorIndice);
+            $normalizadas = RecepcionUnidadesData::preparar_guias($guias);
+        } catch (\InvalidArgumentException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        }
+
+        try {
+            $normalizadas = RecepcionUnidadesData::reemplazar_guias_salida($id, $guias);
+        } catch (\InvalidArgumentException $e) {
+            return ApiResponse::error($e->getMessage(), 422);
+        }
+
+        $cambios = self::diff_guias($anteriores, $normalizadas, 'guias_salida');
+        if (! empty($cambios)) {
+            self::registrar_log_cambios(
+                $recepcion,
+                $idEmpleado,
+                'Edición de guías de salida de la recepción',
+                $cambios
+            );
+        }
+
+        return ApiResponse::success($normalizadas, 'Guías de salida actualizadas correctamente');
     }
 
     /**
@@ -789,6 +994,19 @@ class RecepcionUnidadesService
                 continue;
             }
 
+            // Las fechas deben ser reales: se valida el formato y que el día
+            // exista (no un 31 de febrero).
+            if (in_array($campo, CamposBloqueadosHelper::CAMPOS_FECHA, true)) {
+                $fecha = \Carbon\Carbon::parse((string) $valor);
+                if (! $fecha->isValid()) {
+                    return ApiResponse::error(
+                        'El valor indicado para "'.CamposBloqueadosHelper::etiqueta($campo).'" no es una fecha válida.',
+                        422
+                    );
+                }
+                continue;
+            }
+
             $tabla = $tablas[$campo] ?? null;
             if ($tabla === null) {
                 continue;
@@ -810,13 +1028,20 @@ class RecepcionUnidadesService
                 foreach ($campos as $campo => $valor) {
                     $valorAnterior = $recepcion->{$campo};
                     $esTexto = in_array($campo, CamposBloqueadosHelper::CAMPOS_TEXTO, true);
+                    $esFecha = in_array($campo, CamposBloqueadosHelper::CAMPOS_FECHA, true);
 
-                    // Las guías son strings (serie-número); el resto son ids.
-                    $valorNuevo = ($valor === null || $valor === '')
-                        ? null
-                        : ($esTexto ? trim((string) $valor) : (int) $valor);
+                    if ($valor === null || $valor === '') {
+                        $valorNuevo = null;
+                    } elseif ($esFecha) {
+                        $valorNuevo = \Carbon\Carbon::parse((string) $valor)->toDateTimeString();
+                    } elseif ($esTexto) {
+                        $valorNuevo = trim((string) $valor);
+                    } else {
+                        // El resto son ids referenciados.
+                        $valorNuevo = (int) $valor;
+                    }
 
-                    $sinCambio = $esTexto
+                    $sinCambio = $esTexto || $esFecha
                         ? (string) ($valorAnterior ?? '') === (string) ($valorNuevo ?? '')
                         : (int) ($valorAnterior ?? 0) === (int) ($valorNuevo ?? 0);
 
@@ -834,6 +1059,15 @@ class RecepcionUnidadesService
                     ];
 
                     $recepcion->{$campo} = $valorNuevo;
+
+                    // El estado de la unidad acompaña a la salida: si se
+                    // registra una salida queda fuera de planta y, si se
+                    // quita, vuelve a estar en planta.
+                    if ($campo === 'fecha_hora_salida') {
+                        $recepcion->estado = $valorNuevo !== null
+                            ? EstadoUnidad::FueraDePlanta->value
+                            : EstadoUnidad::EnPlanta->value;
+                    }
                 }
 
                 if (empty($cambios)) {
@@ -880,6 +1114,11 @@ class RecepcionUnidadesService
             return (string) $valor;
         }
 
+        // Las fechas se muestran tal cual (ya vienen en formato DATETIME).
+        if (in_array($campo, CamposBloqueadosHelper::CAMPOS_FECHA, true)) {
+            return (string) $valor;
+        }
+
         $id = (int) $valor;
         $nombre = null;
 
@@ -909,13 +1148,33 @@ class RecepcionUnidadesService
 
     /**
      * Registrar la salida de una unidad.
+     *
+     * @param  array<int, mixed>  $guiasSalida  Guías de salida con el mismo
+     *                                           contrato que las de ingreso
+     *                                           (una entrada por proveedor).
+     * @param  array<int, mixed>  $guiasArchivos  Archivos nuevos por posición
+     *                                               de la guía de salida.
      */
-    public static function registrar_salida(int $id, string $estadoSalida, ?string $observacionSalida, array $evidencias, int $idEmpleadoOperador): array
+    public static function registrar_salida(int $id, string $estadoSalida, ?string $observacionSalida, array $evidencias, int $idEmpleadoOperador, array $guiasSalida = [], array $guiasArchivos = []): array
     {
         $recepcion = RecepcionUnidad::find($id);
         if (! $recepcion) {
             return ApiResponse::error('No se encontró el registro de recepción.');
         }
+
+        // Las guías de salida se validan ANTES de tocar la recepción: si el
+        // contrato es inválido no debe quedar una salida a medio registrar.
+        $guiasSalidaNormalizadas = [];
+        if (! empty($guiasSalida)) {
+            try {
+                $guiasSalida = self::resolver_archivos_guias($guiasSalida, $guiasArchivos);
+                $guiasSalidaNormalizadas = RecepcionUnidadesData::preparar_guias($guiasSalida);
+            } catch (\InvalidArgumentException $e) {
+                return ApiResponse::error($e->getMessage(), 422);
+            }
+        }
+
+        $guiasSalidaAnteriores = RecepcionUnidadesData::get_guias_salida($id);
 
         $nowStr = now()->toDateTimeString();
 
@@ -958,6 +1217,25 @@ class RecepcionUnidadesService
         $recepcion->fecha_hora_salida = $nowStr;
         $recepcion->estado = EstadoUnidad::FueraDePlanta->value;
         $recepcion->save();
+
+        // Guías de salida: se guardan junto con el resto de la salida.
+        if (! empty($guiasSalidaNormalizadas)) {
+            RecepcionUnidadesData::reemplazar_guias_salida($id, $guiasSalidaNormalizadas);
+
+            $cambiosGuiasSalida = self::diff_guias(
+                $guiasSalidaAnteriores,
+                $guiasSalidaNormalizadas,
+                'guias_salida'
+            );
+            if (! empty($cambiosGuiasSalida)) {
+                self::registrar_log_cambios(
+                    $recepcion,
+                    $idEmpleadoOperador,
+                    'Registro de salida de unidad',
+                    $cambiosGuiasSalida
+                );
+            }
+        }
 
         // Registrar la salida en la visita y sus detalles vinculados a esta recepción de unidad
         $visitas = RecepcionVisita::where('id_recepcion_unidad', $id)->get();

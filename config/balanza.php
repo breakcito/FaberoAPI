@@ -20,6 +20,6 @@ return [
     'cod_balanza' => (int) env('BALANZA_COD', 1),
 
     /** Frecuencia de lectura del peso desde el frontend (milisegundos). */
-    'intervalo_ms' => (int) env('BALANZA_INTERVALO_MS', 300),
+    'intervalo_ms' => (int) env('BALANZA_INTERVALO_MS', 100),
 
 ];

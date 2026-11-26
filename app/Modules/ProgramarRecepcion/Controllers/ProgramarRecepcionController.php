@@ -3,11 +3,13 @@
 namespace App\Modules\ProgramarRecepcion\Controllers;
 
 use App\Modules\ProgramarRecepcion\Services\ProgramarRecepcionService;
+use App\Shared\Enums\_Generic\EstadoSalida;
 use App\Shared\Responses\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class ProgramarRecepcionController extends Controller
 {
@@ -110,6 +112,7 @@ class ProgramarRecepcionController extends Controller
 
         $request->validate([
             'observacion' => 'nullable|string',
+            'estado_ingreso' => ['nullable', 'string', Rule::in(array_column(EstadoSalida::cases(), 'value'))],
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
         ]);
@@ -132,6 +135,9 @@ class ProgramarRecepcionController extends Controller
         }
         if ($request->filled('id_vehiculo_carreta')) {
             $overrides['id_vehiculo_carreta'] = (int) $request->input('id_vehiculo_carreta');
+        }
+        if ($request->filled('estado_ingreso')) {
+            $overrides['estado_ingreso'] = (string) $request->input('estado_ingreso');
         }
 
         $observacion = $request->input('observacion');

@@ -81,13 +81,23 @@ class RecepcionUnidadesController extends Controller
 
     /**
      * Reemplazar las guías (por proveedor) de una recepción de unidad.
+     *
+     * Acepta multipart: `guias` como string JSON y los archivos nuevos en
+     * `guias_archivos[<índice>][guia_remitente|guia_transportista]`.
      */
     public function set_guias_recepcion(Request $request, int $id): JsonResponse
     {
-        $request->validate([
+        // `guias` puede llegar como array (JSON body) o como string JSON
+        // (FormData, cuando se suben archivos de las guías): se decodifica
+        // ANTES de validar para que las reglas `array` apliquen sobre la
+        // estructura real.
+        $datos = $request->all();
+        $datos['guias'] = self::decodificar_guias($request->input('guias'));
+
+        $validator = Validator::make($datos, [
             'guias' => 'required|array',
             'guias.*' => 'required|array',
-            'guias.*.id_proveedor' => 'required|integer|exists:proveedor,id',
+            'guias.*.id_proveedor' => 'required|integer|min:0',
             'guias.*.guia_remitente' => 'nullable|string|max:20',
             'guias.*.guia_transportista' => 'nullable|string|max:20',
             'guias.*.guia_remitente_archivo' => 'nullable|array',
@@ -100,7 +110,12 @@ class RecepcionUnidadesController extends Controller
             'guias.*.guia_transportista_archivo.path_relativo' => 'nullable|string|max:255',
             'guias.*.guia_transportista_archivo.nombre_original' => 'nullable|string|max:255',
             'guias.*.guia_transportista_archivo.extension' => 'nullable|string|max:20',
+            'guias_archivos' => 'nullable|array',
         ]);
+
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
 
         $authUser = $request->attributes->get('auth_user');
         if (! $authUser || empty($authUser->id_empleado)) {
@@ -109,16 +124,64 @@ class RecepcionUnidadesController extends Controller
 
         return response()->json(RecepcionUnidadesService::set_guias(
             $id,
-            $request->input('guias', []),
-            (int) $authUser->id_empleado
+            $datos['guias'],
+            (int) $authUser->id_empleado,
+            $request->file('guias_archivos', [])
+        ));
+    }
+
+    /**
+     * Reemplazar las guías de SALIDA (por proveedor) de una recepción.
+     *
+     * Acepta multipart: `guias` como string JSON y los archivos nuevos en
+     * `guias_archivos[<índice>][guia_remitente|guia_transportista]`.
+     */
+    public function set_guias_salida(Request $request, int $id): JsonResponse
+    {
+        $datos = $request->all();
+        $datos['guias'] = self::decodificar_guias($request->input('guias'));
+
+        $validator = Validator::make($datos, [
+            'guias' => 'required|array',
+            'guias.*' => 'required|array',
+            'guias.*.id_proveedor' => 'required|integer|min:0',
+            'guias.*.guia_remitente' => 'nullable|string|max:20',
+            'guias.*.guia_transportista' => 'nullable|string|max:20',
+            'guias.*.es_interno' => 'nullable|boolean',
+            'guias.*.guia_remitente_archivo' => 'nullable|array',
+            'guias.*.guia_remitente_archivo.url' => 'nullable|string|max:255',
+            'guias.*.guia_remitente_archivo.path_relativo' => 'nullable|string|max:255',
+            'guias.*.guia_remitente_archivo.nombre_original' => 'nullable|string|max:255',
+            'guias.*.guia_remitente_archivo.extension' => 'nullable|string|max:20',
+            'guias.*.guia_transportista_archivo' => 'nullable|array',
+            'guias.*.guia_transportista_archivo.url' => 'nullable|string|max:255',
+            'guias.*.guia_transportista_archivo.path_relativo' => 'nullable|string|max:255',
+            'guias.*.guia_transportista_archivo.nombre_original' => 'nullable|string|max:255',
+            'guias.*.guia_transportista_archivo.extension' => 'nullable|string|max:20',
+            'guias_archivos' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
+
+        $authUser = $request->attributes->get('auth_user');
+        if (! $authUser || empty($authUser->id_empleado)) {
+            return response()->json(ApiResponse::error('No se pudo determinar el empleado logueado.'), 401);
+        }
+
+        return response()->json(RecepcionUnidadesService::set_guias_salida(
+            $id,
+            $datos['guias'],
+            (int) $authUser->id_empleado,
+            $request->file('guias_archivos', [])
         ));
     }
 
     /**
      * Listar los proveedores de la carga de una recepción de unidad.
      */
-    public function get_proveedores(int $id): JsonResponse
-    {
+    public function get_proveedores(int $id): JsonResponse    {
         return response()->json(RecepcionUnidadesService::get_proveedores($id));
     }
 
@@ -171,7 +234,9 @@ class RecepcionUnidadesController extends Controller
             'guias.*.guia_transportista' => 'nullable|string|max:20',
             'guias.*.guia_remitente_archivo' => 'nullable|array',
             'guias.*.guia_transportista_archivo' => 'nullable|array',
+            'guias_archivos' => 'nullable|array',
             'tipo_ingreso' => 'nullable|string|max:50',
+            'estado_ingreso' => ['nullable', 'string', Rule::in(array_column(EstadoSalida::cases(), 'value'))],
             'observacion' => 'nullable|string',
             'evidencias' => 'nullable|array',
             'evidencias.*' => 'file',
@@ -222,7 +287,9 @@ class RecepcionUnidadesController extends Controller
             'id_conductor' => (int) $request->input('id_conductor'),
             'proveedores' => self::decodificar_lista_int($request->input('proveedores')),
             'guias' => $guias,
+            'guias_archivos' => $request->file('guias_archivos', []),
             'tipo_ingreso' => $request->input('tipo_ingreso', 'Recepción de Mineral'),
+            'estado_ingreso' => $request->input('estado_ingreso'),
             'observacion' => $request->input('observacion'),
             'id_sucursal' => (int) $request->input('id_sucursal'),
             // Campos legacy (un solo proveedor y un par de guías planas): los
@@ -279,14 +346,31 @@ class RecepcionUnidadesController extends Controller
     }
 
     /**
-     * Registrar la salida de la unidad (estado y observación).
+     * Registrar la salida de la unidad (estado, observación y guías de salida).
      */
     public function registrar_salida(Request $request, int $id): JsonResponse
     {
-        $request->validate([
+        // `guias_salida` puede llegar como array o como string JSON (FormData):
+        // se decodifica ANTES de validar para que las reglas `array` apliquen
+        // sobre la estructura real.
+        $datos = $request->all();
+        $datos['guias_salida'] = self::decodificar_guias($request->input('guias_salida'));
+
+        $validator = Validator::make($datos, [
             'estado_salida' => ['required', 'string', Rule::in(array_column(EstadoSalida::cases(), 'value'))],
             'observacion_salida' => 'nullable|string',
+            'guias_salida' => 'nullable|array',
+            'guias_salida.*' => 'array',
+            'guias_salida.*.id_proveedor' => 'required|integer|min:0',
+            'guias_salida.*.guia_remitente' => 'nullable|string|max:20',
+            'guias_salida.*.guia_transportista' => 'nullable|string|max:20',
+            'guias_salida.*.es_interno' => 'nullable|boolean',
+            'guias_archivos' => 'nullable|array',
         ]);
+
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
 
         $authUser = $request->attributes->get('auth_user');
         if (! $authUser || empty($authUser->id_empleado)) {
@@ -307,7 +391,9 @@ class RecepcionUnidadesController extends Controller
             $request->input('estado_salida'),
             $request->input('observacion_salida'),
             $evidencias,
-            (int) $authUser->id_empleado
+            (int) $authUser->id_empleado,
+            $datos['guias_salida'],
+            $request->file('guias_archivos', [])
         );
 
         return response()->json($result);
@@ -330,6 +416,11 @@ class RecepcionUnidadesController extends Controller
             'id_empresa_transporte' => 'nullable|integer',
             'id_conductor' => 'nullable|integer',
             'id_proveedor_minero' => 'nullable|integer',
+            'fecha_hora_ingreso' => 'nullable|date',
+            'fecha_hora_salida' => 'nullable|date',
+            // Las fechas viajan dentro de `campos`: se validan ahí.
+            'campos.fecha_hora_ingreso' => 'nullable|date',
+            'campos.fecha_hora_salida' => 'nullable|date',
             'motivo' => 'nullable|string|max:255',
         ]);
 

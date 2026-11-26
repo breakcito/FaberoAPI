@@ -19,6 +19,10 @@ use Illuminate\Database\Eloquent\Model;
  *     "guia_transportista_archivo": null
  *   }
  * ]
+ *
+ * La columna JSON `guias_salida` guarda las guías de salida con la misma
+ * estructura por proveedor, y `estado_ingreso` el estado de la unidad al
+ * ingresar a planta.
  */
 class RecepcionUnidad extends Model
 {
@@ -51,6 +55,8 @@ class RecepcionUnidad extends Model
         'es_programacion',
         'fecha_estimada_llegada',
         'guias',
+        'guias_salida',
+        'estado_ingreso',
         'es_recepcion_ficticia',
         'id_ticket_recepcion_unidades',
         'campos_bloqueados',
@@ -62,6 +68,7 @@ class RecepcionUnidad extends Model
         'es_recepcion_ficticia' => 'boolean',
         'campos_bloqueados' => 'array',
         'guias' => 'array',
+        'guias_salida' => 'array',
     ];
 
     public function guiasPrimerTramo(): \Illuminate\Database\Eloquent\Relations\HasMany
