@@ -253,15 +253,18 @@ class RecepcionUnidadesService
             }
         }
 
+        $data['proveedores'] = array_values(array_unique(array_merge(
+            $proveedores,
+            self::proveedores_de_guias($guias)
+        )));
+        $data['guias'] = self::alinear_guias($guias, $data['proveedores']);
+
         unset(
             $data['guia_remitente_file'],
             $data['guia_transportista_file'],
             $data['documentos_programacion_existentes'],
             $data['guias_archivos'],
         );
-
-        $data['proveedores'] = $proveedores;
-        $data['guias'] = $guias;
 
         return $data;
     }
@@ -410,7 +413,7 @@ class RecepcionUnidadesService
             $proveedores = DB::transaction(function () use ($id, $nuevosIds, $recepcion, $idEmpleado, $anteriores): array {
                 $proveedores = RecepcionUnidadesData::sync_proveedores_recepcion($id, $nuevosIds);
 
-                self::eliminar_guias_de_proveedores_quitados($recepcion, $anteriores, $nuevosIds, $idEmpleado);
+                self::alinear_guias_de_proveedores($recepcion, $anteriores, $nuevosIds, $idEmpleado);
 
                 return $proveedores;
             });
@@ -432,12 +435,39 @@ class RecepcionUnidadesService
     }
 
     /**
+     * Error si algún proveedor de la carga quedaría sin guía pese a tener
+     * mineral registrado.
+     *
+     * @param  array<int, int>  $idsResultantes
+     * @param  array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>  $proveedoresActuales
+     */
+    private static function validar_proveedores_con_cargas(
+        int $idRecepcion,
+        array $idsResultantes,
+        array $proveedoresActuales
+    ): ?string {
+        foreach ($proveedoresActuales as $proveedor) {
+            $idProveedor = (int) $proveedor['id_proveedor'];
+            if (in_array($idProveedor, $idsResultantes, true)) {
+                continue;
+            }
+
+            $cargas = self::cargas_de_proveedor($idRecepcion, $idProveedor);
+            if (! empty($cargas)) {
+                return 'No se puede quitar la guía de '.$proveedor['razon_social'].' porque la unidad ya tiene '
+                    .implode(' y ', $cargas).' con ese proveedor.';
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Cargas ya registradas en la unidad para un proveedor.
      *
      * @return array<int, string> Descripción de las cargas encontradas.
      */
-    private static function cargas_de_proveedor(int $idRecepcion, int $idProveedor): array
-    {
+    private static function cargas_de_proveedor(int $idRecepcion, int $idProveedor): array    {
         $lotes = DB::table('lote_mineral')
             ->where('id_recepcion_unidad', $idRecepcion)
             ->where('id_proveedor_minero', $idProveedor)
@@ -461,8 +491,11 @@ class RecepcionUnidadesService
     }
 
     /**
-     * Eliminar del contrato de guías las entradas de los proveedores que se
-     * quitaron de la carga.
+     * Alinear el contrato de guías con la lista de proveedores de la carga.
+     *
+     * Cada proveedor de la carga tiene su entrada de guía (aunque esté vacía)
+     * y las guías de los proveedores que se quitaron se eliminan, para que no
+     * queden guías huérfanas sin proveedor en la carga.
      *
      * La guía de la unidad (`id_proveedor = 0`) se conserva siempre: no
      * pertenece a ningún proveedor de la carga.
@@ -470,64 +503,30 @@ class RecepcionUnidadesService
      * @param  array<int, array{id_proveedor: int, razon_social: string, ruc: ?string}>  $anteriores
      * @param  array<int, int>  $nuevosIds
      */
-    private static function eliminar_guias_de_proveedores_quitados(
+    private static function alinear_guias_de_proveedores(
         RecepcionUnidad $recepcion,
         array $anteriores,
         array $nuevosIds,
         int $idEmpleado
     ): void {
         $guias = RecepcionUnidadesData::get_guias($recepcion->id);
-        if (empty($guias)) {
+        if (empty($guias) && empty($nuevosIds)) {
             return;
         }
 
-        $conservadas = [];
-        $eliminadas = [];
-        foreach ($guias as $guia) {
-            $idProveedor = (int) $guia['id_proveedor'];
-            if ($idProveedor === 0 || in_array($idProveedor, $nuevosIds, true)) {
-                $conservadas[] = $guia;
+        $alineadas = self::alinear_guias($guias, $nuevosIds);
 
-                continue;
-            }
-
-            $eliminadas[] = $guia;
-        }
-
-        if (empty($eliminadas)) {
+        $cambios = self::diff_guias($guias, $alineadas);
+        if (empty($cambios)) {
             return;
         }
 
-        RecepcionUnidadesData::reemplazar_guias($recepcion->id, $conservadas);
-
-        $razones = [];
-        foreach ($anteriores as $proveedor) {
-            $idProveedor = (int) $proveedor['id_proveedor'];
-            if (in_array($idProveedor, $nuevosIds, true)) {
-                continue;
-            }
-            foreach ($eliminadas as $guia) {
-                if ((int) $guia['id_proveedor'] === $idProveedor) {
-                    $razones[$idProveedor] = $proveedor['razon_social'];
-                    break;
-                }
-            }
-        }
-
-        $cambios = [];
-        foreach ($eliminadas as $guia) {
-            $cambios[] = [
-                'campo_bd' => 'guias',
-                'campo' => 'Guía eliminada',
-                'valor_anterior' => self::resumen_guia($guia),
-                'valor_nuevo' => null,
-            ];
-        }
+        RecepcionUnidadesData::reemplazar_guias($recepcion->id, $alineadas);
 
         self::registrar_log_cambios(
             $recepcion,
             $idEmpleado,
-            'Guías retiradas al quitar proveedores de la carga',
+            'Edición de proveedores de la recepción',
             $cambios
         );
     }
@@ -606,8 +605,23 @@ class RecepcionUnidadesService
             }
         }
 
+        // La lista de proveedores de la carga (`proveedor_recepcion`) sigue a
+        // las guias: lo que se elige en las guias es lo que tiene la carga.
+        $idsDesdeGuias = self::proveedores_de_guias($normalizadas);
+        $errorCarga = self::validar_proveedores_con_cargas(
+            $id,
+            $idsDesdeGuias,
+            RecepcionUnidadesData::get_proveedores_recepcion($id)
+        );
+        if ($errorCarga !== null) {
+            return ApiResponse::error($errorCarga, 422);
+        }
+
         try {
-            $normalizadas = RecepcionUnidadesData::reemplazar_guias($id, $guias);
+            DB::transaction(function () use ($id, $guias, $idsDesdeGuias): void {
+                RecepcionUnidadesData::reemplazar_guias($id, $guias);
+                RecepcionUnidadesData::sync_proveedores_recepcion($id, $idsDesdeGuias);
+            });
         } catch (\InvalidArgumentException $e) {
             return ApiResponse::error($e->getMessage(), 422);
         }
